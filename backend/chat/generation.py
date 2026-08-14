@@ -245,8 +245,22 @@ def _construire_contexte(
     """
     historique = _historique_branche(conversation_id, reglages, ancre)
     messages: list[MessageInference] = []
-    if reglages.prompt_systeme.strip():
-        messages.append(MessageInference(role="system", contenu=reglages.prompt_systeme))
+    # Socle du harnais AVANT le prompt de la conversation : il énonce les outils réellement
+    # disponibles. Sans lui, les modèles chargés ici annoncent savoir chercher sur le web puis
+    # fabriquent des résultats — constaté le 2026-08-14. Le prompt de l'utilisateur s'ajoute
+    # ensuite et ne peut pas le supprimer ; il pourrait le contredire, et c'est son droit.
+    #
+    # Import local : `chat` reste chargeable sans le domaine `outils`, comme il l'est sans
+    # `inference`. Un harnais absent doit dégrader le prompt, pas empêcher la conversation.
+    try:
+        from backend.outils import prompt_systeme
+
+        entete = prompt_systeme(reglages.prompt_systeme)
+    except Exception as exc:  # noqa: BLE001 — le socle est un plus, jamais une condition
+        logger.warning("Socle d'outils indisponible ({}) : prompt de conversation seul.", exc)
+        entete = reglages.prompt_systeme
+    if entete.strip():
+        messages.append(MessageInference(role="system", contenu=entete))
     # Un message vide fait échouer la tokenisation de plusieurs gabarits de chat ; un message
     # `system` en historique doublonnerait le prompt système, qui est un réglage et non un tour.
     messages.extend(

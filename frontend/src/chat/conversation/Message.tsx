@@ -2,7 +2,8 @@ import { motion } from 'framer-motion';
 import type { ReactElement } from 'react';
 import { Badge, cn, fadeUp } from '../../shared/design';
 import type { MessageChat } from '../api/contrats';
-import { RenduMarkdown } from '../markdown/RenduMarkdown';
+import { EnveloppeMessage } from '../actions';
+import { ReponseModele } from '../raisonnement';
 import { formaterDebit } from '../plan/format';
 
 /*
@@ -13,14 +14,34 @@ import { formaterDebit } from '../plan/format';
  * existent : un moteur qui ne rapporte pas son débit ne se voit pas attribuer un chiffre inventé.
  */
 
+/*
+ * Le modèle est affiché À CÔTÉ des mesures parce qu'il les qualifie : 31 tok/s ne veut rien dire
+ * sans savoir qui a produit ces tokens, et une conversation peut changer de modèle en cours de
+ * route. `modele_id` est celui enregistré au moment de la réponse — pas le modèle chargé
+ * maintenant, qui pourrait déjà être un autre.
+ *
+ * Seul le nom de fichier est montré : l'identifiant complet vaut `<depot>::<fichier>` et occuperait
+ * toute la ligne. Le reste est dans l'infobulle.
+ */
+function nomCourt(identifiant: string): string {
+  const apresDepot = identifiant.split('::').at(-1) ?? identifiant;
+  return apresDepot.replace(/\.gguf$/i, '');
+}
+
 function Statistiques({ message }: { message: MessageChat }): ReactElement | null {
   const debit = message.tokens_par_seconde;
   const tokens = message.tokens_generes;
-  if (debit === null && tokens === null && !message.interrompu) {
+  const modele = message.modele_id;
+  if (debit === null && tokens === null && modele === null && !message.interrompu) {
     return null;
   }
   return (
-    <div className="mt-1.5 flex items-center gap-2 font-mono text-2xs tabular-nums text-text-3">
+    <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-2xs tabular-nums text-text-3">
+      {modele !== null && (
+        <span className="max-w-[22rem] truncate text-text-2" title={modele}>
+          {nomCourt(modele)}
+        </span>
+      )}
       {tokens !== null && <span>{tokens} tokens</span>}
       {debit !== null && <span>{formaterDebit(debit)}</span>}
       {message.interrompu && <Badge tone="caution">interrompu</Badge>}
@@ -32,6 +53,14 @@ export interface MessageProps {
   message: MessageChat;
 }
 
+/*
+ * `EnveloppeMessage` porte les actions au survol (copier, éditer, rejouer en sous-branche). Elle
+ * est neutre hors d'un fournisseur d'actions : un message rendu ailleurs reste un message.
+ *
+ * `ReponseModele` remplace `RenduMarkdown` pour les réponses : il sépare d'abord le raisonnement
+ * du texte visible, puis rend le Markdown. Les messages utilisateur restent en texte brut — ce
+ * qu'on a tapé s'affiche tel qu'on l'a tapé.
+ */
 export function Message({ message }: MessageProps): ReactElement {
   const utilisateur = message.role === 'user';
   return (
@@ -41,13 +70,20 @@ export function Message({ message }: MessageProps): ReactElement {
       animate="visible"
       className={cn('flex', utilisateur ? 'justify-end' : 'justify-start')}
     >
-      <div className={cn(utilisateur ? 'max-w-[80%] rounded-md bg-surface-2 px-3 py-2' : 'w-full')}>
-        {utilisateur ? (
-          <p className="whitespace-pre-wrap text-sm leading-relaxed text-text">{message.contenu}</p>
-        ) : (
-          <RenduMarkdown source={message.contenu} />
-        )}
-        {!utilisateur && <Statistiques message={message} />}
+      {/* La largeur est portée par CE conteneur, pas par la bulle : l'enveloppe d'actions insère un
+          bloc entre le flex et la bulle, et un `max-w-[80%]` posé plus bas se calculerait alors par
+          rapport à cet intercalaire — ce qui écrasait les messages sur deux ou trois mots. */}
+      <div className={cn('min-w-0', utilisateur ? 'max-w-[80%]' : 'w-full')}>
+        <EnveloppeMessage message={message}>
+          <div className={cn(utilisateur && 'rounded-md bg-surface-2 px-3 py-2')}>
+            {utilisateur ? (
+              <p className="whitespace-pre-wrap text-sm leading-relaxed text-text">{message.contenu}</p>
+            ) : (
+              <ReponseModele source={message.contenu} />
+            )}
+            {!utilisateur && <Statistiques message={message} />}
+          </div>
+        </EnveloppeMessage>
       </div>
     </motion.article>
   );
@@ -67,7 +103,11 @@ export function MessageEnCours({ texte }: MessageEnCoursProps): ReactElement {
           le modèle répond…
         </p>
       ) : (
-        <RenduMarkdown source={texte} />
+        // `actif` distingue un bloc de raisonnement qui grandit d'un bloc figé : pendant le
+        // streaming, tant que `</think>` n'est pas arrivé, rien ne permet encore de savoir que le
+        // texte reçu est du raisonnement. On l'affiche donc, quitte à le replier ensuite — le
+        // masquer ferait croire à une génération bloquée.
+        <ReponseModele source={texte} actif />
       )}
     </article>
   );

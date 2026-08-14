@@ -57,11 +57,49 @@ function prochaineOuverture(source: string, depuis: number): Ouverture | null {
   return meilleure;
 }
 
+/**
+ * Fermeture qui apparaît AVANT toute ouvrante — le cas réellement observé, et non un cas limite.
+ *
+ * Les gabarits de conversation Qwen3 et DeepSeek-R1 placent eux-mêmes `<think>` à la fin du prompt
+ * pour amorcer le raisonnement. Le modèle n'a donc plus à l'émettre : le flux commence directement
+ * par la réflexion et ne porte que `</think>`. Chercher l'ouvrante en premier ne trouve alors rien,
+ * et l'intégralité du raisonnement s'affiche comme s'il s'agissait de la réponse.
+ *
+ * Mesuré sur cette machine : c'est le comportement de tous les modèles de raisonnement chargés.
+ */
+function fermetureOrpheline(source: string, depuis: number): Ouverture | null {
+  let meilleure: Ouverture | null = null;
+  for (const convention of CONVENTIONS_RAISONNEMENT) {
+    const fin = source.indexOf(convention.fermante, depuis);
+    if (fin < 0) {
+      continue;
+    }
+    const ouvrante = source.indexOf(convention.ouvrante, depuis);
+    // Une ouvrante située avant cette fermeture signifie un bloc normal : ce n'est pas notre cas.
+    if (ouvrante >= 0 && ouvrante < fin) {
+      continue;
+    }
+    if (meilleure === null || fin < meilleure.index) {
+      meilleure = { convention, index: fin };
+    }
+  }
+  return meilleure;
+}
+
 export function segmenterReponse(source: string): ReponseSegmentee {
   const visible: string[] = [];
   const raisonnements: SegmentRaisonnement[] = [];
   let curseur = 0;
   for (let tour = 0; tour < toursMax(source); tour += 1) {
+    // Une fermeture sans ouvrante se traite AVANT le cas normal : tout ce qui la précède est du
+    // raisonnement, l'ouvrante ayant été posée par le gabarit dans le prompt et non émise ici.
+    const orpheline = fermetureOrpheline(source, curseur);
+    if (orpheline !== null) {
+      const texte = source.slice(curseur, orpheline.index);
+      raisonnements.push({ convention: orpheline.convention.nom, texte, complet: true });
+      curseur = orpheline.index + orpheline.convention.fermante.length;
+      continue;
+    }
     const ouverture = prochaineOuverture(source, curseur);
     if (ouverture === null) {
       break;

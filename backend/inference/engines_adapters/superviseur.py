@@ -322,6 +322,22 @@ class SuperviseurInference:
             )
         return self._actif.generer(messages, options)
 
+    async def proposer_outils(
+        self,
+        messages: Sequence[MessageChat],
+        options: OptionsGeneration,
+        outils: Sequence[dict[str, object]],
+    ) -> list[dict[str, object]]:
+        """Appels d'outils demandés par le modèle, avant la rédaction de sa réponse.
+
+        Ne lève jamais quand aucun modèle n'est prêt, contrairement à `generer` : c'est une étape
+        préparatoire facultative, et la génération qui suit portera l'erreur si elle doit être
+        portée. Deux messages d'échec pour un seul problème n'aideraient personne.
+        """
+        if self._actif is None or self._statut.etat is not EtatChargement.PRET:
+            return []
+        return await self._actif.proposer_outils(messages, options, outils)
+
 
 def _diagnostic_annulation() -> Diagnostic:
     return Diagnostic(

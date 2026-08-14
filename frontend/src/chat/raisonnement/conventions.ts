@@ -24,4 +24,7 @@ export interface ConventionRaisonnement {
 
 export const CONVENTIONS_RAISONNEMENT: readonly ConventionRaisonnement[] = [
   { nom: 'think', ouvrante: '<think>', fermante: '</think>' },
+  // CONSTATÉE le 2026-08-14 sur les dérivés Qwen3.6 abliterated chargés ici : la balise sort telle
+  // quelle dans la réponse et s'affiche à l'écran. Ajoutée pour cette raison, pas par précaution.
+  { nom: 'process', ouvrante: '<process>', fermante: '</process>' },
 ];

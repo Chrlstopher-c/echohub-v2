@@ -81,6 +81,62 @@ def _messages_depuis(messages: object) -> list[MessageChat]:
     return convertis
 
 
+# Tours d'outils avant de rendre la main au modèle pour de bon. Un modèle peut légitimement
+# enchaîner deux recherches ; au-delà, il boucle. La borne est là pour ça, et l'atteindre est
+# journalisé — un plafond silencieux ressemblerait à une réponse normale.
+TOURS_OUTILS_MAX = 3
+
+
+def _texte_appel(appel: dict[str, Any]) -> tuple[str, Any]:
+    """Nom et arguments d'un appel, quelle que soit la forme rendue par le gabarit du modèle."""
+    fonction = appel.get("function")
+    if isinstance(fonction, dict):
+        return str(fonction.get("name", "")), fonction.get("arguments", "")
+    return str(appel.get("name", "")), appel.get("arguments", "")
+
+
+async def _resoudre_outils(
+    messages: list[MessageChat],
+    options: OptionsGeneration,
+) -> list[MessageChat]:
+    """Exécute les outils que le modèle demande, et rend la conversation enrichie des résultats.
+
+    Le résultat d'un outil est réinjecté comme un tour d'assistant plutôt qu'avec le rôle `tool` :
+    le contrat `MessageChat` du projet n'accepte que system/user/assistant, et les gabarits des
+    modèles chargés ici lisent parfaitement un résultat annoncé en clair. Passer par un rôle que la
+    moitié de la chaîne ne connaît pas aurait coûté une migration de contrat pour un gain nul.
+
+    Tout échec ramène la conversation d'origine : le harnais ne doit jamais empêcher une réponse.
+    """
+    from backend.outils import executer, format_moteur
+
+    outils = format_moteur()
+    if not outils:
+        return messages
+
+    enrichis = list(messages)
+    for tour in range(TOURS_OUTILS_MAX):
+        try:
+            appels = await superviseur.proposer_outils(enrichis, options, outils)
+        except Exception as exc:  # noqa: BLE001 — frontière moteur : jamais fatale pour la réponse
+            logger.warning("Proposition d'outils abandonnée au tour {} : {}", tour + 1, exc)
+            return enrichis
+        if not appels:
+            return enrichis
+        for appel in appels:
+            nom, arguments = _texte_appel(appel)
+            resultat = await executer(nom, arguments)
+            etat = "résultat" if resultat.succes else "échec"
+            enrichis.append(
+                MessageChat(
+                    role="assistant",
+                    content=f"[outil {resultat.nom} — {etat}]\n{resultat.texte}",
+                )
+            )
+    logger.warning("Borne de {} tours d'outils atteinte : la réponse suit avec ce qui a été trouvé.", TOURS_OUTILS_MAX)
+    return enrichis
+
+
 class MoteurChat:
     """Adaptateur du superviseur vers le port de génération de `chat`.
 
@@ -96,6 +152,7 @@ class MoteurChat:
     async def _flux(self, requete: object) -> AsyncIterator[dict[str, Any]]:
         messages = _messages_depuis(getattr(requete, "messages", None))
         options = _options_depuis(getattr(requete, "parametres", None))
+        messages = await _resoudre_outils(messages, options)
         debut = time.monotonic()
         tokens = 0
 

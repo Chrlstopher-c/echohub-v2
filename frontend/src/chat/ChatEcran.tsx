@@ -5,7 +5,7 @@ import { PanneauContexte } from './contexte';
 import { Composeur } from './conversation/Composeur';
 import { FilMessages } from './conversation/FilMessages';
 import { ListeConversations } from './conversation/ListeConversations';
-import { ReglagesConversation } from './conversation/ReglagesConversation';
+import { ModaleReglages } from './reglages';
 import { PanneauPlan } from './plan/PanneauPlan';
 import type { CibleChargement } from './plan/cible';
 import { useEcranChat, type EtatEcranChat } from './useEcranChat';
@@ -166,17 +166,24 @@ function ColonnePlan({ etat, cible }: ColonneProps): ReactElement {
   );
 }
 
-function ModaleReglages({ etat }: { etat: EtatEcranChat }): ReactElement | null {
+/*
+ * Modale de réglages complète : prompt système, échantillonnage, plafond de réponse, séquences
+ * d'arrêt. Elle remplace l'ancien panneau en lecture partielle — c'est elle qui adosse le plafond
+ * de réponse aux mesures réelles de la conversation, ce que réclamait la troncature systématique
+ * des réponses des modèles de raisonnement.
+ */
+function PanneauDeReglages({ etat }: { etat: EtatEcranChat }): ReactElement | null {
   const detail = etat.courante.detail;
-  if (detail === null) {
+  if (detail === null || etat.conversationActive === null) {
     return null;
   }
   return (
-    <ReglagesConversation
+    <ModaleReglages
       ouvert={etat.reglagesOuverts}
+      conversationId={etat.conversationActive}
       reglages={detail.reglages}
+      messages={etat.courante.messages}
       onFermer={() => etat.ouvrirReglages(false)}
-      onEnregistrer={(patch) => void etat.courante.enregistrerReglages(patch)}
     />
   );
 }
@@ -207,7 +214,7 @@ export function ChatEcran({ cible }: ChatEcranProps): ReactElement {
       />
       <ColonneEchange etat={etat} cible={cible} fil={fil} />
       <ColonnePlan etat={etat} cible={cible} />
-      <ModaleReglages etat={etat} />
+      <PanneauDeReglages etat={etat} />
     </div>
   );
 }

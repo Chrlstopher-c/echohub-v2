@@ -349,6 +349,61 @@ class AdaptateurLlamaCpp(AdaptateurMoteur):
         finally:
             self._verrou_generation.release()
 
+    async def proposer_outils(
+        self,
+        messages: Sequence[MessageChat],
+        options: OptionsGeneration,
+        outils: Sequence[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Demande au modèle s'il veut appeler un outil, et rend les appels demandés.
+
+        Étape NON streamée, et elle ne peut pas l'être : un appel d'outil n'existe qu'une fois
+        l'argument JSON complet, il n'y a rien à afficher au fil des tokens. Le flux visible ne
+        commence qu'après, quand le modèle rédige sa réponse avec les résultats en main.
+
+        Le format d'appel n'est pas imposé par nous : les gabarits des GGUF chargés ici déclarent
+        tous `tools` et `tool_call` (vérifié le 2026-08-14 sur les six modèles présents), et c'est
+        le gabarit du modèle qui met en forme la demande. Nous ne faisons que la lire.
+
+        Rend une liste vide dès que quoi que ce soit sort de l'ordinaire : un modèle qui ne veut
+        pas d'outil, un moteur déchargé, une réponse de forme inattendue. Aucun de ces cas n'est
+        une erreur — la génération normale suit.
+        """
+        if self._llm is None or not outils:
+            return []
+        return await asyncio.to_thread(self._proposer_bloquant, messages, options, outils)
+
+    def _proposer_bloquant(
+        self,
+        messages: Sequence[MessageChat],
+        options: OptionsGeneration,
+        outils: Sequence[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if not self._verrou_generation.acquire(timeout=DELAI_VERROU_GENERATION_S):
+            logger.warning("Proposition d'outils abandonnée : le moteur est occupé.")
+            return []
+        try:
+            llm = self._llm
+            if llm is None:
+                return []
+            reponse = llm.create_chat_completion(
+                messages=[message.model_dump() for message in messages],
+                tools=list(outils),
+                tool_choice="auto",
+                stream=False,
+                **_arguments_echantillonnage(options),
+            )
+        except Exception as exc:  # noqa: BLE001 — un modèle qui gère mal `tools` ne doit rien casser
+            logger.warning("Proposition d'outils impossible ({}) : génération sans outil.", exc)
+            return []
+        finally:
+            self._verrou_generation.release()
+        if not isinstance(reponse, dict):
+            return []
+        choix = (reponse.get("choices") or [{}])[0]
+        appels = (choix.get("message") or {}).get("tool_calls") or []
+        return [appel for appel in appels if isinstance(appel, dict)]
+
     def generer(
         self,
         messages: Sequence[MessageChat],

@@ -75,6 +75,21 @@ class AdaptateurMoteur(ABC):
             raison=f"Le moteur {self.moteur.value} n'expose pas son tokenizer dans ce processus.",
         )
 
+    async def proposer_outils(
+        self,
+        messages: Sequence[MessageChat],
+        options: OptionsGeneration,
+        outils: Sequence[dict[str, object]],
+    ) -> list[dict[str, object]]:
+        """Appels d'outils que le modèle veut faire avant de rédiger sa réponse.
+
+        Non abstraite, et le défaut est « aucun appel » : tous les moteurs ne savent pas présenter
+        d'outils, et celui qui l'ignore doit continuer à générer normalement. Une liste vide n'est
+        pas un échec — c'est le cas courant, y compris quand le modèle n'a besoin d'aucun outil.
+        """
+        del messages, options, outils
+        return []
+
 
 def exiger_moteur(plan: PlanChargement, attendu: MoteurSupporte) -> None:
     """Refuse un plan destiné à un autre moteur — erreur de routage, pas erreur de modèle."""
