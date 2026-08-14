@@ -37,7 +37,10 @@ from backend.inference.engines_adapters import (
 from backend.inference.engines_adapters.traduction_plan import vers_cause_planificateur, vers_plan_moteur
 from backend.inference.planner import DemandeDeChargement, PlanDeChargement, degrader, planifier
 
-router = APIRouter(prefix="/api/inference", tags=["inference"])
+# Préfixe SANS `/api` : nginx réécrit `/api/(.*)` en `/$1` avant de proxifier vers ce backend
+# (docker/nginx.conf). Le conserver ici exposerait la route sous `/api/api/inference` côté
+# navigateur, alors que les autres domaines montent bien `/system`, `/engines`, `/chat`.
+router = APIRouter(prefix="/inference", tags=["inference"])
 routeur_inference = router
 
 # En-têtes indispensables au streaming derrière nginx : sans `X-Accel-Buffering`, le proxy tamponne
