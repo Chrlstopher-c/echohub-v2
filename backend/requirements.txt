@@ -20,6 +20,10 @@ python-multipart
 # --- Structures et journalisation -----------------------------------------------------------
 # pydantic v2 imposé : le planificateur expose ses plans en modèles typés (v1 incompatible).
 pydantic>=2
+# Paquet SÉPARÉ de pydantic depuis la v2 — `backend/core/config.py` en dépend pour `BaseSettings`.
+# Oublié au premier jet, exactement comme python-multipart l'avait été dans la v1 : le conteneur
+# démarre, uvicorn meurt à l'import, et l'échec ne se voit que dans les journaux.
+pydantic-settings
 loguru
 
 # --- Accès externes -------------------------------------------------------------------------
