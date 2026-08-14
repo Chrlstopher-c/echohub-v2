@@ -8,11 +8,15 @@ dist/
 build/
 
 # Donnees locales et modeles (jamais dans le depot)
+#
+# Motifs ANCRES a la racine (prefixe `/`) : sans l'ancre, `models/` excluait aussi
+# `backend/models/` et `frontend/src/models/`, c'est-a-dire le domaine metier des deux cotes.
+# Les deux etaient absents du depot sans que rien ne le signale.
 *.gguf
 *.safetensors
-models/
-data/
-chroma_data/
+/models/
+/data/
+/chroma_data/
 *.db
 *.sqlite3
 
