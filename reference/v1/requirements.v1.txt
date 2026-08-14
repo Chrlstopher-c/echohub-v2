@@ -1,0 +1,23 @@
+fastapi
+uvicorn[standard]
+huggingface_hub
+loguru
+pydantic
+httpx
+python-dotenv
+gitpython>=3.1.0
+pyyaml>=6.0
+# Requis par FastAPI pour les routes Form/UploadFile (backend/routers/projects.py:upload_context_file) —
+# absent de ce fichier alors que le code en dépend ; présent seulement par installation manuelle dans le
+# venv natif existant (jamais reporté ici). Comblé au build de l'image Docker, cf. DOCKER-BUILD-LOG.md.
+python-multipart
+
+# Inference — llama-cpp-python (backend principal, cross-platform)
+# Install selon le hardware :
+#   NVIDIA CUDA  : CMAKE_ARGS="-DGGML_CUDA=on" pip install llama-cpp-python
+#   AMD ROCm     : CMAKE_ARGS="-DGGML_HIPBLAS=on" pip install llama-cpp-python
+#   Apple Metal  : CMAKE_ARGS="-DGGML_METAL=on" pip install llama-cpp-python
+#   CPU only     : pip install llama-cpp-python
+llama-cpp-python
+psutil>=5.9.0
+chromadb>=1.5.0

@@ -1,0 +1,63 @@
+# EchoHub — conteneurisation GPU.
+#
+# GPU : `devices: [nvidia.com/gpu=all]` (syntaxe Compose Spec / CDI), retenu après test réel
+# sur cette machine plutôt que `deploy.resources.reservations.devices` + `driver: nvidia`.
+# Sur cet hôte, seul le NVIDIA Container Toolkit + la résolution CDI native de Docker 29 sont
+# configurés (aucun runtime `nvidia` enregistré dans /etc/docker/daemon.json) — `--gpus all`
+# échoue ici avec "AMD CDI spec not found" (bug de résolution multi-vendor de Docker), alors que
+# la forme CDI explicite fonctionne (validé : `docker run --device=nvidia.com/gpu=all ... nvidia-smi`
+# affiche la RTX 3060). Voir DOCKER-BUILD-LOG.md pour le détail. Si la machine cible (Windows +
+# Docker Desktop + WSL2) a le runtime `nvidia` classique configuré, la forme alternative
+# `deploy.resources.reservations.devices` ci-dessous (commentée) fonctionne aussi — à activer si
+# `nvidia.com/gpu=all` échoue là-bas.
+services:
+  echohub:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: echohub:gpu
+    container_name: echohub
+    restart: unless-stopped
+
+    # Forme CDI (`devices: [nvidia.com/gpu=all]`) desactivee sur cette machine : Docker Desktop
+    # + WSL2 la rejette avec "unresolvable CDI devices nvidia.com/gpu=all". C'est le cas prevu
+    # par le commentaire d'origine ci-dessus — le runtime `nvidia` classique est bien present
+    # ici (`docker run --gpus all nvidia/cuda:12.8.0-base nvidia-smi` affiche la RTX 5080).
+    # devices:
+    #   - nvidia.com/gpu=all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    ports:
+      - "37820:80"      # Interface web (frontend statique + proxy /api, sans coquille Tauri)
+      - "37821:37821"   # API backend FastAPI directe (debug / futures équipes)
+
+    volumes:
+      - echohub_models:/data/models   # Modèles GGUF/AWQ téléchargés (MODELS_DIR)
+      - echohub_userdata:/data/user   # echohub.db, chromadb/, logs/, config.json (XDG_DATA_HOME)
+
+      # --- Développement : code monté depuis l'hôte -------------------------------------
+      # Le code Python devient modifiable sans rebuild ni `docker cp` : on édite sur l'hôte,
+      # puis `docker compose restart echohub` (~2 s) suffit à recharger.
+      - ./backend:/app/backend
+      - ./connectors:/app/connectors
+      # Volume anonyme qui PROTÈGE le venv Linux construit dans l'image. Sans cette ligne,
+      # le bind mount ci-dessus exposerait le `backend/.venv` Windows de l'hôte (créé par une
+      # tentative d'installation native) à la place — llama-cpp-python compilé pour CUDA
+      # disparaîtrait et le backend ne démarrerait plus du tout.
+      - /app/backend/.venv
+
+    environment:
+      - MODELS_DIR=/data/models
+      - XDG_DATA_HOME=/data/user
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+volumes:
+  echohub_models:
+  echohub_userdata:

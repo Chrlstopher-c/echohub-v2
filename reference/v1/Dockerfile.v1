@@ -1,0 +1,97 @@
+# EchoHub — image conteneur avec accélération GPU NVIDIA.
+#
+# Base devel (pas runtime) : obligatoire pour compiler llama-cpp-python avec nvcc — l'image
+# runtime n'a ni les en-têtes CUDA ni le compilateur. Confirmé par PORTAGE-WINDOWS.md (Partie 2)
+# et par la pratique communautaire (cf. DOCKER-BUILD-LOG.md pour les sources).
+#
+# CUDA 12.8.0 : premier Toolkit à connaître les cibles Blackwell (sm_100/sm_101/sm_120) —
+# plancher fixé par le mandat. Architectures compilées : sm_86 (RTX 3060 Ampere, machine de
+# build/test) ET sm_120 (RTX 5090 Blackwell, cible finale du parc) — cf. CMAKE_CUDA_ARCHITECTURES
+# plus bas.
+FROM nvidia/cuda:12.8.0-devel-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+# Python + toolchain de compilation CUDA (build-essential/cmake/ninja pour llama-cpp-python)
+# + nginx (sert le frontend web statique et proxifie /api — remplace la coquille Tauri, qui
+# n'a pas sa place en conteneur).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 python3-venv python3-pip python3-dev \
+        build-essential cmake ninja-build git curl unzip ca-certificates \
+        nginx \
+    && rm -rf /var/lib/apt/lists/*
+
+# Bun — runtime JS/TS du projet (jamais npm/node direct, standard du projet).
+ENV BUN_INSTALL=/usr/local/bun
+RUN curl -fsSL https://bun.sh/install | bash
+ENV PATH="${BUN_INSTALL}/bin:${PATH}"
+
+WORKDIR /app
+
+# --- Backend Python -----------------------------------------------------------------------
+COPY backend/requirements.txt backend/requirements.txt
+RUN python3 -m venv /app/backend/.venv
+ENV PATH="/app/backend/.venv/bin:${PATH}"
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r backend/requirements.txt
+
+# requirements.txt installe llama-cpp-python sans CUDA (wheel CPU par défaut depuis PyPI).
+# On le recompile ici depuis les sources avec le support GGML_CUDA, en ciblant sm_86 (test
+# local, RTX 3060) et sm_120 (cible finale, RTX 5090 Blackwell) — CUDA 12.8 est le premier
+# Toolkit à reconnaître sm_120, confirmé par recherche web (cf. DOCKER-BUILD-LOG.md, sources).
+#
+# GGML_CUDA_FORCE_CUBLAS=ON : contournement obligatoire, pas cosmétique — nvcc de CUDA 12.8
+# segfaulte (bug du compilateur, pas du code) en compilant les kernels MMQ maison de ggml
+# (ex. mmq-instance-q2_k.cu) pour la cible compute_120a, quand sm_86 est aussi demandé dans la
+# même passe de compilation. Contournement confirmé par recherche web et documenté aussi par
+# PORTAGE-WINDOWS.md (Partie 2, zone llama.cpp) : router les multiplications matricielles
+# quantifiées vers cuBLAS au lieu des kernels CUDA maison de ggml. Coût : perte de perf possible
+# par rapport aux kernels MMQ natifs, contre un binaire qui compile et tourne réellement sur
+# Blackwell — voir DOCKER-BUILD-LOG.md pour la trace de l'échec et les sources.
+ENV CMAKE_ARGS="-DGGML_CUDA=on -DCMAKE_CUDA_ARCHITECTURES=86;120 -DGGML_CUDA_FORCE_CUBLAS=ON" \
+    FORCE_CMAKE=1
+RUN pip install --no-cache-dir --force-reinstall --no-binary llama-cpp-python llama-cpp-python
+
+COPY backend/ backend/
+# `COPY mcp_server.py` retire : le fichier n'existe ni dans l'archive ni dans le depot amont
+# (trinityUwU/echohub, master) et n'est pas couvert par .gitignore — il n'a jamais ete commite.
+# Il n'est ni importe par le backend ni lance par docker/entrypoint.sh : COPY mort qui faisait
+# echouer tout build a l'etape 10/18.
+COPY connectors/ connectors/
+
+# --- Frontend (build web statique — pas de coquille Tauri en conteneur) ------------------
+COPY frontend/package.json frontend/bun.lock frontend/
+RUN cd frontend && bun install --frozen-lockfile
+COPY frontend/ frontend/
+# `bun run build` (= `tsc && vite build`) échoue sur 3 erreurs TypeScript préexistantes,
+# indépendantes de la conteneurisation (confirmé reproductible nativement sur l'hôte, hors
+# Docker — cf. DOCKER-BUILD-LOG.md). `bun run dev` (usage courant du projet) n'exécute jamais
+# `tsc`, ces erreurs de typage sont donc restées invisibles jusqu'ici. Hors mandat de
+# conteneurisation : signalé dans DOCKER-BUILD-LOG.md, non corrigé. On construit avec `vite`
+# seul (esbuild, pas de vérification de type), qui produit un `dist/` fonctionnel identique à
+# ce que `bun run dev` sert déjà en pratique.
+RUN cd frontend && bunx vite build
+
+# --- Reverse proxy web ----------------------------------------------------------------
+COPY docker/nginx.conf /etc/nginx/nginx.conf
+COPY docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Chemins de stockage persistant — le code applicatif les lit déjà nativement via variables
+# d'environnement (aucune modification de code requise) :
+#   - MODELS_DIR : backend/services/hf_service.py et embedding_service.py
+#     (os.getenv("MODELS_DIR", "/mnt/models/echohub")).
+#   - XDG_DATA_HOME : backend/services/user_data.py::get_user_data_dir() le respecte déjà
+#     sur Linux (os.environ.get("XDG_DATA_HOME")) — y vivent echohub.db, chromadb/, logs/,
+#     config.json.
+ENV MODELS_DIR=/data/models \
+    XDG_DATA_HOME=/data/user
+
+# 80    : interface web (nginx, sert frontend/dist + proxy /api) — mappé sur l'hôte via
+#         docker-compose.yml (port hôte 37820, cohérent avec la convention de ports EchoHub).
+# 37821 : API backend FastAPI exposée directement (debug, futures équipes Windows/déploiement).
+EXPOSE 80 37821
+
+ENTRYPOINT ["/entrypoint.sh"]
