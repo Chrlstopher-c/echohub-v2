@@ -28,15 +28,22 @@ def executer_telechargement(
     jeton: str | None,
     motifs_ignores: list[str],
     retour: FileProcessus[dict[str, str]],
+    parts: list[str] | None = None,
 ) -> None:
     """Corps du processus fils : le transfert, et rien d'autre.
 
     Le verdict repart par la file. L'état persistant reste la responsabilité du parent, seul à
     pouvoir le tenir cohérent si le fils est tué en cours de route.
+
+    `parts` porte toutes les parts d'un GGUF découpé quand le fichier demandé en fait partie. Elles
+    sont récupérées l'une après l'autre : un modèle en parts n'existe qu'entier, et s'arrêter à
+    celle qui a été cliquée produit un fichier que rien ne peut charger.
     """
     try:
-        if fichier:
-            hf_hub_download(repo_id=depot, filename=fichier, revision=revision, local_dir=dossier, token=jeton)
+        a_prendre = parts if parts else ([fichier] if fichier else [])
+        if a_prendre:
+            for part in a_prendre:
+                hf_hub_download(repo_id=depot, filename=part, revision=revision, local_dir=dossier, token=jeton)
         else:
             snapshot_download(
                 repo_id=depot,

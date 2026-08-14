@@ -132,7 +132,12 @@ class GestionnaireTelechargements:
 
         dossier = dossier_modele(depot)
         etat = self._preparer(identifiant, depot, cible, revision, dossier, fichiers, motifs)
-        self._lancer(etat, motifs)
+        # Un GGUF découpé n'existe qu'entier : choisir une part revient à demander toutes ses
+        # sœurs. Sans cela le transfert s'annonce « terminé » sur un modèle inchargeable.
+        parts = parts_du_meme_modele(cible, fichiers) if cible else None
+        if parts and len(parts) > 1:
+            logger.info("{} est découpé en {} parts : toutes seront récupérées", cible, len(parts))
+        self._lancer(etat, motifs, parts)
         return self.etat(identifiant)
 
     def _preparer(
@@ -165,7 +170,7 @@ class GestionnaireTelechargements:
             )
         )
 
-    def _lancer(self, etat: Telechargement, motifs: list[str]) -> None:
+    def _lancer(self, etat: Telechargement, motifs: list[str], parts: list[str] | None = None) -> None:
         """Démarre le processus fils et le thread qui le surveille."""
         jeton = get_settings().hf_token
         file: FileProcessus[dict[str, str]] = self._contexte.Queue()
@@ -179,6 +184,7 @@ class GestionnaireTelechargements:
                 jeton.get_secret_value() if jeton else None,
                 motifs,
                 file,
+                parts,
             ),
             name=f"telechargement-{etat.identifiant}",
             daemon=True,

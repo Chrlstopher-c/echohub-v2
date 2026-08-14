@@ -12,6 +12,7 @@ cohabitent.
 from __future__ import annotations
 
 import fnmatch
+import re
 from pathlib import Path
 
 from backend.core.errors import ModeleIntrouvable, TelechargementEchoue
@@ -22,6 +23,35 @@ from backend.models.storage import octets_fichier, octets_fragments, taille_reel
 MOTIFS_TOUJOURS_IGNORES = ("*.md", "original/*")
 # Écartés seulement si le dépôt propose des safetensors, sinon ce sont les seuls poids disponibles.
 EXTENSIONS_POIDS_REDONDANTS = (".bin", ".pth", ".pt", ".h5", ".msgpack", ".ckpt")
+
+# Un GGUF trop gros pour un seul fichier est publié en parts numérotées, selon la convention
+# llama.cpp `<base>-00001-of-00003.gguf`. Ce sont les morceaux d'UN modèle, pas trois modèles :
+# n'en prendre qu'un donne un fichier sans en-tête exploitable, que le registre écarte et que le
+# moteur ne peut pas charger.
+#
+# Constaté le 2026-08-14 : un téléchargement annoncé « terminé » n'avait rapporté que la part 2
+# sur 2 de Qwen3-Coder-30B — sans gabarit de conversation, donc inutilisable.
+MOTIF_PART_GGUF = re.compile(r"^(?P<base>.+)-(?P<rang>\d{5})-of-(?P<total>\d{5})\.gguf$", re.IGNORECASE)
+
+
+def parts_du_meme_modele(cible: str, fichiers: list[FichierDepot]) -> list[str]:
+    """Toutes les parts du modèle dont `cible` fait partie, `cible` comprise, triées par rang.
+
+    Rend `[cible]` quand ce n'est pas un fichier en parts — le cas courant, qui doit rester simple.
+    Les parts absentes du dépôt ne sont pas inventées : on ne retient que ce qui y existe vraiment.
+    """
+    trouve = MOTIF_PART_GGUF.match(cible)
+    if trouve is None:
+        return [cible]
+    base, total = trouve.group("base"), trouve.group("total")
+    freres = [
+        fichier.nom
+        for fichier in fichiers
+        if (autre := MOTIF_PART_GGUF.match(fichier.nom)) is not None
+        and autre.group("base") == base
+        and autre.group("total") == total
+    ]
+    return sorted(freres) or [cible]
 
 
 def motifs_ignores(fichiers: list[FichierDepot]) -> list[str]:
@@ -51,7 +81,10 @@ def octets_totaux(fichiers: list[FichierDepot], cible: str | None, motifs: list[
     pas de pourcentage du tout.
     """
     if cible is not None:
-        retenus = [fichier for fichier in fichiers if fichier.nom == cible]
+        # Le total couvre TOUTES les parts du modèle, pas seulement celle qui a été cliquée :
+        # sinon la barre annonce « terminé » à la première part et masque un modèle incomplet.
+        attendus = set(parts_du_meme_modele(cible, fichiers))
+        retenus = [fichier for fichier in fichiers if fichier.nom in attendus]
     else:
         retenus = [fichier for fichier in fichiers if not est_ignore(fichier.nom, motifs)]
     if not retenus or any(fichier.taille_octets is None for fichier in retenus):

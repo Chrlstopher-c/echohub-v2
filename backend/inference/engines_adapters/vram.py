@@ -23,7 +23,19 @@ from pydantic import BaseModel
 
 # Marge tolérée sur le retour à la ligne de base après déchargement. Elle couvre le contexte CUDA
 # résiduel du processus hôte, pas un dimensionnement de modèle : ne pas s'en servir pour planifier.
-MARGE_LIBERATION_OCTETS = 256 * 1024 * 1024
+#
+# MESURÉE, pas raisonnée. La valeur d'origine (256 Mo) était posée au jugé et rendait tout second
+# chargement impossible : le contexte CUDA d'un processus ne se libère JAMAIS tant que le processus
+# vit — décharger un modèle rend ses poids, pas le contexte du pilote.
+#
+# Relevés du 2026-08-14, RTX 5080 / CUDA 12.8 / WSL2, après déchargement complet :
+#     305 Mo au-dessus de la ligne de base
+#     384 Mo au-dessus de la ligne de base
+# Le résidu varie avec les kernels que la génération a fait charger, sans s'accumuler d'un cycle à
+# l'autre : ce n'est pas une fuite, et élargir la marge ne masque donc rien. 768 Mo passe au-dessus
+# du plus haut relevé sans rendre le contrôle inutile — une VRAM réellement non rendue se compte en
+# gigaoctets, pas en centaines de mégaoctets.
+MARGE_LIBERATION_OCTETS = 768 * 1024 * 1024
 
 # Bornes du sondage de libération. vLLM rend sa VRAM à la mort du processus : au-delà de cette
 # fenêtre, ce n'est plus de la latence, c'est un processus qui ne meurt pas.
