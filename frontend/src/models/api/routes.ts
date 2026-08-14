@@ -15,6 +15,7 @@ export const ROUTES = {
   recherche: (parametres: {
     requete: string;
     formats: readonly string[];
+    capacites: readonly string[];
     tri: string;
     ordre: string;
     page: number;
@@ -32,8 +33,16 @@ export const ROUTES = {
     for (const format of parametres.formats) {
       query.append('formats', format);
     }
+    // Même forme répétée pour les capacités, et même sémantique côté backend : elles se combinent
+    // en ET. Une sélection vide n'écrit aucun paramètre — l'appel est alors identique à l'ancien.
+    for (const capacite of parametres.capacites) {
+      query.append('capacites', capacite);
+    }
     return `/models/recherche?${query.toString()}`;
   },
+
+  /** `models.lister_capacites` — vocabulaire filtrable, libellés et définitions compris. */
+  capacites: '/models/capacites',
 
   /** `models.details` — fiche complète d'un dépôt, tailles de fichiers comprises. */
   depot: (depot: string): string => `/models/depots/${encodeURIComponent(depot)}`,

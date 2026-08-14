@@ -22,11 +22,13 @@ from backend.inference.engines_adapters.contrat import (
     MessageChat,
     MorceauGeneration,
     MoteurSupporte,
+    OccupationContexte,
     OptionsGeneration,
     PlanChargement,
     Sante,
 )
 from backend.inference.engines_adapters.diagnostic import Diagnostic, EchecChargement, qualifier
+from backend.inference.engines_adapters.experts_hote import SupportDeport, verifier_support
 from backend.inference.engines_adapters.journal import (
     EntreeJournal,
     SessionChargement,
@@ -55,6 +57,7 @@ __all__ = [
     "MessageChat",
     "OptionsGeneration",
     "MorceauGeneration",
+    "OccupationContexte",
     "Sante",
     "CauseEchec",
     # Diagnostic et journal
@@ -70,6 +73,10 @@ __all__ = [
     # Mesure
     "MesureVram",
     "lire_vram",
+    # Déport des experts en mémoire hôte — sonde exposée pour que l'appelant sache ce que la
+    # machine permet avant de planifier, plutôt que de l'apprendre par un échec de chargement.
+    "SupportDeport",
+    "verifier_support",
     # Adaptateurs concrets — usage réservé aux tests
     "AdaptateurMoteur",
     "AdaptateurLlamaCpp",

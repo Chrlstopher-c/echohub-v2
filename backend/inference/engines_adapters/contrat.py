@@ -12,7 +12,7 @@ attribut lu à `None` qui se transformerait plus loin en « Failed to load model
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Literal
+from typing import Any, Literal, Sequence
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -41,6 +41,10 @@ class CauseEchec(str, Enum):
     FICHIER_ILLISIBLE = "fichier_illisible"
     MOTEUR_ABSENT = "moteur_absent"
     MOTEUR_SANS_CUDA = "moteur_sans_cuda"
+    # Le plan demande de rappeler des tenseurs d'experts en mémoire hôte et le moteur installé ne
+    # sait pas le faire, ou ne l'a pas fait. Distincte de `VRAM_INSUFFISANTE` : ce n'est pas un
+    # manque de mémoire, c'est une stratégie de placement inapplicable ici.
+    DEPORT_EXPERTS_INDISPONIBLE = "deport_experts_indisponible"
     PLAN_INCOMPLET = "plan_incomplet"
     DELAI_DEPASSE = "delai_depasse"
     ANNULE = "annule"
@@ -71,6 +75,13 @@ class PlanChargement(BaseModel):
     identifiant_modele: str = ""
 
     couches_gpu: int = Field(description="Couches déléguées au GPU. -1 = toutes (llama.cpp).")
+
+    # Second axe de placement, indispensable sur un MoE : index des blocs dont les tenseurs
+    # `ffn_*_exps` sont rappelés en mémoire hôte alors que la couche reste sur le GPU. Quand cette
+    # liste est peuplée, `couches_gpu` vaut le nombre total de blocs et ne décrit donc plus seul le
+    # placement — c'est ici que se lit la part du modèle qui n'est pas en VRAM.
+    experts_deportes: list[int] = Field(default_factory=list)
+
     contexte: int = Field(gt=0, description="Fenêtre de contexte en tokens.")
     batch: int = Field(gt=0, description="Taille de lot de prompt processing.")
     type_kv_cache: str | None = Field(default=None, description="f16, q8_0, q4_0… None = défaut moteur.")
@@ -154,3 +165,240 @@ class Sante(BaseModel):
     modele: str | None = None
     latence_ms: float | None = None
     detail: str = ""
+
+
+# --------------------------------------------------------------- fenêtre de contexte
+#
+# Occupation de la fenêtre de contexte du modèle chargé. Tout ce qui suit est PUR : aucune valeur
+# n'est produite ici, seulement organisée. Les nombres de tokens viennent du tokenizer du modèle
+# réellement chargé (`AdaptateurMoteur.compter_tokens`) — jamais d'un ratio caractères/tokens.
+# La v1 tronquait sur « 4 caractères = 1 token » ; sur un vocabulaire de 248 320 entrées, cette
+# constante se trompe d'un facteur qui rend l'affichage mensonger plutôt qu'approximatif.
+
+
+class PosteContexte(str, Enum):
+    """Postes de la décomposition. `LIBRE` est un poste à part entière, pas un reste implicite."""
+
+    SYSTEME = "systeme"
+    UTILISATEUR = "utilisateur"
+    ASSISTANT = "assistant"
+    RAISONNEMENT = "raisonnement"
+    LIBRE = "libre"
+
+
+# Ordre d'affichage : de ce que l'utilisateur subit (le système, qu'il ne voit pas) vers ce qu'il
+# produit, puis l'espace restant. Le raisonnement précède la réponse visible parce que c'est lui
+# que l'utilisateur découvre comme dévoreur de budget.
+ORDRE_POSTES: tuple[PosteContexte, ...] = (
+    PosteContexte.SYSTEME,
+    PosteContexte.UTILISATEUR,
+    PosteContexte.RAISONNEMENT,
+    PosteContexte.ASSISTANT,
+    PosteContexte.LIBRE,
+)
+
+# Balises littérales des blocs de raisonnement (famille Qwen3, DeepSeek-R1). Le domaine `chat`
+# persiste le contenu brut du moteur : quand le modèle les émet, elles sont bien dans le texte.
+BALISE_RAISONNEMENT_OUVRANTE = "<think>"
+BALISE_RAISONNEMENT_FERMANTE = "</think>"
+
+# Ce que le décompte ne couvre pas, dit explicitement plutôt que comblé par une estimation.
+AVERTISSEMENT_GABARIT = (
+    "Non compté : les marqueurs que le moteur ajoute en assemblant le prompt (balises de rôle du "
+    "gabarit de conversation, BOS). llama-cpp-python n'expose pas de formatage sans génération, "
+    "ce surcoût n'est donc pas mesurable ici — il n'est pas estimé."
+)
+
+
+class SegmentContexte(BaseModel):
+    """Un fragment de texte et le poste auquel il appartient, avant comptage."""
+
+    model_config = ConfigDict(frozen=True)
+
+    poste: PosteContexte
+    texte: str
+
+
+class PartContexte(BaseModel):
+    """Un poste chiffré. `part` est rapportée au contexte total, pas à la somme des postes."""
+
+    poste: PosteContexte
+    tokens: int = Field(ge=0)
+    part: float = Field(ge=0.0, description="Fraction du contexte total, 0 à 1.")
+    segments: int = Field(ge=0, description="Nombre de fragments cumulés dans ce poste.")
+
+
+class OccupationContexte(BaseModel):
+    """Ce que la conversation occupe dans la fenêtre du modèle chargé, ou pourquoi c'est inconnu.
+
+    `mesurable` faux n'est pas une erreur : c'est l'absence de tokenizer (aucun modèle chargé,
+    moteur hors processus). Les champs chiffrés restent alors à `None` — un zéro ressemblerait à
+    une mesure et laisserait croire à un contexte libre.
+    """
+
+    mesurable: bool
+    raison: str = ""
+    moteur: MoteurSupporte | None = None
+    modele: str | None = None
+
+    # Le total de référence est le contexte SERVI, lu sur l'instance chargée, et non le contexte
+    # natif du modèle (262 144 déclarés contre 32 768 appliqués, par exemple). `contexte_plan` est
+    # ce que le plan demandait : l'écart entre les deux, s'il existe, est signalé, pas masqué.
+    contexte_total: int | None = None
+    contexte_plan: int | None = None
+
+    tokens_mesures: int | None = None
+    tokens_libres: int | None = None
+    depassement_tokens: int | None = Field(
+        default=None, description="Tokens au-delà de la fenêtre : la conversation n'y tient plus."
+    )
+    postes: list[PartContexte] = Field(default_factory=list)
+    avertissements: list[str] = Field(default_factory=list)
+
+
+class ComptageTokens(BaseModel):
+    """Décompte rendu par un adaptateur — ou son impossibilité, nommée.
+
+    Même forme que `Sante` : une mesure absente se déclare absente avec sa raison, elle ne se
+    dégrade pas en zéro.
+    """
+
+    possible: bool
+    raison: str = ""
+    tokens_par_texte: list[int] = Field(default_factory=list)
+    contexte_moteur: int | None = Field(
+        default=None, description="Contexte réellement servi, lu sur le moteur (llama.cpp : n_ctx())."
+    )
+
+
+def separer_raisonnement(contenu: str) -> tuple[str, str]:
+    """Sépare un message assistant en (visible, raisonnement) sans perdre un seul caractère.
+
+    Les balises restent DANS la part raisonnement : ce sont du texte renvoyé au modèle au tour
+    suivant, donc des tokens réels. Un bloc jamais refermé (génération interrompue) court jusqu'à
+    la fin, parce que c'est exactement ce que le moteur relira.
+
+    Seules ces deux balises littérales sont reconnues. Un modèle qui baliserait autrement est
+    compté intégralement en visible : mieux vaut un poste raisonnement vide qu'un découpage deviné.
+    """
+    visible: list[str] = []
+    raisonnement: list[str] = []
+    reste = contenu
+    # Borne explicite : chaque tour consomme au moins une balise ouvrante, il ne peut donc pas y en
+    # avoir plus que la longueur du texte divisée par celle de la balise.
+    tours_max = len(contenu) // len(BALISE_RAISONNEMENT_OUVRANTE) + 1
+    for _ in range(tours_max):
+        debut = reste.find(BALISE_RAISONNEMENT_OUVRANTE)
+        if debut < 0:
+            break
+        visible.append(reste[:debut])
+        apres = reste[debut:]
+        fin = apres.find(BALISE_RAISONNEMENT_FERMANTE)
+        if fin < 0:
+            raisonnement.append(apres)
+            reste = ""
+            break
+        coupe = fin + len(BALISE_RAISONNEMENT_FERMANTE)
+        raisonnement.append(apres[:coupe])
+        reste = apres[coupe:]
+    # Reliquat : texte après le dernier bloc, ou tout le texte s'il n'y avait aucune balise.
+    visible.append(reste)
+    return "".join(visible), "".join(raisonnement)
+
+
+def decouper_segments(prompt_systeme: str, messages: Sequence[MessageChat]) -> list[SegmentContexte]:
+    """Range les textes à mesurer par poste. Aucun texte vide : il coûterait un appel pour zéro."""
+    segments: list[SegmentContexte] = []
+    if prompt_systeme:
+        segments.append(SegmentContexte(poste=PosteContexte.SYSTEME, texte=prompt_systeme))
+    for message in messages:
+        if not message.content:
+            continue
+        if message.role != "assistant":
+            poste = PosteContexte.SYSTEME if message.role == "system" else PosteContexte.UTILISATEUR
+            segments.append(SegmentContexte(poste=poste, texte=message.content))
+            continue
+        visible, raisonnement = separer_raisonnement(message.content)
+        if visible:
+            segments.append(SegmentContexte(poste=PosteContexte.ASSISTANT, texte=visible))
+        if raisonnement:
+            segments.append(SegmentContexte(poste=PosteContexte.RAISONNEMENT, texte=raisonnement))
+    return segments
+
+
+def _cumuler_par_poste(
+    segments: Sequence[SegmentContexte],
+    tokens_par_segment: Sequence[int],
+) -> tuple[dict[PosteContexte, int], dict[PosteContexte, int]]:
+    """Somme les tokens et compte les fragments de chaque poste."""
+    if len(segments) != len(tokens_par_segment):
+        raise ValueError(
+            f"Décompte incohérent : {len(segments)} segments pour {len(tokens_par_segment)} valeurs."
+        )
+    tokens: dict[PosteContexte, int] = {}
+    nombres: dict[PosteContexte, int] = {}
+    for segment, compte in zip(segments, tokens_par_segment):
+        tokens[segment.poste] = tokens.get(segment.poste, 0) + compte
+        nombres[segment.poste] = nombres.get(segment.poste, 0) + 1
+    return tokens, nombres
+
+
+def _construire_postes(
+    tokens: dict[PosteContexte, int],
+    nombres: dict[PosteContexte, int],
+    contexte_total: int,
+) -> list[PartContexte]:
+    """Chiffre chaque poste dans l'ordre d'affichage, pourcentage compris."""
+    # `contexte_total` vient d'une lecture moteur, donc > 0 ; la garde évite une division par zéro
+    # si un moteur futur rendait 0, sans pour autant fabriquer un total.
+    reference = max(contexte_total, 1)
+    return [
+        PartContexte(
+            poste=poste,
+            tokens=tokens[poste],
+            part=round(tokens[poste] / reference, 6),
+            segments=nombres.get(poste, 0),
+        )
+        for poste in ORDRE_POSTES
+        # Un poste vide n'entre pas dans la légende : il ajouterait du bruit sans rien mesurer.
+        # `LIBRE` fait exception — à zéro, il dit précisément que la fenêtre est saturée.
+        if poste is PosteContexte.LIBRE or tokens.get(poste, 0) > 0
+    ]
+
+
+def assembler_occupation(
+    segments: Sequence[SegmentContexte],
+    tokens_par_segment: Sequence[int],
+    contexte_total: int,
+    contexte_plan: int | None = None,
+    moteur: MoteurSupporte | None = None,
+    modele: str | None = None,
+) -> OccupationContexte:
+    """Compose la vue chiffrée. Les pourcentages sont calculés ici, une seule fois, jamais côté client."""
+    tokens, nombres = _cumuler_par_poste(segments, tokens_par_segment)
+    mesures = sum(tokens.values())
+    tokens[PosteContexte.LIBRE] = max(0, contexte_total - mesures)
+    postes = _construire_postes(tokens, nombres, contexte_total)
+    return OccupationContexte(
+        mesurable=True,
+        moteur=moteur,
+        modele=modele,
+        contexte_total=contexte_total,
+        contexte_plan=contexte_plan,
+        tokens_mesures=mesures,
+        tokens_libres=tokens[PosteContexte.LIBRE],
+        depassement_tokens=max(0, mesures - contexte_total),
+        postes=postes,
+        avertissements=_avertissements(contexte_total, contexte_plan),
+    )
+
+
+def _avertissements(contexte_total: int, contexte_plan: int | None) -> list[str]:
+    """Ce que le décompte ne couvre pas, et tout écart entre le plan et ce que le moteur sert."""
+    lignes = [AVERTISSEMENT_GABARIT]
+    if contexte_plan is not None and contexte_plan != contexte_total:
+        lignes.append(
+            f"Le moteur sert {contexte_total} tokens de contexte alors que le plan en demandait "
+            f"{contexte_plan} : la référence affichée est celle du moteur, la seule mesurée."
+        )
+    return lignes

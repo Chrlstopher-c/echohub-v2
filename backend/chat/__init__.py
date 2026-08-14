@@ -1,7 +1,11 @@
-"""Domaine `chat` — conversations, réglages, génération en streaming, annulation.
+"""Domaine `chat` — conversations en arbre, réglages, génération en streaming, annulation.
 
 Interface publique du domaine. Les autres domaines et la couche d'assemblage n'importent que ce qui
-est exporté ici ; `depot`, `generation`, `annulation` et `adaptation_inference` sont des internes.
+est exporté ici ; `depot`, `generation`, `annulation`, `branches` et `adaptation_inference` sont
+des internes.
+
+Une conversation est un ARBRE de messages (`MessageChat.parent_id`) dont la vue courante est un
+chemin. Rejouer ou éditer un message ouvre une branche sœur : rien n'est réécrit, rien n'est perdu.
 
 Assemblage type dans `main.py` :
 
@@ -21,17 +25,28 @@ fabrique `creer_moteur_chat()` exposée par `backend.inference`.
 from backend.chat.annulation import annuler as annuler_generation
 from backend.chat.annulation import conversations_actives, est_active
 from backend.chat.depot import assurer_schema_chat
-from backend.chat.erreurs import ContratInferenceInvalide, GenerationDejaEnCours
+from backend.chat.erreurs import (
+    BrancheInvalide,
+    ContratInferenceInvalide,
+    GenerationDejaEnCours,
+    MessageIntrouvable,
+)
 from backend.chat.modeles import (
+    ActivationBranche,
+    ArbreConversation,
     ConversationDetaillee,
     CreationConversation,
+    DemandeEdition,
     DemandeGeneration,
+    DemandeRejeu,
+    EtatBranche,
     EvenementDebut,
     EvenementErreur,
     EvenementFin,
     EvenementFlux,
     EvenementFragment,
     MajConversation,
+    MajParametres,
     MajReglages,
     MessageChat,
     ParametresEchantillonnage,
@@ -78,6 +93,7 @@ __all__ = [
     # Structures du domaine
     "RoleMessage",
     "ParametresEchantillonnage",
+    "MajParametres",
     "ReglagesConversation",
     "MessageChat",
     "ResumeConversation",
@@ -91,7 +107,15 @@ __all__ = [
     "EvenementFragment",
     "EvenementFin",
     "EvenementErreur",
+    # Branches de conversation
+    "EtatBranche",
+    "ArbreConversation",
+    "ActivationBranche",
+    "DemandeRejeu",
+    "DemandeEdition",
     # Erreurs propres au domaine
     "GenerationDejaEnCours",
     "ContratInferenceInvalide",
+    "MessageIntrouvable",
+    "BrancheInvalide",
 ]

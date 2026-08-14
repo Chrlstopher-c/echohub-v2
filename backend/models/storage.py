@@ -145,6 +145,21 @@ def fichiers_gguf(dossier: Path) -> list[Path]:
     return [chemin for chemin in trouves if not chemin.name.lower().startswith("mmproj")]
 
 
+def fichiers_projecteurs(dossier: Path) -> list[Path]:
+    """Projecteurs multimodaux (`mmproj*.gguf`) présents dans un dossier de modèle.
+
+    Le pendant exact de l'exclusion faite par `fichiers_gguf` : ces fichiers ne sont pas le modèle,
+    mais leur présence est le signe le plus tangible qu'une tour de vision accompagne les poids. Les
+    ignorer partout reviendrait à jeter la seule trace de vision lisible sans ouvrir un octet.
+    """
+    try:
+        trouves = sorted(dossier.rglob("*.gguf"))
+    except OSError as exc:
+        logger.error("Listage des projecteurs de {} impossible : {}", dossier, exc)
+        return []
+    return [chemin for chemin in trouves if chemin.name.lower().startswith("mmproj")]
+
+
 def fichiers_safetensors(dossier: Path) -> list[Path]:
     """Fichiers safetensors présents dans un dossier de modèle, triés par nom."""
     try:

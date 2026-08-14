@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 
 from backend.core.db import ModeleEnregistre, execute, fetch_all, fetch_one, maintenant
 from backend.core.errors import MetadonneesIllisibles, ModeleIntrouvable
+from backend.models.capacites import CapaciteDeduite, SignauxDepot, deduire_capacites
 from backend.models.coherence import RapportCoherence, verifier_modele
 from backend.models.gguf_metadata import MetadonneesGGUF, lire_metadonnees
 from backend.models.safetensors_reader import lire_config, lire_index
@@ -32,6 +33,7 @@ from backend.models.storage import (
     dossier_modele,
     dossiers_presents,
     fichiers_gguf,
+    fichiers_projecteurs,
     identifiant,
     octets_fichier,
     taille_reelle_octets,
@@ -242,6 +244,22 @@ def metadonnees(identifiant_modele: str) -> MetadonneesGGUF | None:
 def verifier(identifiant_modele: str) -> RapportCoherence:
     """Confronte un modèle du registre à son propre contenu."""
     return verifier_modele(Path(obtenir(identifiant_modele).chemin))
+
+
+def capacites(identifiant_modele: str) -> list[CapaciteDeduite]:
+    """Capacités DÉDUITES d'un modèle local, à partir de ce qui reste visible sur le disque.
+
+    Le registre ne conserve pas les étiquettes du Hub — elles décrivent un dépôt, pas un fichier, et
+    les recopier en base reproduirait le défaut de la v1 (une déclaration figée qu'on finit par lire
+    comme un fait). La déduction locale ne dispose donc que du nom du dépôt et des projecteurs
+    présents à côté des poids : elle est plus pauvre que celle de la recherche, et c'est assumé.
+
+    Une liste vide signifie « rien de reconnaissable localement », jamais « le modèle ne sait pas ».
+    """
+    entree = obtenir(identifiant_modele)
+    dossier = dossier_modele(entree.depot)
+    projecteurs = [chemin.name for chemin in fichiers_projecteurs(dossier)]
+    return deduire_capacites(SignauxDepot(depot=entree.depot, fichiers=projecteurs))
 
 
 def _entrees_orphelines() -> list[str]:

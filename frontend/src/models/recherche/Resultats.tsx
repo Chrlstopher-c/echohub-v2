@@ -1,11 +1,13 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import type { ReactElement } from 'react';
 import { Badge, Button, Card, fadeUp } from '../../shared/design';
-import type { ResultatRecherche } from '../api/types';
+import type { Capacite, ResultatRecherche } from '../api/types';
 import { PastilleFaisabilite } from '../faisabilite/Faisabilite';
 import type { BudgetMemoire, Verdict } from '../faisabilite/evaluation';
 import { miseEnAvant, repartition, variantes, type Variante } from '../faisabilite/variantes';
 import { compact, dateCourte, octetsLisibles } from '../format';
+import { CapacitesDeduites } from './CapacitesDeduites';
+import type { CarteCapacites } from './capacites';
 
 /*
  * Résultats de recherche : un dépôt par carte, lisible d'un coup d'œil.
@@ -13,6 +15,10 @@ import { compact, dateCourte, octetsLisibles } from '../format';
  * La hiérarchie de lecture est délibérée — nom, puis faisabilité, puis popularité. Un modèle très
  * téléchargé qui ne rentre pas dans 16 Go n'a aucun intérêt sur cette machine, et l'interface doit
  * le dire avant que l'utilisateur ne lance vingt gigaoctets de transfert.
+ *
+ * Les capacités déduites s'insèrent après le verdict et avant les compteurs : elles disent ce que
+ * le dépôt prétend savoir faire, ce qui n'a d'intérêt qu'une fois su que le modèle tient sur la
+ * machine. Elles ne montent donc pas dans l'en-tête, où elles concurrenceraient une mesure.
  */
 
 const TON_VARIANTE: Record<Verdict, 'vram' | 'ram' | 'critical' | 'neutral'> = {
@@ -86,10 +92,14 @@ function EnTeteDepot({ resultat, avant }: { resultat: ResultatRecherche; avant: 
 function CarteDepot({
   resultat,
   budget,
+  vocabulaire,
+  exigees,
   onChoisir,
 }: {
   resultat: ResultatRecherche;
   budget: BudgetMemoire;
+  vocabulaire: CarteCapacites;
+  exigees: readonly Capacite[];
   onChoisir: (resultat: ResultatRecherche) => void;
 }): ReactElement {
   const liste = variantes(resultat, budget);
@@ -99,6 +109,7 @@ function CarteDepot({
       <div className="space-y-2">
         <Variantes liste={liste} />
         <Resume liste={liste} />
+        <CapacitesDeduites deduites={resultat.capacites_deduites} carte={vocabulaire} exigees={exigees} />
         <Statistiques resultat={resultat} />
       </div>
 
@@ -114,16 +125,26 @@ function CarteDepot({
 export interface ResultatsProps {
   resultats: readonly ResultatRecherche[];
   budget: BudgetMemoire;
+  /** Libellés publiés des capacités ; vide tant que le vocabulaire n'a pas été lu. */
+  vocabulaire: CarteCapacites;
+  /** Capacités actuellement filtrées — signalées sur les cartes pour relier filtre et résultat. */
+  exigees: readonly Capacite[];
   onChoisir: (resultat: ResultatRecherche) => void;
 }
 
-export function Resultats({ resultats, budget, onChoisir }: ResultatsProps): ReactElement {
+export function Resultats({ resultats, budget, vocabulaire, exigees, onChoisir }: ResultatsProps): ReactElement {
   return (
     <div className="grid gap-3 md:grid-cols-2">
       <AnimatePresence initial={false}>
         {resultats.map((resultat) => (
           <motion.div key={resultat.depot} variants={fadeUp} initial="hidden" animate="visible" exit="exit" layout>
-            <CarteDepot resultat={resultat} budget={budget} onChoisir={onChoisir} />
+            <CarteDepot
+              resultat={resultat}
+              budget={budget}
+              vocabulaire={vocabulaire}
+              exigees={exigees}
+              onChoisir={onChoisir}
+            />
           </motion.div>
         ))}
       </AnimatePresence>

@@ -1,0 +1,74 @@
+# EchoHub v2 — configuration SearXNG.
+#
+# Monté en lecture seule sur /etc/searxng/settings.yml (cf. docker-compose.yml). L'instance n'est
+# joignable que depuis le réseau interne de la pile : aucun port n'est publié vers l'hôte, seul le
+# backend l'appelle sur http://searxng:8080.
+#
+# CE QUI EST ACTIVÉ, ET POURQUOI
+#
+# 1. `search.formats` inclut `json`. C'est LE réglage sans lequel rien ne fonctionne : par défaut
+#    SearXNG n'autorise que `html` et répond **403** à toute requête portant `format=json`. Le
+#    domaine backend traduit d'ailleurs ce 403 en remédiation explicite, parce que c'est l'erreur
+#    la plus probable après un changement de configuration.
+# 2. `server.limiter: false`. Le limiteur (détection de robots) rejette les appels programmatiques
+#    et réclame un Valkey/Redis pour tenir ses compteurs. Ni l'un ni l'autre n'a de sens ici :
+#    l'unique client est le backend, sur un réseau interne, sans exposition externe.
+# 3. `server.secret_key` est défini. SearXNG refuse de démarrer sans clé.
+# 4. `server.method: GET`. Le backend interroge /search en GET ; le fixer ici retire toute
+#    ambiguïté sur la méthode acceptée par l'instance.
+# 5. `use_default_settings: true`. Seul ce qui précède est surchargé ; **la liste des moteurs reste
+#    celle d'amont**, volontairement. Écrire une liste de moteurs ici serait une supposition non
+#    mesurée : les noms de moteurs changent d'une version à l'autre, et un nom erroné empêche
+#    SearXNG de démarrer. Restreindre la liste se fera à partir des noms lus sur l'instance qui
+#    tourne (route /config), pas de mémoire.
+#
+# CE QUI EST DÉSACTIVÉ
+#
+# - `image_proxy` : proxifier les vignettes ferait sortir du trafic pour un affichage dont le
+#   backend n'a pas l'usage — il ne consomme que du JSON.
+# - `enable_metrics` : compteurs internes inutiles pour une instance à un seul client.
+# - les URL de contact, de dons et de politique de confidentialité : cette instance n'est publique
+#   pour personne.
+
+use_default_settings: true
+
+general:
+  instance_name: "EchoHub — recherche locale"
+  debug: false
+  enable_metrics: false
+  donation_url: false
+  contact_url: false
+  privacypolicy_url: false
+
+server:
+  base_url: "http://searxng:8080/"
+  bind_address: "0.0.0.0"
+  port: 8080
+  # Valeur de repli : le compose passe SEARXNG_SECRET, qui prime quand l'image gère cette variable.
+  # L'enjeu est faible ici (aucun port publié, aucun utilisateur tiers) mais la clé doit exister.
+  secret_key: "echohub-v2-instance-locale-non-publiee"
+  limiter: false
+  public_instance: false
+  image_proxy: false
+  method: "GET"
+
+search:
+  # Le point central de ce fichier : sans `json`, /search répond 403 au backend.
+  formats:
+    - html
+    - json
+  safe_search: 0
+  # Pas de complétion : elle ouvrirait une seconde voie d'appel réseau dont personne n'a l'usage.
+  autocomplete: ""
+  # Aucun filtre de langue par défaut ; la langue est un paramètre de chaque requête du backend.
+  default_lang: "all"
+
+outgoing:
+  # Un moteur lent ne doit pas décider du temps de réponse de l'API : SearXNG rend ce qu'il a
+  # obtenu dans ce délai et signale les autres dans `unresponsive_engines` — que le backend
+  # expose telle quelle, plutôt que de présenter une réponse partielle comme complète.
+  request_timeout: 4.0
+  max_request_timeout: 8.0
+  pool_connections: 50
+  pool_maxsize: 10
+  enable_http2: true

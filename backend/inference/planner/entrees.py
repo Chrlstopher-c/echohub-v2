@@ -59,6 +59,10 @@ class CauseEchec(str, Enum):
     MEMOIRE_HOTE_INSUFFISANTE = "memoire_hote_insuffisante"
     CONTEXTE_REFUSE = "contexte_refuse"
     MOTEUR_INDISPONIBLE = "moteur_indisponible"
+    # Le moteur n'a pas su rappeler les tenseurs d'experts en mémoire hôte. C'est la seule cause qui
+    # disqualifie la STRATÉGIE de placement et non son dimensionnement : redimensionner ne servirait
+    # à rien, il faut retomber sur la coupe par couches entières.
+    DEPORT_EXPERTS_INDISPONIBLE = "deport_experts_indisponible"
     INCONNUE = "inconnue"
 
 
@@ -86,7 +90,11 @@ class MetadonneesModele(BaseModel):
     dimension_embedding: int = Field(gt=0)
 
     # `{arch}.feed_forward_length` — dimension interne du bloc FFN, dimensionne les tampons.
-    dimension_ffn: int = Field(gt=0)
+    # ABSENTE sur les architectures à experts : `qwen35moe` ne déclare que
+    # `{arch}.expert_feed_forward_length`, et exiger ce champ rendait le MoE de la machine
+    # INCONSTRUCTIBLE, donc non planifiable. `None` plutôt qu'un repli : la largeur d'activation se
+    # reconstruit alors depuis les champs d'experts (cf. `budget.largeur_activation_ffn`).
+    dimension_ffn: int | None = Field(default=None, gt=0)
 
     # `{arch}.attention.head_count` et `.head_count_kv` (GQA : moins de têtes KV que de têtes Q).
     nombre_tetes_attention: int = Field(gt=0)
@@ -107,6 +115,38 @@ class MetadonneesModele(BaseModel):
     quantification: str | None = None
     est_moe: bool = False
 
+    # ------------------------------------------------------------- mélange d'experts
+    #
+    # Tout ce bloc vaut `None` ou reste vide quand la mesure n'existe pas, et le planificateur
+    # retombe alors sur la coupe par couches entières. Aucune de ces valeurs n'a de défaut : une
+    # largeur d'expert prise pour une largeur de bloc sous-dimensionne les tampons d'un facteur 8.
+
+    # `{arch}.expert_count` et `{arch}.expert_used_count` — mesurés à 256 et 8 sur qwen35moe.
+    nombre_experts: int | None = Field(default=None, gt=0)
+    nombre_experts_actifs: int | None = Field(default=None, gt=0)
+
+    # `{arch}.expert_feed_forward_length` — largeur d'UN expert (512 mesuré). Ce n'est PAS la
+    # largeur vive d'un bloc : `nombre_experts_actifs` experts sont routés ensemble à chaque token.
+    dimension_ffn_expert: int | None = Field(default=None, gt=0)
+    # `{arch}.expert_shared_feed_forward_length` — expert partagé (512 mesuré), actif à CHAQUE token
+    # quel que soit le routage. Il compte dans le dense résident et ne se déporte jamais.
+    dimension_ffn_expert_partage: int | None = Field(default=None, gt=0)
+
+    # Poids RÉEL de chaque bloc, et dedans celui des seuls tenseurs d'experts (`ffn_*_exps`), relevés
+    # sur l'index des tenseurs. Mesuré sur le 35B-A3B IQ3_M : 13,057 Gio d'experts contre 0,721 Gio
+    # de dense sur 40 blocs — 90,9 % du fichier concentré dans les tenseurs dont 8 sur 256 sont lus
+    # par token. C'est cette dissymétrie qui rend la coupe par couches entières mauvaise, et c'est
+    # elle qui autorise le déport d'experts. Longueur exigée : `nombre_couches`, ou vide.
+    octets_par_bloc: tuple[int, ...] = ()
+    octets_experts_par_bloc: tuple[int, ...] = ()
+    # Tenseurs hors blocs (`token_embd`, `output.weight`) : 0,592 Gio mesurés sur le même fichier.
+    octets_hors_blocs: int | None = Field(default=None, ge=0)
+
+    # `{arch}.full_attention_interval` — une couche sur N porte un cache KV, les autres portent un
+    # état récurrent. Mesuré à 4 sur les DEUX modèles de la machine : 10 couches d'attention sur 40,
+    # confirmé par le comptage des `attn_q.weight`. `None` = toutes les couches en portent un.
+    intervalle_attention_pleine: int | None = Field(default=None, gt=0)
+
     @model_validator(mode="after")
     def _verifier_coherence(self) -> MetadonneesModele:
         """Une métadonnée incohérente doit échouer ici, pas produire un plan silencieusement faux."""
@@ -115,7 +155,27 @@ class MetadonneesModele(BaseModel):
                 f"nombre_tetes_kv ({self.nombre_tetes_kv}) > nombre_tetes_attention "
                 f"({self.nombre_tetes_attention}) : métadonnées contradictoires."
             )
+        self._verifier_mesures_par_bloc()
         return self
+
+    def _verifier_mesures_par_bloc(self) -> None:
+        """Une mesure par bloc partielle est pire qu'absente : elle se lirait comme un modèle plus léger."""
+        for nom, mesure in (
+            ("octets_par_bloc", self.octets_par_bloc),
+            ("octets_experts_par_bloc", self.octets_experts_par_bloc),
+        ):
+            if mesure and len(mesure) != self.nombre_couches:
+                raise ValueError(
+                    f"{nom} porte {len(mesure)} valeurs pour {self.nombre_couches} couches : "
+                    "mesure incomplète, elle ne doit pas être transmise partiellement."
+                )
+        if not (self.octets_par_bloc and self.octets_experts_par_bloc):
+            return
+        for index, (total, experts) in enumerate(zip(self.octets_par_bloc, self.octets_experts_par_bloc)):
+            if experts > total:
+                raise ValueError(
+                    f"Bloc {index} : {experts} octets d'experts pour un bloc de {total} octets."
+                )
 
 
 class ModeleCharge(BaseModel):

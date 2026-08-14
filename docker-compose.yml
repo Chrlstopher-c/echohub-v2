@@ -65,6 +65,9 @@ services:
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       HF_TOKEN: ${HF_TOKEN:-}
+      # Nom de service Docker, résolu par le DNS interne du réseau de la pile. Le domaine
+      # `recherche` lit cette variable via backend/core/config.py — rien n'est codé en dur.
+      SEARXNG_URL: ${SEARXNG_URL:-http://searxng:8080}
       # GGML_CUDA_ENABLE_UNIFIED_MEMORY est volontairement ABSENTE : sous WSL2 elle immobilise
       # le modèle en RAM avec la VRAM figée à 2 Go (mesuré). ggml active le comportement sur la
       # simple présence de la variable — une valeur vide suffirait à nuire. L'entrypoint la
@@ -79,20 +82,35 @@ services:
       retries: 3
       start_period: 60s
 
-  # --- Recherche web, prévue mais pas dans le MVP ------------------------------------------
-  # Sous profil : `docker compose up` ne le démarre PAS et il ne consomme rien. Il n'est là que
-  # pour éviter de retoucher l'infrastructure le jour où la recherche web arrivera :
-  #   docker compose --profile recherche-web up -d
-  # Le backend l'atteindra alors sur http://searxng:8080 (réseau interne, aucun port publié).
+  # --- Recherche web, désormais active ------------------------------------------------------
+  # Le profil `recherche-web` qui laissait ce service éteint a été retiré : il démarre avec la
+  # pile. Toujours aucun port publié — `expose` ne l'ouvre que sur le réseau interne, où le
+  # backend l'atteint sur http://searxng:8080. Rien n'est joignable depuis l'hôte ni l'extérieur.
+  #
+  # Pas de `depends_on` côté echohub, volontairement : le backend doit démarrer et servir même si
+  # la recherche est indisponible. Son domaine `recherche` rend alors une erreur métier explicite
+  # (503) et sa sonde /api/recherche/sante dit ce qui a été mesuré.
   searxng:
-    profiles: ["recherche-web"]
     image: searxng/searxng:latest
     container_name: echohub-searxng
     restart: unless-stopped
     volumes:
+      # Le volume nommé reste monté sur tout /etc/searxng : l'image y écrit ce dont elle a besoin
+      # (ownership, fichiers dérivés). Notre configuration est superposée PAR-DESSUS, en lecture
+      # seule, sur le seul fichier qui nous intéresse — Docker applique les montages du chemin le
+      # plus court au plus long, donc le fichier gagne sur le volume.
+      # Sa présence empêche aussi l'entrypoint d'en régénérer un par défaut, dans lequel le format
+      # JSON serait à nouveau désactivé.
       - echohub_searxng:/etc/searxng
+      - ./docker/searxng/settings.yml:/etc/searxng/settings.yml:ro
     environment:
       SEARXNG_BASE_URL: http://searxng:8080/
+      # SearXNG refuse de démarrer sans clé. La valeur du fichier de configuration sert de repli ;
+      # celle-ci prime lorsque l'image gère la variable. Enjeu faible : instance non publiée.
+      SEARXNG_SECRET: ${SEARXNG_SECRET:-echohub-v2-instance-locale-non-publiee}
+      # Redondant avec settings.yml, et c'est le but : le limiteur rejette les appels
+      # programmatiques et réclame un Valkey. Les deux voies de réglage doivent dire la même chose.
+      SEARXNG_LIMITER: "false"
     expose:
       - "8080"
 

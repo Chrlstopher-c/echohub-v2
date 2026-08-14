@@ -24,13 +24,19 @@ from loguru import logger
 
 from backend.chat import annulation, depot, port_inference
 from backend.chat.annulation import GenerationActive
+from backend.chat.erreurs import BrancheInvalide
 from backend.chat.modeles import (
+    MAX_TOKENS_PLAFOND,
+    DemandeEdition,
     DemandeGeneration,
+    DemandeRejeu,
     EvenementDebut,
     EvenementErreur,
     EvenementFin,
     EvenementFlux,
     EvenementFragment,
+    MessageChat,
+    ParametresEchantillonnage,
     ReglagesConversation,
 )
 from backend.chat.port_inference import (
@@ -53,13 +59,20 @@ MARGE_FRAGMENTS_PAR_TOKEN = 4
 
 @dataclass(slots=True)
 class PreparationGeneration:
-    """Tout ce que `diffuser()` doit savoir, figé avant l'ouverture du flux."""
+    """Tout ce que `diffuser()` doit savoir, figé avant l'ouverture du flux.
+
+    `parent_id` est décidé ICI, une fois, et transporté jusqu'à la persistance : relire la feuille
+    active au moment d'écrire la réponse rattacherait le message à ce que la conversation est
+    devenue entre-temps, pas à ce sur quoi la génération a réellement travaillé.
+    """
 
     conversation_id: str
     message_id: str
     modele_id: str | None
     requete: RequeteGeneration
     generation: GenerationActive
+    parent_id: str | None = None
+    message_utilisateur_id: str | None = None
 
 
 @dataclass(slots=True)
@@ -78,23 +91,131 @@ class _EtatFlux:
 
 
 def preparer(conversation_id: str, demande: DemandeGeneration) -> PreparationGeneration:
-    """Valide, persiste le message utilisateur et réserve la conversation. Peut lever."""
+    """Valide, persiste le message utilisateur et réserve la conversation. Peut lever.
+
+    Le message s'accroche à la feuille active : on prolonge la branche que l'utilisateur a sous les
+    yeux, jamais celle qu'il a quittée.
+    """
     conversation = depot.exiger_conversation(conversation_id)
     reglages = depot.lire_reglages(conversation_id)
-    parametres = demande.parametres or reglages.parametres
     modele_id = demande.modele_id or conversation.modele_id
-
     message_assistant = _identifiant_provisoire()
     generation = annulation.reserver(conversation_id, message_assistant)
     try:
-        depot.ajouter_message(conversation_id, role="user", contenu=demande.contenu)
+        message_utilisateur = depot.ajouter_message(
+            conversation_id,
+            role="user",
+            contenu=demande.contenu,
+            parent_id=depot.feuille_active(conversation_id),
+        )
         if modele_id is not None and modele_id != conversation.modele_id:
             depot.definir_modele_conversation(conversation_id, modele_id)
-        messages = _construire_contexte(conversation_id, reglages)
+        messages = _construire_contexte(conversation_id, reglages, message_utilisateur.id)
     except EchoHubError:
         annulation.liberer(generation)
         raise
 
+    return _preparation(
+        conversation_id=conversation_id,
+        message_assistant=message_assistant,
+        modele_id=modele_id,
+        parametres=demande.parametres or reglages.parametres,
+        messages=messages,
+        generation=generation,
+        ancre=message_utilisateur.id,
+        message_utilisateur_id=message_utilisateur.id,
+    )
+
+
+def preparer_rejeu(conversation_id: str, message_id: str, demande: DemandeRejeu) -> PreparationGeneration:
+    """Rejoue un message dans une nouvelle sous-branche : l'existante n'est ni modifiée ni perdue."""
+    return _preparer_branche(conversation_id, message_id, demande, contenu=None)
+
+
+def preparer_edition(conversation_id: str, message_id: str, demande: DemandeEdition) -> PreparationGeneration:
+    """Édite un message utilisateur : son texte corrigé devient une branche sœur, l'original reste."""
+    return _preparer_branche(conversation_id, message_id, demande, contenu=demande.contenu)
+
+
+def _preparer_branche(
+    conversation_id: str,
+    message_id: str,
+    demande: DemandeRejeu,
+    contenu: str | None,
+) -> PreparationGeneration:
+    """Ouvre une branche sœur du message visé, puis prépare la génération qui l'y prolonge."""
+    conversation = depot.exiger_conversation(conversation_id)
+    cible = depot.exiger_message(conversation_id, message_id)
+    _verifier_branchable(cible, contenu)
+    reglages = depot.lire_reglages(conversation_id)
+    modele_id = demande.modele_id or conversation.modele_id
+    message_assistant = _identifiant_provisoire()
+    generation = annulation.reserver(conversation_id, message_assistant)
+    try:
+        ancre, message_utilisateur_id = _ancrer_branche(cible, contenu)
+        messages = _construire_contexte(conversation_id, reglages, ancre)
+        # Écrit APRÈS la construction du contexte : une branche refusée ne doit pas déplacer la
+        # vue vers un point de l'arbre où rien ne sera généré. Tant que la nouvelle réponse n'est
+        # pas persistée, la vue résolue redescend sur la variante existante (cf. `resoudre_feuille`).
+        depot.definir_feuille_active(conversation_id, ancre)
+    except EchoHubError:
+        annulation.liberer(generation)
+        raise
+    return _preparation(
+        conversation_id=conversation_id,
+        message_assistant=message_assistant,
+        modele_id=modele_id,
+        parametres=demande.parametres or reglages.parametres,
+        messages=messages,
+        generation=generation,
+        ancre=ancre,
+        message_utilisateur_id=message_utilisateur_id,
+    )
+
+
+def _verifier_branchable(cible: MessageChat, contenu: str | None) -> None:
+    """Refuse les branchements qui n'ont pas de sens, avec la raison exacte.
+
+    Réécrire une réponse du modèle en ferait un faux enregistrement de ce qu'il a produit : seule
+    la parole de l'utilisateur s'édite. Un message `system` n'est pas un tour de conversation mais
+    un réglage — il ne se rejoue pas.
+    """
+    if cible.role not in ("user", "assistant"):
+        raise BrancheInvalide(f"Un message de rôle « {cible.role} » ne porte pas de branche.")
+    if contenu is not None and cible.role != "user":
+        raise BrancheInvalide("Seul un message utilisateur peut être édité.")
+
+
+def _ancrer_branche(cible: MessageChat, contenu: str | None) -> tuple[str | None, str | None]:
+    """Point d'accroche de la réponse à venir, et message utilisateur créé s'il y en a un.
+
+    Une réponse se rejoue depuis SON parent : la nouvelle réponse devient sa sœur, sans qu'aucun
+    message ne soit récrit. Un message utilisateur (rejeu à l'identique ou édition) est recopié en
+    sœur : la branche s'ouvre à partir du même parent, et l'original garde sa propre suite.
+    """
+    if cible.role == "assistant":
+        return cible.parent_id, None
+    nouveau = depot.ajouter_message(
+        cible.conversation_id,
+        role="user",
+        contenu=cible.contenu if contenu is None else contenu,
+        parent_id=cible.parent_id,
+    )
+    return nouveau.id, nouveau.id
+
+
+def _preparation(
+    *,
+    conversation_id: str,
+    message_assistant: str,
+    modele_id: str | None,
+    parametres: ParametresEchantillonnage,
+    messages: list[MessageInference],
+    generation: GenerationActive,
+    ancre: str | None,
+    message_utilisateur_id: str | None,
+) -> PreparationGeneration:
+    """Assemble la préparation. Un seul endroit construit la requête envoyée au moteur."""
     requete = RequeteGeneration(messages=messages, parametres=parametres, modele_id=modele_id)
     return PreparationGeneration(
         conversation_id=conversation_id,
@@ -102,6 +223,8 @@ def preparer(conversation_id: str, demande: DemandeGeneration) -> PreparationGen
         modele_id=modele_id,
         requete=requete,
         generation=generation,
+        parent_id=ancre,
+        message_utilisateur_id=message_utilisateur_id,
     )
 
 
@@ -110,12 +233,17 @@ def _identifiant_provisoire() -> str:
     return str(uuid.uuid4())
 
 
-def _construire_contexte(conversation_id: str, reglages: ReglagesConversation) -> list[MessageInference]:
-    """Assemble prompt système + historique, en messages, jamais en budget de tokens estimé."""
-    historique = depot.lister_messages(conversation_id)
-    if reglages.historique_max_messages is not None:
-        historique = historique[-reglages.historique_max_messages :]
+def _construire_contexte(
+    conversation_id: str,
+    reglages: ReglagesConversation,
+    ancre: str | None,
+) -> list[MessageInference]:
+    """Assemble prompt système + chemin jusqu'à l'ancre, en messages, jamais en tokens estimés.
 
+    L'historique est le CHEMIN de la branche visée, pas tous les messages de la conversation : une
+    variante abandonnée ne doit plus peser sur ce que le modèle lit.
+    """
+    historique = _historique_branche(conversation_id, reglages, ancre)
     messages: list[MessageInference] = []
     if reglages.prompt_systeme.strip():
         messages.append(MessageInference(role="system", contenu=reglages.prompt_systeme))
@@ -126,7 +254,28 @@ def _construire_contexte(conversation_id: str, reglages: ReglagesConversation) -
         for message in historique
         if message.role != "system" and message.contenu.strip()
     )
+    if not messages:
+        # Le port exige au moins un message : une erreur métier lisible vaut mieux qu'une
+        # ValidationError remontée en 500 depuis la couche HTTP.
+        raise BrancheInvalide("Aucun contenu exploitable en amont de ce point.")
     return messages
+
+
+def _historique_branche(
+    conversation_id: str,
+    reglages: ReglagesConversation,
+    ancre: str | None,
+) -> list[MessageChat]:
+    """Chemin racine → ancre, tronqué en NOMBRE DE MESSAGES quand l'utilisateur l'a demandé."""
+    historique = [] if ancre is None else depot.chemin_jusqua(conversation_id, ancre)
+    if not historique:
+        raise BrancheInvalide(
+            "Aucun historique en amont de ce point : il n'y a rien à envoyer au moteur.",
+            details={"conversation_id": conversation_id, "ancre": ancre},
+        )
+    if reglages.historique_max_messages is None:
+        return historique
+    return historique[-reglages.historique_max_messages :]
 
 
 async def diffuser(preparation: PreparationGeneration) -> AsyncIterator[EvenementFlux]:
@@ -139,6 +288,8 @@ async def diffuser(preparation: PreparationGeneration) -> AsyncIterator[Evenemen
         conversation_id=preparation.conversation_id,
         message_id=preparation.message_id,
         modele_id=preparation.modele_id,
+        parent_id=preparation.parent_id,
+        message_utilisateur_id=preparation.message_utilisateur_id,
     )
     try:
         async for texte in _fragments(preparation, etat):
@@ -184,7 +335,11 @@ def _cloturer_sans_client(preparation: PreparationGeneration, etat: _EtatFlux) -
 async def _fragments(preparation: PreparationGeneration, etat: _EtatFlux) -> AsyncIterator[str]:
     """Boucle de lecture du moteur : bornée en itérations et en inactivité, annulable à chaque tour."""
     moteur = port_inference.obtenir_moteur()
-    plafond = preparation.requete.parametres.max_tokens * MARGE_FRAGMENTS_PAR_TOKEN
+    # `max_tokens` à `None` signifie « pas de plafond demandé » : la boucle reste bornée par le
+    # plafond du domaine, qui borne aussi la valeur maximale acceptée en réglage. La borne réelle
+    # de la génération est alors la fenêtre de contexte du moteur, plus le délai d'inactivité.
+    plafond_tokens = preparation.requete.parametres.max_tokens or MAX_TOKENS_PLAFOND
+    plafond = plafond_tokens * MARGE_FRAGMENTS_PAR_TOKEN
     iterateur = moteur.generer(preparation.requete).__aiter__()
     try:
         while etat.fragments < plafond:
@@ -261,6 +416,7 @@ def _persister(preparation: PreparationGeneration, etat: _EtatFlux) -> Evenement
             tokens_generes=etat.tokens_generes,
             tokens_par_seconde=etat.tokens_par_seconde,
             interrompu=etat.interrompu,
+            parent_id=preparation.parent_id,
         )
     except EchoHubError as exc:
         logger.error("Réponse non persistée sur {} : {}", preparation.conversation_id, exc)

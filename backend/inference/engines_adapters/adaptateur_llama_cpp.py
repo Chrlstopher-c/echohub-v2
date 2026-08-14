@@ -26,6 +26,7 @@ from loguru import logger
 from backend.inference.engines_adapters.base import AdaptateurMoteur, exiger_moteur, exiger_source_lisible
 from backend.inference.engines_adapters.contrat import (
     CauseEchec,
+    ComptageTokens,
     EtatMoteur,
     MessageChat,
     MorceauGeneration,
@@ -35,6 +36,12 @@ from backend.inference.engines_adapters.contrat import (
     Sante,
 )
 from backend.inference.engines_adapters.diagnostic import Diagnostic, EchecChargement, qualifier
+from backend.inference.engines_adapters.experts_hote import (
+    CollecteurJournal,
+    deport_actif,
+    verifier_application,
+    verifier_support,
+)
 from backend.inference.engines_adapters.flux import flux_depuis_bloquant
 from backend.inference.engines_adapters.journal import NiveauEntree, SessionChargement, journal_chargement
 from backend.inference.engines_adapters.vram import lire_vram
@@ -44,6 +51,11 @@ from backend.inference.engines_adapters.vram import lire_vram
 TYPES_KV: dict[str, int] = {"f32": 0, "f16": 1, "q4_0": 2, "q8_0": 8}
 
 DELAI_VERROU_GENERATION_S = 5.0
+
+# Attente maximale du verrou pour un simple comptage. Volontairement courte : le panneau de
+# contexte se rafraîchit souvent et une génération tient le verrou pendant toute sa durée. Passé ce
+# délai, on rend une absence nommée — bien moins coûteux qu'une requête qui pend pendant des minutes.
+DELAI_VERROU_COMPTAGE_S = 2.0
 
 # Variable dont la seule présence dégrade gravement le chargement sous WSL2 (mesuré : VRAM figée à
 # 2 Go, plusieurs minutes de chargement). Elle n'est jamais posée ici ; si l'environnement la porte
@@ -79,11 +91,12 @@ class AdaptateurLlamaCpp(AdaptateurMoteur):
         journal_chargement.noter(
             session, "llama.cpp", f"Chargement de {plan.nom_affiche}",
             details={"parametres": {c: v for c, v in parametres.items() if c != "model_path"},
+                     "experts_deportes": plan.experts_deportes,
                      "vram_libre_mo": vram_avant.libre_mo if vram_avant else None},
         )
 
         debut = time.perf_counter()
-        self._llm = await self._instancier(module, parametres, session)
+        self._llm = await self._charger_instance(module, parametres, plan, session)
         duree = time.perf_counter() - debut
         vram_apres = lire_vram()
         self._contexte = plan.contexte
@@ -98,6 +111,72 @@ class AdaptateurLlamaCpp(AdaptateurMoteur):
             details={"vram_utilisee_mo": vram_apres.utilisee_mo if vram_apres else None},
         )
         return self._etat
+
+    async def _charger_instance(self, module: Any, parametres: dict[str, Any], plan: PlanChargement,
+                                session: SessionChargement | None) -> Any:
+        """Instancie le modèle, en rappelant d'abord en mémoire hôte les experts que le plan désigne."""
+        if not plan.experts_deportes:
+            return await self._instancier(module, parametres, session)
+        return await self._instancier_avec_deport(module, parametres, plan, session)
+
+    async def _instancier_avec_deport(self, module: Any, parametres: dict[str, Any], plan: PlanChargement,
+                                      session: SessionChargement | None) -> Any:
+        """Charge en plaçant les tenseurs d'experts des blocs du plan en mémoire hôte.
+
+        Le déport n'est jamais réputé appliqué : `Llama.__init__` avale les paramètres inconnus sans
+        erreur, donc l'absence d'exception ne prouve rien. Seul le journal de llama.cpp fait foi, et
+        un déport non constaté fait échouer le chargement — servir un modèle qui a en réalité tout
+        mis en VRAM reviendrait à saturer la carte en silence.
+        """
+        support = verifier_support(module)
+        if not support.disponible or support.buffer_type_hote is None:
+            raise self._echec_deport(support.raison, session, {"blocs": plan.experts_deportes})
+        indices = tuple(plan.experts_deportes)
+        with deport_actif(module, indices, support.buffer_type_hote) as collecteur:
+            instance = await self._instancier(module, parametres, session)
+        # Le mode verbeux n'était demandé que pour disposer du journal de chargement ; le laisser
+        # ferait imprimer les temps de chaque génération sur la sortie d'erreur.
+        self._taire(instance)
+        applique, message = verifier_application(collecteur, indices)
+        self._noter_deport(collecteur, message, applique, session)
+        if not applique:
+            await _fermer(instance)
+            raise self._echec_deport(message, session, {"blocs_demandes": list(indices)})
+        return instance
+
+    def _noter_deport(self, collecteur: CollecteurJournal, message: str, applique: bool,
+                      session: SessionChargement | None) -> None:
+        """Consigne le résultat du déport ET les tailles de tampons que llama.cpp vient d'imprimer.
+
+        Ces lignes sont la seule mesure disponible des tampons de calcul réels : le planificateur les
+        provisionne aujourd'hui par le calcul, elles permettront de le confronter à la mesure.
+        """
+        journal_chargement.noter(
+            session, "llama.cpp", message,
+            niveau=NiveauEntree.INFO if applique else NiveauEntree.ERREUR,
+            details={"blocs_confirmes": sorted(collecteur.blocs_surcharges),
+                     "tampons_mesures": collecteur.lignes_tampons},
+        )
+
+    def _echec_deport(self, raison: str, session: SessionChargement | None,
+                      indices: dict[str, Any]) -> EchecChargement:
+        """Échec nommé : le planificateur doit abandonner la stratégie, pas la redimensionner."""
+        journal_chargement.noter(session, "llama.cpp", raison, niveau=NiveauEntree.ERREUR, details=indices)
+        return EchecChargement(
+            Diagnostic(
+                cause=CauseEchec.DEPORT_EXPERTS_INDISPONIBLE,
+                message=raison,
+                remediation="Le plan sera dégradé vers une répartition par couches entières.",
+                indices=indices,
+            )
+        )
+
+    def _taire(self, instance: Any) -> None:
+        """Repasse l'instance en mode silencieux après un chargement journalisé."""
+        try:
+            instance.verbose = False
+        except AttributeError as exc:  # version sans attribut public : sans conséquence
+            logger.debug("Mode verbeux non réinitialisable sur cette version : {}", exc)
 
     async def _instancier(self, module: Any, parametres: dict[str, Any], session: SessionChargement | None) -> Any:
         """Construit l'instance dans un fil. Toute exception est qualifiée, jamais remontée nue.
@@ -174,13 +253,19 @@ class AdaptateurLlamaCpp(AdaptateurMoteur):
             )
 
     def _parametres(self, plan: PlanChargement, chemin: Path) -> dict[str, Any]:
-        """Traduit le plan en arguments `Llama`. Aucune valeur n'est inventée ici."""
+        """Traduit le plan en arguments `Llama`. Aucune valeur n'est inventée ici.
+
+        Le déport d'experts ne passe par AUCUN argument : il n'en existe pas, et `**kwargs` avalerait
+        silencieusement un nom inventé (cf. `experts_hote`). Seul `verbose` change de valeur, parce
+        que le journal de chargement est le seul canal qui prouve que le déport a eu lieu — sans lui,
+        llama-cpp-python relève le seuil de ses journaux et la vérification devient impossible.
+        """
         parametres: dict[str, Any] = {
             "model_path": str(chemin),
             "n_ctx": plan.contexte,
             "n_batch": plan.batch,
             "n_gpu_layers": plan.couches_gpu,
-            "verbose": False,
+            "verbose": bool(plan.experts_deportes),
         }
         if plan.flash_attention is not None:
             parametres["flash_attn"] = plan.flash_attention
@@ -204,16 +289,8 @@ class AdaptateurLlamaCpp(AdaptateurMoteur):
             self._etat = None
             return
         instance, self._llm, self._etat = self._llm, None, None
-        try:
-            fermer = getattr(instance, "close", None)
-            if callable(fermer):
-                await asyncio.to_thread(fermer)
-        except Exception as exc:
-            logger.warning("Fermeture llama.cpp imparfaite : {}", exc)
-        finally:
-            del instance
-            gc.collect()
-            logger.info("llama.cpp déchargé")
+        await _fermer(instance)
+        logger.info("llama.cpp déchargé")
 
     async def sante(self) -> Sante:
         if self._llm is None or self._etat is None:
@@ -229,6 +306,48 @@ class AdaptateurLlamaCpp(AdaptateurMoteur):
             disponible=True, moteur=self.moteur, modele=self._etat.modele,
             latence_ms=round(latence, 2), detail=f"contexte servi : {contexte}",
         )
+
+    async def compter_tokens(self, textes: Sequence[str]) -> ComptageTokens:
+        """Compte par le tokenizer du modèle chargé — le seul qui sache ce que ce modèle coûte.
+
+        Aucun modèle chargé signifie aucun tokenizer, donc aucune mesure possible : on le dit au
+        lieu de rendre des zéros. Le travail part dans un fil comme le reste de l'adaptateur, la
+        tokenisation étant un appel bloquant vers le C.
+        """
+        if self._llm is None:
+            return ComptageTokens(
+                possible=False,
+                raison="Aucun modèle chargé dans llama.cpp : pas de tokenizer, donc pas de comptage.",
+            )
+        try:
+            return await asyncio.to_thread(self._compter_sous_verrou, list(textes))
+        except Exception as exc:
+            logger.error("Comptage de tokens llama.cpp en échec : {}", exc)
+            return ComptageTokens(possible=False, raison=f"Le tokenizer a refusé le texte : {exc}")
+
+    def _compter_sous_verrou(self, textes: list[str]) -> ComptageTokens:
+        """Tokenise le lot entier sous UNE prise du verrou de génération.
+
+        Le verrou est celui qui sérialise les générations : l'objet `Llama` est un objet C qu'on ne
+        touche jamais pendant qu'un autre fil le fait avancer. Un lot plutôt qu'un texte par prise,
+        pour ne pas s'intercaler N fois entre deux tours d'une génération.
+        """
+        if not self._verrou_generation.acquire(timeout=DELAI_VERROU_COMPTAGE_S):
+            return ComptageTokens(
+                possible=False,
+                raison="Une génération occupe le moteur : le comptage reprendra à la fin du flux.",
+            )
+        try:
+            llm = self._llm
+            if llm is None:  # déchargé pendant l'attente du verrou
+                return ComptageTokens(possible=False, raison="Modèle déchargé pendant l'attente du verrou.")
+            return ComptageTokens(
+                possible=True,
+                tokens_par_texte=[_compter_un(llm, texte) for texte in textes],
+                contexte_moteur=int(llm.n_ctx()),
+            )
+        finally:
+            self._verrou_generation.release()
 
     def generer(
         self,
@@ -277,6 +396,44 @@ class AdaptateurLlamaCpp(AdaptateurMoteur):
             yield MorceauGeneration(type="fin", raison_arret=raison)
         finally:
             self._verrou_generation.release()
+
+
+async def _fermer(instance: Any) -> None:
+    """Libère une instance `Llama` et force un cycle GC : la VRAM part avec l'objet C, pas avant.
+
+    Sert aussi bien au déchargement normal qu'à l'abandon d'une instance chargée dont le déport
+    d'experts n'a pas pu être confirmé — dans ce second cas, la garder occuperait toute la carte.
+    """
+    try:
+        fermer = getattr(instance, "close", None)
+        if callable(fermer):
+            await asyncio.to_thread(fermer)
+    except Exception as exc:
+        logger.warning("Fermeture llama.cpp imparfaite : {}", exc)
+    finally:
+        del instance
+        gc.collect()
+
+
+def _compter_un(llm: Any, texte: str) -> int:
+    """Longueur en tokens d'un texte, mesurée par le vocabulaire du modèle chargé.
+
+    Trois choix imposés par la signature réelle de `Llama.tokenize(text: bytes, add_bos: bool =
+    True, special: bool = False)`, vérifiée dans les sources du paquet et non supposée :
+
+    - `encode("utf-8")` : la méthode prend des octets, pas une chaîne ;
+    - `add_bos=False` : le BOS est unique pour tout le prompt assemblé, pas un par fragment ;
+      le laisser à son défaut gonflerait le total d'un token par message ;
+    - `special=True` : c'est ainsi que llama.cpp tokenise le prompt final. Un marqueur écrit
+      littéralement dans un message (`<|im_start|>`) compte donc exactement comme le modèle le
+      comptera, au lieu d'être découpé en caractères.
+
+    Un texte vide ne franchit pas la frontière C : zéro token est ici une certitude, pas une
+    absence de mesure.
+    """
+    if not texte:
+        return 0
+    return len(llm.tokenize(texte.encode("utf-8"), add_bos=False, special=True))
 
 
 def _arguments_echantillonnage(options: OptionsGeneration) -> dict[str, Any]:

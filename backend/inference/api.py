@@ -34,6 +34,7 @@ from backend.inference.engines_adapters import (
     StatutInference,
     superviseur,
 )
+from backend.inference.engines_adapters.contrat import OccupationContexte
 from backend.inference.engines_adapters.traduction_plan import vers_cause_planificateur, vers_plan_moteur
 from backend.inference.planner import DemandeDeChargement, PlanDeChargement, degrader, planifier
 
@@ -48,6 +49,12 @@ routeur_inference = router
 ENTETES_FLUX = {"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"}
 
 DELAI_ATTENTE_MAX_S = 600.0
+
+# Bornes de la mesure d'occupation du contexte. Elles ne décrivent aucun matériel : elles bornent
+# le travail d'une route appelée à chaque accalmie de la conversation. Au-delà, on refuse
+# explicitement plutôt que de tokeniser un volume arbitraire dans le fil du moteur.
+MAX_MESSAGES_COMPTAGE = 4_000
+MAX_CARACTERES_COMPTAGE = 4_000_000
 
 
 class ReponsePlan(BaseModel):
@@ -98,6 +105,28 @@ class RequeteGeneration(BaseModel):
 
     messages: list[MessageChat] = Field(min_length=1)
     options: OptionsGeneration = Field(default_factory=OptionsGeneration)
+
+
+class RequeteOccupationContexte(BaseModel):
+    """Textes dont on veut le coût réel en tokens : prompt système et messages de la conversation.
+
+    L'appelant envoie ce qu'il affiche, le backend mesure. Il ne relit pas la conversation en base :
+    le domaine `inference` ne connaît pas la persistance de `chat`, et l'utilisateur doit voir le
+    coût de ce qu'il a sous les yeux, brouillon de saisie compris.
+    """
+
+    prompt_systeme: str = ""
+    messages: list[MessageChat] = Field(default_factory=list, max_length=MAX_MESSAGES_COMPTAGE)
+
+    @model_validator(mode="after")
+    def _borner_volume(self) -> RequeteOccupationContexte:
+        total = len(self.prompt_systeme) + sum(len(message.content) for message in self.messages)
+        if total > MAX_CARACTERES_COMPTAGE:
+            raise ValueError(
+                f"Volume à mesurer trop grand : {total} caractères pour un plafond de "
+                f"{MAX_CARACTERES_COMPTAGE}."
+            )
+        return self
 
 
 def _en_http(exc: EchoHubError) -> HTTPException:
@@ -175,6 +204,24 @@ def lire_journal(limite: int = Query(default=10, ge=1, le=50)) -> list[SessionCh
 async def sonder_sante() -> Sante:
     """Sonde le moteur maintenant — un moteur mort n'apparaît pas dans l'état mémorisé."""
     return await superviseur.sante()
+
+
+@router.post("/contexte", response_model=OccupationContexte)
+async def mesurer_occupation_contexte(requete: RequeteOccupationContexte) -> OccupationContexte:
+    """Décompose l'occupation de la fenêtre de contexte du modèle chargé, poste par poste.
+
+    Répond 200 même quand rien n'est mesurable : « aucun modèle chargé » n'est pas une erreur mais
+    une absence de tokenizer, et la réponse la nomme (`mesurable: false` + `raison`) — exactement ce
+    que fait `/sante` avec `disponible: false`. Un 4xx obligerait l'interface à traduire un état
+    normal en échec.
+
+    Le comptage passe par le tokenizer du modèle réellement chargé. Ce qu'il ne couvre pas est listé
+    dans `avertissements` plutôt que comblé par une estimation.
+    """
+    try:
+        return await superviseur.compter_contexte(requete.prompt_systeme, requete.messages)
+    except EchoHubError as exc:
+        raise _en_http(exc) from exc
 
 
 @router.post("/decharger", response_model=StatutInference)

@@ -172,3 +172,36 @@ NOMS_FTYPE: dict[int, str] = {
 def nom_ftype(identifiant: int) -> str | None:
     """Nom lisible d'un `general.file_type`, ou `None` si l'identifiant n'est pas répertorié."""
     return NOMS_FTYPE.get(identifiant)
+
+
+# --- Nommage des tenseurs -----------------------------------------------------------------------
+#
+# Ces marqueurs sont eux aussi une transcription : llama.cpp nomme ses tenseurs selon un gabarit
+# fixe, et c'est le NOM qui dit à quoi sert un poids. Reconnaître un nom n'estime rien — au pire un
+# gabarit inconnu n'est pas reconnu, et la mesure correspondante reste vide au lieu d'être fausse.
+
+# Experts ROUTÉS d'un MoE : `blk.N.ffn_{gate,up,down}_exps.weight`. 120 relevés sur les 40 blocs du
+# Qwen3.6-35B-A3B, soit 90,9 % du fichier. Ce sont les seuls poids dont la lecture dépend du routage
+# (8 experts sur 256 par token) : eux seuls peuvent être déportés en mémoire hôte sans que leur
+# trafic soit payé intégralement à chaque token.
+MARQUEURS_EXPERTS = ("_exps.", "_exps_")
+
+# Expert PARTAGÉ : `blk.N.ffn_{gate,up,down}_shexp.weight`, évalué à chaque token quel que soit le
+# routage. Son nom ne contient pas `_exps`, donc les marqueurs ci-dessus ne l'attrapent pas — c'est
+# exactement la distinction voulue, et un test la fige.
+MARQUEUR_EXPERT_PARTAGE = "_shexp"
+
+# Projection des requêtes d'attention. `attn_q.` est la forme relevée sur les deux modèles de la
+# machine, `attn_qkv.` la forme fusionnée d'autres familles. Aucune reconnue ⇒ aucun bloc d'attention
+# relevé, ce qui se lit « non mesuré » et jamais « ce modèle n'a pas d'attention ».
+MARQUEURS_ATTENTION = ("attn_q.", "attn_qkv.")
+
+
+def est_tenseur_expert(nom_tenseur: str) -> bool:
+    """Vrai pour un tenseur d'experts ROUTÉS, faux pour l'expert partagé et le reste du bloc."""
+    return any(marqueur in nom_tenseur for marqueur in MARQUEURS_EXPERTS)
+
+
+def porte_attention(nom_tenseur: str) -> bool:
+    """Vrai si le tenseur est une projection de requêtes : son bloc porte donc une attention."""
+    return any(marqueur in nom_tenseur for marqueur in MARQUEURS_ATTENTION)

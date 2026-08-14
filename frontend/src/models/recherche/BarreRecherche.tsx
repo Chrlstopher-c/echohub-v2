@@ -1,6 +1,8 @@
 import type { ChangeEvent, ReactElement } from 'react';
 import { cn } from '../../shared/design';
 import type { FormatRecherche, TriRecherche } from '../api/types';
+import { FiltreCapacites } from './FiltreCapacites';
+import type { VocabulaireCapacites } from './useDefinitionsCapacites';
 import type { EtatRecherche } from './useRecherche';
 
 /*
@@ -8,6 +10,11 @@ import type { EtatRecherche } from './useRecherche';
  *
  * Les formats sont des étiquettes déclarées par le Hub, pas des vérifications de contenu : un dépôt
  * étiqueté GGUF peut n'en contenir aucun. Le filtre sert à réduire la liste, jamais à garantir.
+ *
+ * Les capacités sont de la même nature — des déclarations lues, pas des essais — mais d'une source
+ * différente : le Hub ne les publie pas, le backend les déduit. Elles ont donc leur propre bloc,
+ * leur propre vocabulaire chargé depuis l'API, et n'interfèrent pas avec les formats : les deux
+ * filtres se cumulent dans le même critère de recherche.
  */
 
 const FORMATS: ReadonlyArray<{ valeur: FormatRecherche; libelle: string }> = [
@@ -85,7 +92,12 @@ function LigneSaisie({ recherche }: { recherche: EtatRecherche }): ReactElement 
   );
 }
 
-export function BarreRecherche({ recherche }: { recherche: EtatRecherche }): ReactElement {
+export interface BarreRechercheProps {
+  recherche: EtatRecherche;
+  vocabulaire: VocabulaireCapacites;
+}
+
+export function BarreRecherche({ recherche, vocabulaire }: BarreRechercheProps): ReactElement {
   const { critere } = recherche;
   return (
     <div className="space-y-3">
@@ -101,6 +113,12 @@ export function BarreRecherche({ recherche }: { recherche: EtatRecherche }): Rea
           />
         ))}
       </div>
+      <FiltreCapacites
+        vocabulaire={vocabulaire}
+        selection={critere.capacites}
+        onBasculer={recherche.basculerCapacite}
+        onEffacer={recherche.effacerCapacites}
+      />
     </div>
   );
 }

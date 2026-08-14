@@ -38,6 +38,7 @@ export {
   genererDirect,
   lireEtatInference,
   lireJournalChargements,
+  mesurerOccupationContexte,
   planifierChargement,
   sonderSanteInference,
 } from './inference';

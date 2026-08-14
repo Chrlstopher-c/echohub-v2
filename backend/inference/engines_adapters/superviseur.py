@@ -34,9 +34,12 @@ from backend.inference.engines_adapters.contrat import (
     MessageChat,
     MorceauGeneration,
     MoteurSupporte,
+    OccupationContexte,
     OptionsGeneration,
     PlanChargement,
     Sante,
+    assembler_occupation,
+    decouper_segments,
 )
 from backend.inference.engines_adapters.diagnostic import Diagnostic, EchecChargement, qualifier
 from backend.inference.engines_adapters.journal import (
@@ -258,6 +261,48 @@ class SuperviseurInference:
                     indices={"tentatives": resultat.tentatives},
                 )
             )
+
+    # --------------------------------------------------------- fenêtre de contexte
+
+    async def compter_contexte(
+        self,
+        prompt_systeme: str,
+        messages: Sequence[MessageChat],
+    ) -> OccupationContexte:
+        """Décompose ce que cette conversation occupe dans la fenêtre du modèle chargé.
+
+        Passe par le moteur actif, donc par le verrou qui protège déjà la génération : un comptage
+        ne s'exécute jamais pendant qu'un flux avance. Sans modèle prêt il n'existe aucun tokenizer
+        et donc aucune mesure — la réponse le dit, elle ne rend pas une fenêtre vide.
+        """
+        if self._actif is None or self._statut.etat is not EtatChargement.PRET:
+            return self._contexte_non_mesurable(
+                f"Aucun modèle prêt (état : {self._statut.etat.value}) : aucun tokenizer à interroger."
+            )
+        segments = decouper_segments(prompt_systeme, messages)
+        comptage = await self._actif.compter_tokens([segment.texte for segment in segments])
+        etat_moteur = self._statut.etat_moteur
+        contexte_plan = etat_moteur.contexte if etat_moteur is not None else None
+        if not comptage.possible or comptage.contexte_moteur is None:
+            return self._contexte_non_mesurable(comptage.raison, contexte_plan)
+        return assembler_occupation(
+            segments,
+            comptage.tokens_par_texte,
+            contexte_total=comptage.contexte_moteur,
+            contexte_plan=contexte_plan,
+            moteur=self._statut.moteur,
+            modele=self._statut.modele,
+        )
+
+    def _contexte_non_mesurable(self, raison: str, contexte_plan: int | None = None) -> OccupationContexte:
+        """Absence de mesure, nommée. Aucun champ chiffré : un zéro passerait pour une fenêtre libre."""
+        return OccupationContexte(
+            mesurable=False,
+            raison=raison,
+            moteur=self._statut.moteur,
+            modele=self._statut.modele,
+            contexte_plan=contexte_plan,
+        )
 
     # -------------------------------------------------------------- génération
 

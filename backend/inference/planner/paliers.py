@@ -95,6 +95,10 @@ NIVEAU_MINIMUM_PAR_CAUSE: dict[CauseEchec, int] = {
     CauseEchec.MEMOIRE_HOTE_INSUFFISANTE: 2,
     CauseEchec.CONTEXTE_REFUSE: 2,
     CauseEchec.MOTEUR_INDISPONIBLE: 1,
+    # Le moteur ne sait pas déporter des experts : ce n'est pas un manque de mémoire. Aucun palier
+    # supplémentaire n'est imposé — c'est l'abandon de la stratégie, décidé par le planificateur à
+    # partir de la cause, qui rend le plan suivant plus sobre.
+    CauseEchec.DEPORT_EXPERTS_INDISPONIBLE: 1,
     CauseEchec.INCONNUE: 1,
 }
 

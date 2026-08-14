@@ -1,9 +1,12 @@
 """Persistance du domaine `chat`, bâtie sur `core.db`.
 
-Deux tables appartiennent au domaine et sont créées ici, de façon additive et idempotente :
+Quatre tables appartiennent au domaine et sont créées ici, de façon additive et idempotente :
 
 - `chat_reglages` — prompt système et paramètres d'échantillonnage par conversation ;
-- `chat_meta_messages` — modèle ayant produit un message, et indicateur d'interruption.
+- `chat_meta_messages` — modèle ayant produit un message, et indicateur d'interruption ;
+- `chat_branche_active` — feuille affichée, c'est-à-dire quelle branche de l'arbre est la vue
+  courante. L'arbre lui-même vit dans `messages.parent_id`, colonne du socle ;
+- `chat_migrations` — trace des migrations de données déjà jouées, pour qu'aucune ne rejoue.
 
 Elles n'existent pas dans le schéma de `core` et ne touchent aucune de ses tables : ce sont des
 besoins propres au chat, colocalisés avec le code qui les fait vivre. Si le socle finit par les
@@ -23,7 +26,11 @@ import uuid
 from loguru import logger
 from pydantic import BaseModel
 
+from backend.chat import branches
+from backend.chat.erreurs import MessageIntrouvable
 from backend.chat.modeles import (
+    ArbreConversation,
+    EtatBranche,
     MajConversation,
     MessageChat,
     ParametresEchantillonnage,
@@ -55,18 +62,59 @@ CREATE TABLE IF NOT EXISTS chat_meta_messages (
     modele_id  TEXT,
     interrompu INTEGER NOT NULL DEFAULT 0
 );
+
+-- Une seule ligne par conversation : la feuille affichée. `ON DELETE SET NULL` fait retomber le
+-- pointeur sur la feuille naturelle dès que le message visé disparaît, sans code de rattrapage.
+CREATE TABLE IF NOT EXISTS chat_branche_active (
+    conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+    feuille_id      TEXT REFERENCES messages(id) ON DELETE SET NULL,
+    maj_le          TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS chat_migrations (
+    nom       TEXT PRIMARY KEY,
+    passee_le TEXT NOT NULL
+);
+"""
+
+# Retrait de l'ancien défaut inventé de `max_tokens`. Il valait 1024 et était figé À LA CRÉATION de
+# chaque conversation : toutes les conversations déjà en base le portent sans que personne ne l'ait
+# choisi, et c'est ce qui coupe les réponses longues. On l'efface (la clé absente vaut `None` =
+# « pas de plafond posé ici »), on ne touche à aucune autre valeur, et la trace en base garantit
+# qu'un `max_tokens` remis à 1024 volontairement ne sera plus jamais effacé.
+_MIGRATIONS_CHAT: tuple[tuple[str, str], ...] = (
+    (
+        "max_tokens_defaut_1024_vers_absent",
+        "UPDATE chat_reglages SET parametres = json_remove(parametres, '$.max_tokens')"
+        " WHERE json_extract(parametres, '$.max_tokens') = 1024",
+    ),
+)
+
+_SELECT_MESSAGE_BASE = """
+SELECT m.id, m.conversation_id, m.role, m.contenu, m.tokens_generes, m.tokens_par_seconde,
+       m.cree_le, m.parent_id, meta.modele_id AS modele_id, COALESCE(meta.interrompu, 0) AS interrompu
+FROM messages m
+LEFT JOIN chat_meta_messages meta ON meta.message_id = m.id
 """
 
 # `rowid` départage deux messages écrits dans la même microseconde : l'horodatage seul ne garantit
-# pas un ordre stable, et un historique dans le désordre corrompt le contexte envoyé au moteur.
-_SELECT_MESSAGES = """
-SELECT m.id, m.conversation_id, m.role, m.contenu, m.tokens_generes, m.tokens_par_seconde,
-       m.cree_le, meta.modele_id AS modele_id, COALESCE(meta.interrompu, 0) AS interrompu
-FROM messages m
-LEFT JOIN chat_meta_messages meta ON meta.message_id = m.id
-WHERE m.conversation_id = ?
-ORDER BY m.cree_le ASC, m.rowid ASC
+# pas un ordre stable, et un ordre instable fait varier la variante « la plus récente » d'une
+# lecture à l'autre — donc la branche affichée.
+_SELECT_MESSAGES = f"{_SELECT_MESSAGE_BASE} WHERE m.conversation_id = ? ORDER BY m.cree_le ASC, m.rowid ASC"
+
+_SELECT_MESSAGE_UNIQUE = f"{_SELECT_MESSAGE_BASE} WHERE m.conversation_id = ? AND m.id = ?"
+
+_UPSERT_FEUILLE = """
+INSERT INTO chat_branche_active (conversation_id, feuille_id, maj_le) VALUES (?, ?, ?)
+ON CONFLICT(conversation_id) DO UPDATE SET feuille_id = excluded.feuille_id, maj_le = excluded.maj_le
 """
+
+_INSERT_MESSAGE = """
+INSERT INTO messages (id, conversation_id, role, contenu, tokens_generes, tokens_par_seconde, cree_le, parent_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+"""
+
+_INSERT_META_MESSAGE = "INSERT INTO chat_meta_messages (message_id, modele_id, interrompu) VALUES (?, ?, ?)"
 
 _SELECT_CONVERSATIONS = """
 SELECT c.id, c.titre, c.modele_id, c.cree_le, c.maj_le, c.archivee,
@@ -85,15 +133,33 @@ class _LigneReglages(BaseModel):
     historique_max_messages: int | None = None
 
 
+class _LigneFeuille(BaseModel):
+    """Ligne brute de `chat_branche_active`."""
+
+    feuille_id: str | None = None
+
+
 def assurer_schema_chat() -> None:
-    """Crée les tables du domaine si elles manquent. Appelé une fois, après `core.init_db()`."""
+    """Crée les tables du domaine si elles manquent, puis rejoue les migrations non encore passées."""
     try:
         with transaction() as conn:
             conn.executescript(_SCHEMA_CHAT_SQL)
+            _appliquer_migrations_chat(conn)
     except sqlite3.Error as exc:
         logger.error("Création du schéma chat impossible : {}", exc)
         raise ErreurPersistance("Schéma du domaine chat non initialisable.", details={"cause": str(exc)}) from exc
     logger.info("Schéma du domaine chat prêt.")
+
+
+def _appliquer_migrations_chat(conn: sqlite3.Connection) -> None:
+    """Migrations de données du domaine : jouées une seule fois, tracées en base, journalisées."""
+    passees = {str(ligne["nom"]) for ligne in conn.execute("SELECT nom FROM chat_migrations").fetchall()}
+    for nom, sql in _MIGRATIONS_CHAT:
+        if nom in passees:
+            continue
+        lignes = conn.execute(sql).rowcount
+        conn.execute("INSERT INTO chat_migrations (nom, passee_le) VALUES (?, ?)", (nom, maintenant()))
+        logger.info("Migration chat « {} » : {} ligne(s) touchée(s).", nom, lignes)
 
 
 def creer_conversation(titre: str, modele_id: str | None, reglages: ReglagesConversation) -> ResumeConversation:
@@ -230,9 +296,100 @@ def ecrire_reglages(conversation_id: str, reglages: ReglagesConversation) -> Reg
     return reglages
 
 
-def lister_messages(conversation_id: str) -> list[MessageChat]:
-    """Historique complet de la conversation, dans l'ordre d'écriture."""
+def lire_messages_complets(conversation_id: str) -> list[MessageChat]:
+    """TOUS les messages de la conversation, branches abandonnées comprises, dans l'ordre d'écriture."""
     return fetch_all(MessageChat, _SELECT_MESSAGES, (conversation_id,))
+
+
+def lister_messages(conversation_id: str) -> list[MessageChat]:
+    """Chemin actif : de la racine à la feuille affichée.
+
+    Sur une conversation restée linéaire — toutes celles écrites avant les branches — le chemin
+    contient exactement tous les messages, dans le même ordre qu'avant. La signature ne change pas :
+    les appelants existants n'ont rien à savoir de l'arbre.
+    """
+    return lire_branche(conversation_id).messages
+
+
+def lire_branche(conversation_id: str) -> EtatBranche:
+    """Chemin actif, feuille résolue et variantes de chaque message — tout ce qu'affiche l'écran."""
+    messages = lire_messages_complets(conversation_id)
+    feuille = branches.resoudre_feuille(messages, _feuille_enregistree(conversation_id))
+    chemin = branches.chemin_vers(messages, feuille)
+    return EtatBranche(
+        conversation_id=conversation_id,
+        feuille_active=feuille,
+        messages=chemin,
+        variantes=branches.variantes(messages, chemin),
+    )
+
+
+def lire_arbre(conversation_id: str) -> ArbreConversation:
+    """Arbre complet. C'est la preuve lisible qu'un rejeu ou une édition n'efface rien."""
+    exiger_conversation(conversation_id)
+    messages = lire_messages_complets(conversation_id)
+    return ArbreConversation(
+        conversation_id=conversation_id,
+        feuille_active=branches.resoudre_feuille(messages, _feuille_enregistree(conversation_id)),
+        messages=messages,
+    )
+
+
+def _feuille_enregistree(conversation_id: str) -> str | None:
+    """Pointeur brut, tel qu'il est en base — non résolu : il peut viser un message disparu."""
+    ligne = fetch_one(
+        _LigneFeuille,
+        "SELECT feuille_id FROM chat_branche_active WHERE conversation_id = ?",
+        (conversation_id,),
+    )
+    return ligne.feuille_id if ligne is not None else None
+
+
+def feuille_active(conversation_id: str) -> str | None:
+    """Feuille réellement affichée. `None` sur une conversation vide — l'appelant décide quoi faire."""
+    messages = lire_messages_complets(conversation_id)
+    return branches.resoudre_feuille(messages, _feuille_enregistree(conversation_id))
+
+
+def definir_feuille_active(conversation_id: str, message_id: str | None) -> None:
+    """Écrit le pointeur de branche. `None` le remet à la feuille naturelle (la plus récente)."""
+    execute(_UPSERT_FEUILLE, (conversation_id, message_id, maintenant()))
+
+
+def activer_branche(conversation_id: str, message_id: str) -> EtatBranche:
+    """Bascule la vue vers la branche qui contient ce message, et rend la nouvelle vue.
+
+    On redescend jusqu'à la feuille la plus récente sous le message choisi : cliquer sur une
+    variante doit rouvrir la suite de conversation qu'elle avait produite, pas s'arrêter sur elle.
+    """
+    exiger_message(conversation_id, message_id)
+    messages = lire_messages_complets(conversation_id)
+    feuille = branches.descendre(messages, message_id)
+    definir_feuille_active(conversation_id, feuille)
+    logger.debug("Branche activée sur {} : feuille {}", conversation_id, feuille)
+    return lire_branche(conversation_id)
+
+
+def lire_message(conversation_id: str, message_id: str) -> MessageChat | None:
+    """Message de CETTE conversation, ou `None`.
+
+    Le filtre sur la conversation n'est pas cosmétique : sans lui, une route accepterait de rejouer
+    dans la conversation A un message appartenant à la conversation B.
+    """
+    return fetch_one(MessageChat, _SELECT_MESSAGE_UNIQUE, (conversation_id, message_id))
+
+
+def exiger_message(conversation_id: str, message_id: str) -> MessageChat:
+    """Comme `lire_message`, mais lève plutôt que de rendre `None`."""
+    message = lire_message(conversation_id, message_id)
+    if message is None:
+        raise MessageIntrouvable(f"Message inconnu dans cette conversation : {message_id}")
+    return message
+
+
+def chemin_jusqua(conversation_id: str, message_id: str) -> list[MessageChat]:
+    """Chemin racine → `message_id` : l'historique exact que verra le moteur pour ce point de l'arbre."""
+    return branches.chemin_vers(lire_messages_complets(conversation_id), message_id)
 
 
 def ajouter_message(
@@ -245,12 +402,14 @@ def ajouter_message(
     tokens_generes: int | None = None,
     tokens_par_seconde: float | None = None,
     interrompu: bool = False,
+    parent_id: str | None = None,
+    definir_feuille: bool = True,
 ) -> MessageChat:
     """Insère un message et remonte l'horodatage de la conversation, en une transaction.
 
-    `identifiant` permet d'imposer l'id annoncé au client à l'ouverture d'un flux : le message
-    persisté doit porter le même identifiant que celui déjà affiché, sinon le frontend garde un
-    message fantôme à côté du vrai.
+    `identifiant` impose l'id déjà annoncé au client à l'ouverture d'un flux — sans quoi le
+    frontend garderait un message fantôme à côté du vrai. `parent_id` est FOURNI par l'appelant,
+    jamais deviné ici : lui seul sait s'il prolonge la branche courante ou s'il en ouvre une sœur.
     """
     message = MessageChat(
         id=identifiant or str(uuid.uuid4()),
@@ -262,42 +421,46 @@ def ajouter_message(
         cree_le=maintenant(),
         modele_id=modele_id,
         interrompu=interrompu,
+        parent_id=parent_id,
     )
-    _ecrire_message(message)
+    _ecrire_message(message, definir_feuille=definir_feuille)
     return message
 
 
-def _ecrire_message(message: MessageChat) -> None:
-    """Écrit le message, ses métadonnées de domaine et l'horodatage de la conversation, en un bloc.
+def _valeurs_message(message: MessageChat, horodatage: str) -> tuple[object, ...]:
+    """Valeurs de `_INSERT_MESSAGE`, dans l'ordre exact des colonnes déclarées."""
+    return (
+        message.id,
+        message.conversation_id,
+        message.role,
+        message.contenu,
+        message.tokens_generes,
+        message.tokens_par_seconde,
+        horodatage,
+        message.parent_id,
+    )
 
-    Les trois écritures forment une seule transaction : un message sans son horodatage remonté
-    ferait remonter la conversation en fin de liste alors qu'elle vient de bouger.
+
+def _ecrire_message(message: MessageChat, *, definir_feuille: bool) -> None:
+    """Écrit le message, ses métadonnées de domaine, l'horodatage et la feuille, en un bloc.
+
+    Les écritures forment une seule transaction : un message sans son horodatage remonté ferait
+    descendre la conversation dans la liste alors qu'elle vient de bouger, et une feuille écrite
+    sans son message pointerait sur un identifiant inexistant.
     """
     horodatage = message.cree_le.isoformat()
     try:
         with transaction() as conn:
-            conn.execute(
-                "INSERT INTO messages (id, conversation_id, role, contenu, tokens_generes, tokens_par_seconde,"
-                " cree_le) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (
-                    message.id,
-                    message.conversation_id,
-                    message.role,
-                    message.contenu,
-                    message.tokens_generes,
-                    message.tokens_par_seconde,
-                    horodatage,
-                ),
-            )
+            conn.execute(_INSERT_MESSAGE, _valeurs_message(message, horodatage))
             if message.modele_id is not None or message.interrompu:
                 conn.execute(
-                    "INSERT INTO chat_meta_messages (message_id, modele_id, interrompu) VALUES (?, ?, ?)",
-                    (message.id, message.modele_id, int(message.interrompu)),
+                    _INSERT_META_MESSAGE, (message.id, message.modele_id, int(message.interrompu))
                 )
             conn.execute(
-                "UPDATE conversations SET maj_le = ? WHERE id = ?",
-                (horodatage, message.conversation_id),
+                "UPDATE conversations SET maj_le = ? WHERE id = ?", (horodatage, message.conversation_id)
             )
+            if definir_feuille:
+                conn.execute(_UPSERT_FEUILLE, (message.conversation_id, message.id, horodatage))
     except sqlite3.Error as exc:
         logger.error("Écriture du message dans {} échouée : {}", message.conversation_id, exc)
         raise ErreurPersistance("Écriture du message impossible.", details={"cause": str(exc)}) from exc
@@ -307,6 +470,9 @@ def supprimer_messages(conversation_id: str) -> int:
     """Vide l'historique sans supprimer la conversation ni ses réglages. Retourne le nombre effacé."""
     exiger_conversation(conversation_id)
     supprimes = execute("DELETE FROM messages WHERE conversation_id = ?", (conversation_id,))
+    # Le pointeur de branche est remis à zéro explicitement : ne dépendre que du ON DELETE SET NULL
+    # laisserait une feuille fantôme si les clés étrangères étaient un jour désactivées.
+    definir_feuille_active(conversation_id, None)
     execute("UPDATE conversations SET maj_le = ? WHERE id = ?", (maintenant(), conversation_id))
     logger.debug("{} message(s) supprimé(s) dans {}", supprimes, conversation_id)
     return supprimes

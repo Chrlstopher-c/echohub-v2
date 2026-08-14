@@ -24,7 +24,14 @@ MAX_TOKENS_PLAFOND = 262_144
 
 
 class ParametresEchantillonnage(BaseModel):
-    """Paramètres de génération d'une conversation. Bornes issues des plages admises par llama.cpp."""
+    """Paramètres de génération d'une conversation. Bornes issues des plages admises par llama.cpp.
+
+    `max_tokens` vaut `None` par défaut, et `None` signifie « aucun plafond posé ici » : le moteur
+    va jusqu'à sa propre fenêtre de contexte. L'ancien défaut de 1024 était une constante inventée —
+    exactement ce que la v2 bannit — et se voyait à l'usage : sur un modèle qui « réfléchit »
+    longuement, la réponse finale était coupée avant d'être écrite. Une valeur non décidée vaut
+    `None` et l'appelant décide, il n'y a pas de nombre par défaut défendable.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -32,8 +39,28 @@ class ParametresEchantillonnage(BaseModel):
     top_p: float = Field(default=0.95, gt=0.0, le=1.0)
     top_k: int = Field(default=40, ge=0)
     penalite_repetition: float = Field(default=1.1, ge=0.0, le=2.0)
-    max_tokens: int = Field(default=1024, ge=1, le=MAX_TOKENS_PLAFOND)
+    max_tokens: int | None = Field(default=None, ge=1, le=MAX_TOKENS_PLAFOND)
     sequences_arret: list[str] = Field(default_factory=list)
+    graine: int | None = Field(default=None)
+
+
+class MajParametres(BaseModel):
+    """Patch partiel des paramètres : seuls les champs FOURNIS sont écrits.
+
+    Sans ce modèle, patcher la seule température supposerait de renvoyer les six autres valeurs, et
+    tout oubli les ramènerait à leur défaut sans que personne ne l'ait demandé. `null` explicite
+    reste une valeur de plein droit pour `max_tokens` (pas de plafond) et `graine` (aléatoire) :
+    c'est la fusion, et non ce modèle, qui distingue « fourni à null » de « absent ».
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    top_p: float | None = Field(default=None, gt=0.0, le=1.0)
+    top_k: int | None = Field(default=None, ge=0)
+    penalite_repetition: float | None = Field(default=None, ge=0.0, le=2.0)
+    max_tokens: int | None = Field(default=None, ge=1, le=MAX_TOKENS_PLAFOND)
+    sequences_arret: list[str] | None = Field(default=None)
     graine: int | None = Field(default=None)
 
 
@@ -58,6 +85,9 @@ class MessageChat(BaseModel):
 
     `tokens_generes` et `tokens_par_seconde` restent à `None` quand le moteur ne les rapporte pas :
     aucune estimation n'est fabriquée pour combler le trou.
+
+    `parent_id` porte l'arbre : `None` désigne une racine de conversation. Deux messages de même
+    parent sont deux variantes du même tour — un rejeu, une édition — et aucune ne remplace l'autre.
     """
 
     id: str
@@ -69,6 +99,7 @@ class MessageChat(BaseModel):
     cree_le: datetime
     modele_id: str | None = None
     interrompu: bool = False
+    parent_id: str | None = None
 
 
 class ResumeConversation(BaseModel):
@@ -83,12 +114,45 @@ class ResumeConversation(BaseModel):
     nb_messages: int = Field(default=0, ge=0)
 
 
+class EtatBranche(BaseModel):
+    """Vue courante d'une conversation : le chemin actif, et les frères de chacun de ses messages.
+
+    `variantes` associe à chaque message du chemin la liste ORDONNÉE des identifiants qui partagent
+    son parent, lui compris. C'est ce que le frontend affiche en « 2 / 3 » au survol, et ce qu'il
+    renvoie à `POST /branche` pour basculer. Il n'a rien à recalculer : la position se lit avec
+    `variantes[message.id].indexOf(message.id)`.
+    """
+
+    conversation_id: str
+    feuille_active: str | None = None
+    messages: list[MessageChat] = Field(default_factory=list)
+    variantes: dict[str, list[str]] = Field(default_factory=dict)
+
+
+class ArbreConversation(BaseModel):
+    """Tous les messages d'une conversation, branches abandonnées comprises.
+
+    Sert de preuve vérifiable qu'un rejeu ou une édition n'efface rien : ce que le chemin actif ne
+    montre plus est toujours là, avec son `parent_id`.
+    """
+
+    conversation_id: str
+    feuille_active: str | None = None
+    messages: list[MessageChat] = Field(default_factory=list)
+
+
 class ConversationDetaillee(BaseModel):
-    """Conversation complète servie à l'ouverture d'un écran de chat."""
+    """Conversation complète servie à l'ouverture d'un écran de chat.
+
+    `messages` est le CHEMIN ACTIF, pas l'arbre entier : sur une conversation restée linéaire, la
+    réponse est identique à celle d'avant les branches.
+    """
 
     conversation: ResumeConversation
     reglages: ReglagesConversation
     messages: list[MessageChat]
+    feuille_active: str | None = None
+    variantes: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class CreationConversation(BaseModel):
@@ -112,12 +176,16 @@ class MajConversation(BaseModel):
 
 
 class MajReglages(BaseModel):
-    """Patch partiel des réglages. Fusionné avec l'existant, jamais substitué en bloc."""
+    """Patch partiel des réglages. Fusionné avec l'existant, jamais substitué en bloc.
+
+    `parametres` accepte un patch partiel (`MajParametres`) : envoyer l'objet complet reste valide
+    et produit le même résultat, ce qui garde le contrat compatible avec le frontend existant.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     prompt_systeme: str | None = None
-    parametres: ParametresEchantillonnage | None = None
+    parametres: MajParametres | None = None
     historique_max_messages: int | None = Field(default=None, ge=1)
 
 
@@ -131,13 +199,48 @@ class DemandeGeneration(BaseModel):
     parametres: ParametresEchantillonnage | None = None
 
 
+class DemandeRejeu(BaseModel):
+    """Rejeu d'un message dans une nouvelle sous-branche. L'existante reste intacte."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    modele_id: str | None = None
+    parametres: ParametresEchantillonnage | None = None
+
+
+class DemandeEdition(DemandeRejeu):
+    """Édition d'un message utilisateur déjà envoyé : le nouveau texte ouvre une branche sœur.
+
+    L'ancien message n'est jamais réécrit — il reste lisible dans l'arbre, avec la réponse qu'il
+    avait obtenue. C'est la seule façon d'éditer sans détruire ce qui s'est réellement passé.
+    """
+
+    contenu: str = Field(min_length=1)
+
+
+class ActivationBranche(BaseModel):
+    """Bascule de la vue courante vers la branche qui contient ce message."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    message_id: str = Field(min_length=1)
+
+
 class EvenementDebut(BaseModel):
-    """Premier événement du flux : donne au client l'identifiant du message assistant à venir."""
+    """Premier événement du flux : donne au client l'identifiant du message assistant à venir.
+
+    `parent_id` dit SOUS QUEL nœud la réponse s'accroche, et `message_utilisateur_id` identifie le
+    message que ce tour vient de créer, s'il en a créé un (envoi normal ou édition ; un rejeu de
+    réponse n'en crée aucun). Les deux évitent au frontend de redemander la conversation entière
+    pour savoir où poser le message qui arrive.
+    """
 
     type: Literal["debut"] = "debut"
     conversation_id: str
     message_id: str
     modele_id: str | None = None
+    parent_id: str | None = None
+    message_utilisateur_id: str | None = None
 
 
 class EvenementFragment(BaseModel):
@@ -170,11 +273,37 @@ class EvenementErreur(BaseModel):
 EvenementFlux = EvenementDebut | EvenementFragment | EvenementFin | EvenementErreur
 
 
+# Champs dont `null` est une valeur et non une absence : les remettre à zéro doit rester possible.
+# `historique_max_messages` à null = historique complet ; sans cette liste, le champ serait
+# réglable mais jamais effaçable.
+_CHAMPS_EFFACABLES = frozenset({"historique_max_messages"})
+
+
+def fusionner_parametres(actuels: ParametresEchantillonnage, patch: MajParametres) -> ParametresEchantillonnage:
+    """Applique les seuls champs explicitement fournis, `null` compris.
+
+    `exclude_unset` et non `exclude_none` : `max_tokens: null` (« pas de plafond ») et
+    `graine: null` (« aléatoire ») sont des valeurs demandées, pas des champs omis. Les confondre
+    rendrait ces deux réglages impossibles à effacer une fois posés.
+    """
+    modifications = patch.model_dump(exclude_unset=True)
+    return ParametresEchantillonnage.model_validate({**actuels.model_dump(), **modifications})
+
+
 def fusionner_reglages(actuels: ReglagesConversation, patch: MajReglages) -> ReglagesConversation:
     """Applique un patch partiel et revalide l'ensemble.
 
     Passer par `model_validate` plutôt que `model_copy` garantit que les bornes des paramètres sont
     revérifiées : un patch ne doit pas pouvoir installer une valeur qu'une création aurait refusée.
+    Les paramètres sont fusionnés champ par champ, jamais remplacés en bloc.
     """
-    modifications = patch.model_dump(exclude_unset=True, exclude_none=True)
-    return ReglagesConversation.model_validate({**actuels.model_dump(), **modifications})
+    modifications = {
+        champ: valeur
+        for champ, valeur in patch.model_dump(exclude_unset=True).items()
+        if champ != "parametres" and (valeur is not None or champ in _CHAMPS_EFFACABLES)
+    }
+    parametres = actuels.parametres
+    if patch.parametres is not None:
+        parametres = fusionner_parametres(actuels.parametres, patch.parametres)
+    fusionnes = {**actuels.model_dump(), **modifications, "parametres": parametres.model_dump()}
+    return ReglagesConversation.model_validate(fusionnes)

@@ -49,7 +49,12 @@ from backend.models import (
     synchroniser_registre,
     verifier_modele_enregistre,
 )
+
+# Import direct du sous-module, comme pour `download` ci-dessous : `capacites` appartient au même
+# domaine que ce routeur, la frontière publique de `models` ne concerne que les autres domaines.
+from backend.models.capacites import Capacite, CapaciteDeduite, DefinitionCapacite, definitions
 from backend.models.download import ETATS_TERMINAUX, INTERVALLE_DIFFUSION_S, MAX_ITERATIONS_DIFFUSION
+from backend.models.registry import capacites as capacites_modele
 
 # Préfixe SANS `/api` : nginx réécrit `/api/(.*)` en `/$1` avant de proxifier (docker/nginx.conf).
 router = APIRouter(prefix="/models", tags=["models"])
@@ -85,16 +90,41 @@ def _en_http(exc: EchoHubError) -> HTTPException:
 def rechercher_depots(
     requete: str = Query(default=""),
     formats: list[FormatRecherche] = Query(default_factory=list),
+    capacites: list[Capacite] = Query(default_factory=list),
     tri: TriRecherche = Query(default=TriRecherche.TELECHARGEMENTS),
     ordre: Ordre = Query(default="desc"),
     page: int = Query(default=0, ge=0),
     taille_page: int = Query(default=20, ge=1, le=100),
 ) -> PageRecherche:
-    """Page de dépôts du Hub. Tout ce qui revient ici est **annoncé**, rien n'est mesuré."""
+    """Page de dépôts du Hub. Tout ce qui revient ici est **annoncé**, rien n'est mesuré.
+
+    `capacites` se répète pour se combiner et vaut ET : `?capacites=vision&capacites=appel_outils`
+    ne garde que les dépôts qui laissent entendre les deux. Paramètre facultatif ajouté après coup —
+    les appels existants (`requete`, `formats`, `tri`, `ordre`, `page`, `taille_page`) se comportent
+    exactement comme avant lorsqu'il est absent.
+    """
     try:
-        return rechercher(requete, formats=formats, tri=tri, ordre=ordre, page=page, taille_page=taille_page)
+        return rechercher(
+            requete,
+            formats=formats,
+            capacites=capacites,
+            tri=tri,
+            ordre=ordre,
+            page=page,
+            taille_page=taille_page,
+        )
     except EchoHubError as exc:
         raise _en_http(exc) from exc
+
+
+@router.get("/capacites", response_model=list[DefinitionCapacite])
+def lister_capacites() -> list[DefinitionCapacite]:
+    """Vocabulaire des capacités filtrables, définitions comprises.
+
+    Publié pour que l'interface compose ses filtres à partir de la liste qui filtre réellement : une
+    énumération recopiée côté frontend finirait par proposer un filtre que le backend ne connaît pas.
+    """
+    return definitions()
 
 
 @router.get("/depots/{depot:path}", response_model=ResultatRecherche)
@@ -143,6 +173,19 @@ def lire_metadonnees(identifiant: str) -> MetadonneesGGUF | None:
     """
     try:
         return metadonnees_modele(identifiant)
+    except EchoHubError as exc:
+        raise _en_http(exc) from exc
+
+
+@router.get("/registre/{identifiant:path}/capacites", response_model=list[CapaciteDeduite])
+def lire_capacites(identifiant: str) -> list[CapaciteDeduite]:
+    """Capacités DÉDUITES d'un modèle local — des conclusions tracées, pas des mesures.
+
+    Chaque entrée porte les indices qui l'ont produite ; une liste vide dit que rien n'est
+    reconnaissable localement, pas que le modèle est dépourvu de ces capacités.
+    """
+    try:
+        return capacites_modele(identifiant)
     except EchoHubError as exc:
         raise _en_http(exc) from exc
 

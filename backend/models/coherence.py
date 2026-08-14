@@ -25,11 +25,9 @@ from pydantic import BaseModel, Field
 from backend.core.errors import MetadonneesIllisibles
 from backend.models.gguf_metadata import MetadonneesGGUF, depuis_entete, indices_de_blocs
 from backend.models.gguf_reader import EnTeteGGUF, lire_entete
+from backend.models.gguf_types import MARQUEUR_EXPERT_PARTAGE, est_tenseur_expert
 from backend.models.safetensors_reader import IndexSafetensors, lire_config, lire_index
 from backend.models.storage import FormatModele, detecter_format, fichiers_gguf
-
-# Un tenseur d'expert porte l'un de ces suffixes dans les architectures MoE de llama.cpp.
-MARQUEURS_EXPERTS = ("_exps.", "_exps_")
 
 # Préfixes sous lesquels les poids d'une tour de vision sont écrits, toutes familles confondues.
 MARQUEURS_VISION = (
@@ -134,9 +132,7 @@ def _verifier_experts_gguf(metadonnees: MetadonneesGGUF, entete: EnTeteGGUF) -> 
     if not nb_experts or nb_experts <= 1 or not entete.tenseurs:
         return []
 
-    tenseurs_experts = [
-        tenseur for tenseur in entete.tenseurs if any(marqueur in tenseur.nom for marqueur in MARQUEURS_EXPERTS)
-    ]
+    tenseurs_experts = [tenseur for tenseur in entete.tenseurs if est_tenseur_expert(tenseur.nom)]
     if not tenseurs_experts:
         return [
             _incoherence(
@@ -163,6 +159,80 @@ def _verifier_experts_gguf(metadonnees: MetadonneesGGUF, entete: EnTeteGGUF) -> 
             )
         ]
     return []
+
+
+def _verifier_largeur_ffn_moe(metadonnees: MetadonneesGGUF) -> list[Incoherence]:
+    """Un MoE doit déclarer de quoi dimensionner la FFN vive d'un token, sinon rien n'est budgétable.
+
+    Le cas mesuré : `qwen35moe` ne déclare pas `feed_forward_length` mais
+    `expert_feed_forward_length`. Tant que la seconde n'était pas lue, la cible de chargement ne se
+    construisait pas et le modèle n'était pas planifiable — sans que rien ne dise laquelle manquait.
+    """
+    if not metadonnees.est_moe or metadonnees.largeur_ffn_active is not None:
+        return []
+    return [
+        _incoherence(
+            "largeur_ffn_indeterminee",
+            NiveauIncoherence.AVERTISSEMENT,
+            f"Modèle à {metadonnees.nb_experts} experts : ni `{metadonnees.architecture}."
+            "feed_forward_length` ni le couple (`expert_feed_forward_length`, `expert_used_count`) "
+            "ne sont lisibles, la largeur FFN vive d'un token est inconnue.",
+            "Ne pas y substituer la largeur d'un expert : elle sous-dimensionne du nombre d'experts "
+            "actifs. Le plan doit traiter cette largeur comme non mesurée.",
+            largeur_ffn_expert=metadonnees.experts.largeur_ffn_expert,
+            nb_experts_actifs=metadonnees.nb_experts_actifs,
+        )
+    ]
+
+
+def _verifier_expert_partage(metadonnees: MetadonneesGGUF, entete: EnTeteGGUF) -> list[Incoherence]:
+    """Des tenseurs `_shexp` présents sans la largeur correspondante font une somme incomplète."""
+    partages = [tenseur for tenseur in entete.tenseurs if MARQUEUR_EXPERT_PARTAGE in tenseur.nom]
+    if not partages or metadonnees.experts.largeur_ffn_partagee is not None:
+        return []
+    return [
+        _incoherence(
+            "expert_partage_sans_largeur",
+            NiveauIncoherence.AVERTISSEMENT,
+            f"{len(partages)} tenseur(s) `{MARQUEUR_EXPERT_PARTAGE}` présents, "
+            f"`{metadonnees.architecture}.expert_shared_feed_forward_length` absente.",
+            "La branche partagée est évaluée à chaque token : sa largeur manque à la somme, où elle "
+            "compte pour 0, et `largeur_ffn_active` est sous-estimée d'autant.",
+            nb_tenseurs_partages=len(partages),
+        )
+    ]
+
+
+def _verifier_attention_hybride(metadonnees: MetadonneesGGUF) -> list[Incoherence]:
+    """`full_attention_interval` déclaré, confronté aux blocs qui portent réellement une attention.
+
+    C'est la mesure la plus lourde du fichier : sur les deux modèles de la machine, une couche sur
+    quatre seulement porte un cache KV. Facturer le KV sur toutes en invente 3,3 Gio à 57k.
+    """
+    intervalle = metadonnees.attention.intervalle_attention_pleine
+    mesures = metadonnees.mesures
+    if intervalle is None or intervalle <= 0 or mesures is None or not mesures.blocs_avec_attention:
+        return []
+
+    # Comparaison de CARDINAUX seulement : la convention d'indexation des couches d'attention n'est
+    # pas documentée par le format, et on ne la suppose pas pour signaler un écart.
+    attendus = metadonnees.block_count // intervalle
+    observes = len(mesures.blocs_avec_attention)
+    if attendus == observes:
+        return []
+    return [
+        _incoherence(
+            "intervalle_attention_incoherent",
+            NiveauIncoherence.AVERTISSEMENT,
+            f"`full_attention_interval` vaut {intervalle} sur {metadonnees.block_count} blocs, soit "
+            f"{attendus} couche(s) d'attention attendue(s) ; {observes} en portent effectivement.",
+            "Dimensionner le cache KV sur les blocs observés, jamais sur la clé seule : l'écart se "
+            "paie en VRAM inventée ou en dépassement.",
+            intervalle=intervalle,
+            couches_attendues=attendus,
+            couches_observees=observes,
+        )
+    ]
 
 
 def _verifier_taille_gguf(metadonnees: MetadonneesGGUF, entete: EnTeteGGUF) -> list[Incoherence]:
@@ -231,6 +301,9 @@ def verifier_gguf(chemin: Path) -> RapportCoherence:
     incoherences = [
         *_verifier_blocs_gguf(metadonnees, entete),
         *_verifier_experts_gguf(metadonnees, entete),
+        *_verifier_largeur_ffn_moe(metadonnees),
+        *_verifier_expert_partage(metadonnees, entete),
+        *_verifier_attention_hybride(metadonnees),
         *_verifier_taille_gguf(metadonnees, entete),
         *_verifier_signaux_gguf(metadonnees, entete),
     ]

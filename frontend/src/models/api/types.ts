@@ -16,6 +16,50 @@ export type TriRecherche = 'downloads' | 'likes' | 'created_at' | 'last_modified
 
 export type Ordre = 'desc' | 'asc';
 
+/**
+ * Vocabulaire fermé des capacités filtrables — miroir de `backend.models.capacites.Capacite`.
+ *
+ * Seules les VALEURS sont recopiées ici, parce qu'un type d'union doit exister à la compilation.
+ * Les libellés et les définitions, eux, viennent de `GET /models/capacites` : une liste de textes
+ * recopiée côté interface finirait par diverger de celle qui filtre réellement.
+ */
+export type Capacite =
+  | 'raisonnement'
+  | 'appel_outils'
+  | 'vision'
+  | 'generation_image'
+  | 'audio_entree'
+  | 'audio_sortie'
+  | 'code'
+  | 'embeddings'
+  | 'sans_censure';
+
+/** D'où vient un indice. Toutes ces sources sont déclaratives, aucune n'est une lecture de poids. */
+export type SourceIndice = 'tache' | 'etiquette' | 'nom' | 'description' | 'fichier';
+
+/** Ce qui a fait conclure à une capacité : la source, et la valeur exacte qui a correspondu. */
+export interface IndiceCapacite {
+  source: SourceIndice;
+  valeur: string;
+}
+
+/**
+ * Une capacité et la totalité de ce qui plaide pour elle. `indices` n'est jamais vide : le backend
+ * ne déduit pas une capacité sans indice, il l'omet. L'interface ne peut donc afficher une capacité
+ * sans pouvoir en montrer la provenance.
+ */
+export interface CapaciteDeduite {
+  capacite: Capacite;
+  indices: IndiceCapacite[];
+}
+
+/** Sens d'une capacité, publié par le backend avec elle — le frontend ne réécrit pas ce texte. */
+export interface DefinitionCapacite {
+  capacite: Capacite;
+  libelle: string;
+  definition: string;
+}
+
 /** Un fichier du dépôt. `etiquette` vient du nom de fichier : une intention, jamais un fait. */
 export interface FichierDepot {
   nom: string;
@@ -44,6 +88,13 @@ export interface ResultatRecherche {
   fichiers_gguf: FichierDepot[];
   taille_totale_octets: number | null;
   annonce: MetadonneesAnnoncees;
+  /**
+   * « Déduites » et non « déclarées » : le Hub n'a pas de champ « capacités ». Ce sont les
+   * conclusions du backend à partir de ses déclarations, chacune accompagnée de ses indices.
+   * Liste vide = le dépôt n'annonce rien de reconnaissable, jamais « le modèle ne sait pas faire ».
+   * L'ordre est celui du vocabulaire publié : il ne se retrie pas côté interface.
+   */
+  capacites_deduites: CapaciteDeduite[];
   deja_telecharge: boolean;
 }
 

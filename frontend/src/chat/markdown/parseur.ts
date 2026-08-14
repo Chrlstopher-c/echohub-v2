@@ -1,89 +1,35 @@
 /*
- * Analyse Markdown minimale, suffisante pour une réponse de modèle : titres, listes, citations,
- * blocs de code, séparateurs, et l'inline courant.
+ * Analyse Markdown maison, calibrée sur ce qu'écrit réellement un modèle : titres, listes (avec
+ * imbrication), tableaux, citations, blocs de code, séparateurs, et l'inline courant.
  *
  * Écrit ici plutôt qu'ajouté en dépendance pour une raison de sûreté : le résultat est un arbre de
  * données que React rend en éléments, donc aucun HTML n'est jamais injecté. Un rendu passant par
  * `dangerouslySetInnerHTML` exigerait un assainisseur, soit une seconde dépendance à auditer.
  *
- * L'analyse tolère l'inachevé : pendant le streaming, une clôture de bloc de code manquante donne
- * un bloc `complet: false` au lieu de faire disparaître le texte déjà reçu.
+ * L'analyse tolère l'inachevé, parce que le texte arrive fragment par fragment : une clôture de
+ * bloc de code manquante donne un bloc `complet: false`, un tableau sans rangée s'affiche réduit à
+ * son en-tête, un marqueur inline ouvert ressort en texte. À aucun moment un texte déjà reçu ne
+ * disparaît de l'écran parce que sa construction n'est pas terminée.
+ *
+ * Les lecteurs vivent dans des fichiers séparés (`liste.ts`, `tableau.ts`, `inline.ts`) ; ce fichier
+ * ne fait qu'aiguiller ligne à ligne.
  */
 
-export type SegmentInline =
-  | { type: 'texte'; texte: string }
-  | { type: 'fort'; texte: string }
-  | { type: 'emphase'; texte: string }
-  | { type: 'code'; texte: string }
-  | { type: 'lien'; texte: string; href: string };
+import { CLOTURE_CODE, groupe, ligneA } from './acces';
+import { analyserInline } from './inline';
+import { analyserMarque, lireListe } from './liste';
+import { estTableau, lireTableau } from './tableau';
+import type { Avance, BlocMarkdown, NiveauTitre } from './types';
 
-export type BlocMarkdown =
-  | { type: 'titre'; niveau: 1 | 2 | 3; contenu: SegmentInline[] }
-  | { type: 'paragraphe'; contenu: SegmentInline[] }
-  | { type: 'code'; langage: string; texte: string; complet: boolean }
-  | { type: 'liste'; ordonnee: boolean; items: SegmentInline[][] }
-  | { type: 'citation'; contenu: SegmentInline[] }
-  | { type: 'separateur' };
-
-const MOTIF_INLINE = /`([^`]+)`|\*\*([^*]+)\*\*|\*([^*\n]+)\*|\[([^\]]+)\]\(([^)\s]+)\)/g;
-const MOTIF_TITRE = /^(#{1,3})\s+(.*)$/;
-const MOTIF_PUCE = /^[-*+]\s+(.*)$/;
-const MOTIF_NUMERO = /^\d+[.)]\s+(.*)$/;
+const MOTIF_TITRE = /^(#{1,6})\s+(.*)$/;
 const MOTIF_CITATION = /^>\s?(.*)$/;
 const MOTIF_SEPARATEUR = /^(-{3,}|\*{3,}|_{3,})$/;
-const CLOTURE_CODE = '```';
+const NIVEAU_MAX = 6;
 
-/* Deux accès sont indexés hors garantie du typage, et `noUncheckedIndexedAccess` a raison de le
- * signaler : une ligne au-delà du tableau et un groupe de capture non apparié valent tous deux
- * `undefined` au runtime. Plutôt que de les taire par un cast, on les ramène à la chaîne vide —
- * neutre pour toutes les opérations qui suivent (`trim`, `startsWith`, `exec`). */
-function ligneA(lignes: string[], index: number): string {
-  return lignes[index] ?? '';
-}
-
-function groupe(trouve: RegExpExecArray, rang: number): string {
-  return trouve[rang] ?? '';
-}
-
-function segmentDepuisCapture(trouve: RegExpExecArray): SegmentInline {
-  // `RegExpExecArray` type ses éléments `string`, alors qu'un groupe non apparié vaut `undefined`
-  // au runtime. Le réélargir ici évite de comparer à `undefined` un type qui prétend ne pas l'être.
-  const groupes: Array<string | undefined> = trouve;
-  if (groupes[1] !== undefined) {
-    return { type: 'code', texte: groupes[1] };
-  }
-  if (groupes[2] !== undefined) {
-    return { type: 'fort', texte: groupes[2] };
-  }
-  if (groupes[3] !== undefined) {
-    return { type: 'emphase', texte: groupes[3] };
-  }
-  return { type: 'lien', texte: groupes[4] ?? '', href: groupes[5] ?? '' };
-}
-
-/** Découpe une ligne en segments typés. Le texte hors motif reste du texte brut. */
-export function analyserInline(source: string): SegmentInline[] {
-  const segments: SegmentInline[] = [];
-  let curseur = 0;
-  MOTIF_INLINE.lastIndex = 0;
-  let trouve = MOTIF_INLINE.exec(source);
-  while (trouve !== null) {
-    if (trouve.index > curseur) {
-      segments.push({ type: 'texte', texte: source.slice(curseur, trouve.index) });
-    }
-    segments.push(segmentDepuisCapture(trouve));
-    curseur = trouve.index + trouve[0].length;
-    trouve = MOTIF_INLINE.exec(source);
-  }
-  if (curseur < source.length) {
-    segments.push({ type: 'texte', texte: source.slice(curseur) });
-  }
-  return segments;
-}
-
-interface Avance {
-  bloc: BlocMarkdown;
-  suivant: number;
+function niveauTitre(dieses: string): NiveauTitre {
+  // Le motif borne déjà la longueur à 6 : le cast nomme cette garantie au lieu d'ajouter un test
+  // qui ne pourrait jamais échouer, et `Math.min` la rend vraie même si le motif changeait.
+  return Math.min(dieses.length, NIVEAU_MAX) as NiveauTitre;
 }
 
 function lireCode(lignes: string[], depart: number): Avance {
@@ -101,19 +47,6 @@ function lireCode(lignes: string[], depart: number): Avance {
   };
 }
 
-function lireListe(lignes: string[], depart: number, ordonnee: boolean): Avance {
-  const motif = ordonnee ? MOTIF_NUMERO : MOTIF_PUCE;
-  const items: SegmentInline[][] = [];
-  let i = depart;
-  let trouve = motif.exec(ligneA(lignes, i));
-  while (trouve !== null) {
-    items.push(analyserInline(groupe(trouve, 1)));
-    i += 1;
-    trouve = i < lignes.length ? motif.exec(ligneA(lignes, i)) : null;
-  }
-  return { bloc: { type: 'liste', ordonnee, items }, suivant: i };
-}
-
 function lireCitation(lignes: string[], depart: number): Avance {
   const parties: string[] = [];
   let i = depart;
@@ -129,24 +62,29 @@ function lireCitation(lignes: string[], depart: number): Avance {
 function lireParagraphe(lignes: string[], depart: number): Avance {
   const parties: string[] = [];
   let i = depart;
-  while (i < lignes.length && ligneA(lignes, i).trim() !== '' && !estDebutDeBloc(ligneA(lignes, i))) {
+  while (i < lignes.length && ligneA(lignes, i).trim() !== '' && !estDebutDeBloc(lignes, i)) {
     parties.push(ligneA(lignes, i).trim());
     i += 1;
   }
   return { bloc: { type: 'paragraphe', contenu: analyserInline(parties.join(' ')) }, suivant: i };
 }
 
-function estDebutDeBloc(ligne: string): boolean {
+/* Un paragraphe s'arrête là où un autre bloc commence. Le tableau se teste sur deux lignes : sa
+ * détection dépend de la ligne de délimiteurs, pas de la ligne courante seule. */
+function estDebutDeBloc(lignes: string[], index: number): boolean {
+  const ligne = ligneA(lignes, index);
   return (
     ligne.startsWith(CLOTURE_CODE) ||
     MOTIF_TITRE.test(ligne) ||
-    MOTIF_PUCE.test(ligne) ||
-    MOTIF_NUMERO.test(ligne) ||
     MOTIF_CITATION.test(ligne) ||
-    MOTIF_SEPARATEUR.test(ligne.trim())
+    MOTIF_SEPARATEUR.test(ligne.trim()) ||
+    analyserMarque(ligne) !== null ||
+    estTableau(lignes, index)
   );
 }
 
+/* Ordre significatif : le séparateur passe avant la liste (`---` n'est pas un item vide), et le
+ * tableau avant la citation et le paragraphe (une rangée n'est ni l'un ni l'autre). */
 function lireBloc(lignes: string[], depart: number): Avance {
   const ligne = ligneA(lignes, depart);
   if (ligne.startsWith(CLOTURE_CODE)) {
@@ -154,18 +92,22 @@ function lireBloc(lignes: string[], depart: number): Avance {
   }
   const titre = MOTIF_TITRE.exec(ligne);
   if (titre !== null) {
-    const niveau = groupe(titre, 1).length as 1 | 2 | 3; // longueur bornée à 3 par le motif lui-même
-    const contenu = analyserInline(groupe(titre, 2));
-    return { bloc: { type: 'titre', niveau, contenu }, suivant: depart + 1 };
+    const bloc: BlocMarkdown = {
+      type: 'titre',
+      niveau: niveauTitre(groupe(titre, 1)),
+      contenu: analyserInline(groupe(titre, 2)),
+    };
+    return { bloc, suivant: depart + 1 };
   }
   if (MOTIF_SEPARATEUR.test(ligne.trim())) {
     return { bloc: { type: 'separateur' }, suivant: depart + 1 };
   }
-  if (MOTIF_PUCE.test(ligne)) {
-    return lireListe(lignes, depart, false);
+  if (estTableau(lignes, depart)) {
+    return lireTableau(lignes, depart);
   }
-  if (MOTIF_NUMERO.test(ligne)) {
-    return lireListe(lignes, depart, true);
+  const marque = analyserMarque(ligne);
+  if (marque !== null) {
+    return lireListe(lignes, depart, marque.indentation, 0);
   }
   if (MOTIF_CITATION.test(ligne)) {
     return lireCitation(lignes, depart);

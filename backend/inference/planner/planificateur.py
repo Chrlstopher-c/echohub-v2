@@ -17,17 +17,34 @@ from loguru import logger
 from pydantic import BaseModel, ConfigDict
 
 from backend.core import PlanificationImpossible, RessourceInsuffisante
-from backend.inference.planner.budget import construire_budget, utilisation_memoire_gpu
+from backend.inference.planner.budget import avertissements_metadonnees, utilisation_memoire_gpu
 from backend.inference.planner.entrees import CauseEchec, DemandeDeChargement, Moteur, TypeCacheKV
 from backend.inference.planner.environnement import construire_environnement
 from backend.inference.planner.moteur import choisir_moteur, flash_attention_active, vram_apres_ejection
 from backend.inference.planner.paliers import NIVEAU_MINIMAL, Palier, niveau_minimum_pour_cause, palier
 from backend.inference.planner.plan import BudgetMemoire, EjectionRequise, PlanDeChargement, ValeurJustifiee
+from backend.inference.planner.postes_memoire import construire_budget
 from backend.inference.planner.reglages import CadreCalcul, Repartition, resoudre_repartition, resoudre_type_kv
 
 # Au-delà de cette part de la RAM libre, le plan reste valide mais le système va commencer à
 # évincer du cache disque : l'utilisateur doit le savoir avant de lancer le chargement.
 SEUIL_ALERTE_RAM = 0.9
+
+
+class ContraintesHeritees(BaseModel):
+    """Ce qu'un plan échoué interdit au plan suivant. Vide lors d'une planification initiale.
+
+    Deux plafonds plutôt qu'un, parce qu'il y a deux axes de placement : le nombre de couches sur
+    GPU, et le nombre de blocs dont les experts y résident. Sans le second, un palier qui compresse
+    le cache KV libérerait de la VRAM et se remettrait à charger des experts que l'échec venait de
+    faire sortir.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    plafond_couches: int | None = None
+    plafond_experts_gpu: int | None = None
+    deport_experts_autorise: bool = True
 
 
 class _Preparation(BaseModel):
@@ -87,11 +104,13 @@ def degrader(demande: DemandeDeChargement, plan_echoue: PlanDeChargement, cause:
         depart,
         cause.value,
     )
+    contraintes = _contraintes_apres_echec(plan_echoue, cause)
     for niveau in range(depart, NIVEAU_MINIMAL + 1):
         try:
-            # Le plafond hérité empêche un palier plus compressé de regagner des couches sur le GPU :
-            # sans lui, la dégradation devrait sauter jusqu'au palier qui coupe brutalement.
-            candidat = _planifier_au_niveau(demande, niveau, plafond_couches=plan_echoue.couches_gpu.valeur)
+            # Les plafonds hérités empêchent un palier plus compressé de regagner des couches ou des
+            # experts sur le GPU : sans eux, la dégradation devrait sauter jusqu'au palier qui coupe
+            # brutalement, faute de candidat strictement plus conservateur.
+            candidat = _planifier_au_niveau(demande, niveau, contraintes)
         except RessourceInsuffisante as exc:
             logger.warning("Niveau {} écarté : {}", niveau, exc.message)
             continue
@@ -104,17 +123,39 @@ def degrader(demande: DemandeDeChargement, plan_echoue: PlanDeChargement, cause:
     )
 
 
+def _contraintes_apres_echec(plan_echoue: PlanDeChargement, cause: CauseEchec) -> ContraintesHeritees:
+    """Ce que l'échec interdit : ni plus de couches, ni plus de groupes d'experts qu'au plan échoué.
+
+    Le déport d'experts n'est abandonné que si le moteur a déclaré ne pas savoir l'appliquer — seule
+    cause qui disqualifie la stratégie plutôt que son dimensionnement. Un plan qui n'en portait pas
+    n'a pas à le regagner : la dégradation ne change pas d'axe de placement en cours de descente.
+    """
+    return ContraintesHeritees(
+        plafond_couches=plan_echoue.couches_gpu.valeur,
+        plafond_experts_gpu=plan_echoue.blocs_experts_gpu,
+        deport_experts_autorise=(
+            plan_echoue.experts_deportes is not None
+            and cause is not CauseEchec.DEPORT_EXPERTS_INDISPONIBLE
+        ),
+    )
+
+
 def _planifier_au_niveau(demande: DemandeDeChargement, niveau: int,
-                         plafond_couches: int | None = None) -> PlanDeChargement:
+                         contraintes: ContraintesHeritees | None = None) -> PlanDeChargement:
     """Construit le plan d'un palier donné, ou lève `RessourceInsuffisante` s'il ne tient pas."""
-    preparation = _preparer(demande, palier(niveau), plafond_couches)
+    preparation = _preparer(demande, palier(niveau), contraintes or ContraintesHeritees())
     repartition = resoudre_repartition(preparation.cadre)
     budget = _budget_du_plan(preparation.cadre, repartition, demande)
-    avertissements = preparation.avertissements + _verifier_ram(demande, budget)
+    avertissements = (
+        preparation.avertissements
+        + avertissements_metadonnees(demande.metadonnees)
+        + _verifier_ram(demande, budget)
+    )
     return _assembler(demande, niveau, preparation, repartition, budget, avertissements)
 
 
-def _preparer(demande: DemandeDeChargement, palier_actif: Palier, plafond_couches: int | None) -> _Preparation:
+def _preparer(demande: DemandeDeChargement, palier_actif: Palier,
+              contraintes: ContraintesHeritees) -> _Preparation:
     """Moteur, éjections, flash attention et format de cache — tout ce qui précède la répartition."""
     moteur_choisi, avertissements = choisir_moteur(demande.metadonnees, demande.profil, demande.preferences)
     vram_disponible, ejections = vram_apres_ejection(demande.profil)
@@ -128,7 +169,9 @@ def _preparer(demande: DemandeDeChargement, palier_actif: Palier, plafond_couche
         type_kv=type_kv.valeur,
         flash_attention=flash.valeur,
         vram_disponible_octets=vram_disponible,
-        plafond_couches_externe=plafond_couches,
+        plafond_couches_externe=contraintes.plafond_couches,
+        plafond_experts_gpu_externe=contraintes.plafond_experts_gpu,
+        deport_experts_autorise=contraintes.deport_experts_autorise,
     )
     return _Preparation(
         cadre=cadre,
@@ -152,6 +195,7 @@ def _budget_du_plan(cadre: CadreCalcul, repartition: Repartition, demande: Deman
         vram_disponible_octets=cadre.vram_disponible_octets,
         ram_disponible_octets=demande.profil.ram_libre_octets,
         ratio_fragmentation=cadre.preferences.ratio_fragmentation,
+        octets_experts_hote=repartition.octets_experts_hote,
     )
 
 
@@ -194,6 +238,7 @@ def _assembler(demande: DemandeDeChargement, niveau: int, preparation: _Preparat
         moteur=preparation.moteur,
         couches_gpu=repartition.couches_gpu,
         couches_totales=total,
+        experts_deportes=repartition.experts_deportes,
         contexte=repartition.contexte,
         batch=repartition.batch,
         type_cache_kv=preparation.type_kv,

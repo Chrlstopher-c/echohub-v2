@@ -236,6 +236,12 @@ export interface MessageChat {
   cree_le: string;
   modele_id: string | null;
   interrompu: boolean;
+  /**
+   * Parent dans l'arbre de la conversation ; `null` désigne une racine. Deux messages partageant un
+   * parent sont deux VARIANTES du même tour (rejeu, édition) et aucune n'écrase l'autre : c'est ce
+   * qui permet d'éditer sans détruire ce qui s'est réellement passé.
+   */
+  parent_id: string | null;
 }
 
 export interface ResumeConversation {
@@ -251,7 +257,51 @@ export interface ResumeConversation {
 export interface ConversationDetaillee {
   conversation: ResumeConversation;
   reglages: ReglagesConversation;
+  /** CHEMIN ACTIF de l'arbre, pas l'historique complet — identique sur une conversation linéaire. */
   messages: MessageChat[];
+  /** Feuille du chemin affiché ; `null` sur une conversation sans aucun message. */
+  feuille_active: string | null;
+  /** Voir `EtatBranche.variantes`. Vide tant qu'aucune branche n'existe. */
+  variantes: Record<string, string[]>;
+}
+
+/* ------------------------------------------------------------------------ branches de dialogue */
+
+/**
+ * Vue courante d'une conversation : le chemin affiché et les frères de chacun de ses messages.
+ *
+ * `variantes[id]` liste les identifiants qui partagent le parent de ce message, LUI COMPRIS, dans
+ * l'ordre de création. La position affichée se lit `variantes[id].indexOf(id)` et le total
+ * `variantes[id].length` : le frontend ne recalcule aucune filiation, il lit ce que le serveur a
+ * établi. Une clé absente signifie « message sans variante », pas « inconnu ».
+ */
+export interface EtatBranche {
+  conversation_id: string;
+  feuille_active: string | null;
+  messages: MessageChat[];
+  variantes: Record<string, string[]>;
+}
+
+/*
+ * `GET /arbre` (arbre complet, branches abandonnées comprises) n'est volontairement pas transcrit :
+ * aucun écran ne le consomme encore. Le type suivra la vue qui en aura besoin — un contrat sans
+ * appelant se périme sans que personne ne s'en aperçoive.
+ */
+
+/** Corps de `POST /branche` : bascule la vue sur la branche qui contient ce message. */
+export interface ActivationBranche {
+  message_id: string;
+}
+
+/** Corps de `POST /messages/{id}/rejouer`. Les deux champs omis reprennent les réglages du fil. */
+export interface DemandeRejeu {
+  modele_id?: string | null;
+  parametres?: ParametresEchantillonnage | null;
+}
+
+/** Corps de `POST /messages/{id}/editer` : le nouveau texte ouvre une branche sœur. */
+export interface DemandeEdition extends DemandeRejeu {
+  contenu: string;
 }
 
 export interface MajReglages {
@@ -273,6 +323,14 @@ export interface EvenementDebut {
   conversation_id: string;
   message_id: string;
   modele_id: string | null;
+  /** Nœud sous lequel la réponse en cours s'accroche — `null` si elle ouvre la conversation. */
+  parent_id: string | null;
+  /**
+   * Message utilisateur créé par ce tour : envoi normal et édition en portent un, un rejeu de
+   * réponse n'en crée aucun et vaut `null`. Une absence ici n'est pas un manque d'information :
+   * c'est le fait qu'aucun message n'a été écrit.
+   */
+  message_utilisateur_id: string | null;
 }
 
 export interface EvenementFragment {

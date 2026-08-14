@@ -27,6 +27,9 @@ _CAUSES_VERS_PLANIFICATEUR: dict[CauseEchec, CausePlanificateur] = {
     CauseEchec.CONTEXTE_TROP_GRAND: CausePlanificateur.CONTEXTE_REFUSE,
     CauseEchec.MOTEUR_ABSENT: CausePlanificateur.MOTEUR_INDISPONIBLE,
     CauseEchec.MOTEUR_SANS_CUDA: CausePlanificateur.MOTEUR_INDISPONIBLE,
+    # Seule cause qui disqualifie un axe de placement plutôt qu'un dimensionnement : le planificateur
+    # doit abandonner le déport d'experts, pas simplement en déporter davantage.
+    CauseEchec.DEPORT_EXPERTS_INDISPONIBLE: CausePlanificateur.DEPORT_EXPERTS_INDISPONIBLE,
 }
 
 
@@ -41,6 +44,7 @@ def vers_plan_moteur(plan: PlanDeChargement, chemin_modele: str) -> PlanChargeme
         chemin_modele=chemin_modele,
         identifiant_modele=plan.identifiant_modele,
         couches_gpu=plan.couches_gpu.valeur,
+        experts_deportes=list(plan.experts_deportes.valeur) if plan.experts_deportes else [],
         contexte=plan.contexte.valeur,
         batch=plan.batch.valeur,
         type_kv_cache=plan.type_cache_kv.valeur.value,

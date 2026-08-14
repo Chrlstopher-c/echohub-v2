@@ -28,6 +28,23 @@ GIO = 1024 * 1024 * 1024
 POIDS_COUCHE_MESURE_MIO = 436
 COUCHES_REELLES = 41
 
+# --------------------------------------------------------------------------- MoE mesuré
+#
+# Relevé sur HauhauCS/Qwen3.6-35B-A3B-Uncensored IQ3_M présent sur la machine : 733 tenseurs,
+# 40 blocs, architecture `qwen35moe`. Ces nombres ne sont pas des ordres de grandeur choisis pour
+# le test, ce sont les mesures — c'est ce qui rend le test capable de contredire le planificateur.
+BLOCS_MOE = 40
+BLOCS_EXPERTS_LOURDS = 5  # blocs 0 à 4, mesurés plus lourds que les suivants
+EXPERTS_BLOC_LOURD_MIO = 364
+EXPERTS_BLOC_MIO = 330
+# 0,721 Gio de dense pour les 40 blocs. Seul ce TOTAL est mesuré ; la dispersion par bloc ne l'est
+# qu'en bornes (15,68 à 19,50 Mio), elle n'est donc pas reproduite ici.
+DENSE_BLOC_MIO = 0.721 * 1024 / BLOCS_MOE
+# `output.weight` 397,9 Mio en Q6_K + `token_embd` 208,4 Mio en IQ3_S.
+HORS_BLOCS_MIO = 606.3
+# `{arch}.full_attention_interval` : blocs 3, 7, 11 … 39 seulement portent un cache KV.
+INTERVALLE_ATTENTION_MESURE = 4
+
 
 @pytest.fixture
 def modele_grand() -> MetadonneesModele:
@@ -67,6 +84,66 @@ def modele_petit() -> MetadonneesModele:
         contexte_entrainement_max=32768,
         taille_vocabulaire=151936,
         quantification="Q4_K_M",
+    )
+
+
+def _poids_mesures_moe() -> tuple[tuple[int, ...], tuple[int, ...], int]:
+    """Poids par bloc du MoE mesuré : part experts, part totale, et tenseurs hors blocs."""
+    experts = tuple(
+        int((EXPERTS_BLOC_LOURD_MIO if index < BLOCS_EXPERTS_LOURDS else EXPERTS_BLOC_MIO) * MIO)
+        for index in range(BLOCS_MOE)
+    )
+    dense = int(DENSE_BLOC_MIO * MIO)
+    return experts, tuple(part + dense for part in experts), int(HORS_BLOCS_MIO * MIO)
+
+
+@pytest.fixture
+def modele_moe() -> MetadonneesModele:
+    """Qwen3.6-35B-A3B IQ3_M : 90,9 % du poids dans les experts, une couche d'attention sur quatre.
+
+    Deux particularités que le planificateur doit traiter, et qu'aucune autre fixture ne porte :
+
+    - `dimension_ffn` vaut `None` — l'architecture ne déclare pas `feed_forward_length`, seulement
+      `expert_feed_forward_length`. Ce champ exigé rendait ce modèle inconstructible, donc non
+      planifiable, ce qui est le défaut d'origine ;
+    - le poids est relevé bloc par bloc et séparé en dense / experts, ce qui autorise le déport.
+    """
+    experts, blocs, hors_blocs = _poids_mesures_moe()
+    return MetadonneesModele(
+        identifiant="Qwen3.6-35B-A3B-IQ3_M",
+        format=FormatModele.GGUF,
+        architecture="qwen35moe",
+        taille_octets=sum(blocs) + hors_blocs,
+        nombre_couches=BLOCS_MOE,
+        dimension_embedding=2048,
+        dimension_ffn=None,
+        nombre_tetes_attention=16,
+        nombre_tetes_kv=2,
+        dimension_tete=256,
+        contexte_entrainement_max=262144,
+        taille_vocabulaire=248320,
+        quantification="IQ3_M",
+        est_moe=True,
+        nombre_experts=256,
+        nombre_experts_actifs=8,
+        dimension_ffn_expert=512,
+        dimension_ffn_expert_partage=512,
+        octets_par_bloc=blocs,
+        octets_experts_par_bloc=experts,
+        octets_hors_blocs=hors_blocs,
+        intervalle_attention_pleine=INTERVALLE_ATTENTION_MESURE,
+    )
+
+
+@pytest.fixture
+def modele_moe_sans_mesure(modele_moe: MetadonneesModele) -> MetadonneesModele:
+    """Même MoE, mais dont le domaine `models` n'a pas relevé le poids des experts bloc par bloc.
+
+    Cas de repli obligatoire : sans mesure, aucun déport ne peut être décidé, et le planificateur
+    doit revenir à la coupe par couches au lieu d'inventer une répartition.
+    """
+    return modele_moe.model_copy(
+        update={"octets_par_bloc": (), "octets_experts_par_bloc": (), "octets_hors_blocs": None}
     )
 
 

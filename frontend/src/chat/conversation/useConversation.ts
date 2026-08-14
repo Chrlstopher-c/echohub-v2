@@ -6,7 +6,7 @@
  * de vérité, l'optimisme local ne vit que le temps d'une génération.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { messageErreur } from '../api/client';
 import type {
   ConversationDetaillee,
@@ -61,6 +61,10 @@ function messageLocal(conversationId: string, contenu: string): MessageChat {
     cree_le: new Date().toISOString(),
     modele_id: null,
     interrompu: false,
+    // Le parent réel est décidé par le backend, qui seul connaît la branche active. Un message
+    // optimiste affiché avant la réponse ne peut que l'ignorer : `null` dit « pas encore rattaché »,
+    // et la version persistée qui revient porte le vrai parent.
+    parent_id: null,
   };
 }
 
@@ -96,14 +100,30 @@ function useSocle(conversationId: string | null): Socle {
   return { detail, messages, erreur, setDetail, setMessages, setErreur };
 }
 
-export function useConversation(conversationId: string | null): EtatConversation {
-  const socle = useSocle(conversationId);
-  const { setMessages, setErreur } = socle;
+/**
+ * Relecture de l'historique persisté, bornée à la conversation RÉELLEMENT affichée quand la
+ * réponse arrive : une lecture partie pour A et revenue après un changement écraserait le fil de B.
+ * La comparaison passe par une référence et non par la valeur capturée dans la closure — cette
+ * closure est justement celle de A, elle validerait sa propre écriture.
+ */
+function useRelectureMessages(
+  conversationId: string | null,
+  setMessages: (messages: MessageChat[]) => void,
+  setErreur: (erreur: string | null) => void,
+): (id: string) => Promise<void> {
+  const idAffiche = useRef<string | null>(conversationId);
+  useEffect((): void => {
+    idAffiche.current = conversationId;
+  }, [conversationId]);
 
-  const rafraichirMessages = useCallback(
+  return useCallback(
     async (id: string): Promise<void> => {
       try {
-        setMessages(await listerMessages(id));
+        const messages = await listerMessages(id);
+        if (id !== idAffiche.current) {
+          return;
+        }
+        setMessages(messages);
       } catch (cause) {
         journal.erreur('historique illisible', cause);
         setErreur(messageErreur(cause));
@@ -111,19 +131,29 @@ export function useConversation(conversationId: string | null): EtatConversation
     },
     [setMessages, setErreur],
   );
+}
+
+export function useConversation(conversationId: string | null): EtatConversation {
+  const socle = useSocle(conversationId);
+  const { setMessages, setErreur } = socle;
+  const rafraichirMessages = useRelectureMessages(conversationId, setMessages, setErreur);
 
   const generation = useGeneration(conversationId, rafraichirMessages);
   const enregistrerReglages = useEnregistrementReglages(conversationId, socle);
 
+  // Dépendance sur `generation.envoyer`, stable, et non sur l'objet d'état reconstruit à chaque
+  // fragment reçu : sinon l'identité de `envoyer` change des dizaines de fois par seconde pendant
+  // une génération, et toute mise en dépendance ultérieure boucle.
+  const { envoyer: lancerGeneration } = generation;
   const envoyer = useCallback(
     async (contenu: string): Promise<void> => {
       if (conversationId === null) {
         return;
       }
       setMessages([...socle.messages, messageLocal(conversationId, contenu)]);
-      await generation.envoyer(contenu);
+      await lancerGeneration(contenu);
     },
-    [conversationId, socle.messages, setMessages, generation],
+    [conversationId, socle.messages, setMessages, lancerGeneration],
   );
 
   return {

@@ -30,8 +30,11 @@ from backend.inference.planner.budget import (
     CONTEXTE_PLANCHER,
     besoin_ram_octets,
     contexte_maximal,
+    couches_attention,
     couches_gpu_maximales,
+    largeur_activation_ffn,
     octets_kv_par_token_par_couche,
+    poids_cumule_gpu_octets,
     poids_par_couche_octets,
 )
 from backend.inference.planner.entrees import (
@@ -87,7 +90,10 @@ __all__ = [
     "PALIERS",
     # Arithmétique exposée pour l'affichage et les tests, jamais dupliquée ailleurs
     "poids_par_couche_octets",
+    "poids_cumule_gpu_octets",
     "octets_kv_par_token_par_couche",
+    "couches_attention",
+    "largeur_activation_ffn",
     "couches_gpu_maximales",
     "contexte_maximal",
     "besoin_ram_octets",

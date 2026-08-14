@@ -9,8 +9,8 @@
  * qui rend la lecture indépendante du nom d'événement.
  */
 
-import type { DemandeGeneration, EvenementFlux } from './contrats';
-import { ErreurApi } from './client';
+import type { DemandeEdition, DemandeGeneration, DemandeRejeu, EvenementFlux } from './contrats';
+import { ErreurApi, lireErreur } from './client';
 import { journal } from './journal';
 
 /*
@@ -79,30 +79,76 @@ async function drainer(corps: ReadableStream<Uint8Array>, rappels: RappelsFlux):
 }
 
 /**
- * Ouvre le flux et rend la main quand il se ferme. L'annulation passe par `signal` ; l'échec
- * d'ouverture reste une `ErreurApi` (le statut HTTP est encore disponible à ce moment), alors qu'un
- * échec ultérieur arrive sous forme d'événement `erreur` dans le flux lui-même.
+ * Ouvre un flux de génération et rend la main quand il se ferme. L'annulation passe par `signal` ;
+ * l'échec d'ouverture reste une `ErreurApi` (le statut HTTP est encore disponible à ce moment),
+ * alors qu'un échec ultérieur arrive sous forme d'événement `erreur` dans le flux lui-même.
+ *
+ * L'erreur d'ouverture est LUE dans le corps de la réponse : les refus de branche (`404
+ * message_introuvable`, `422 branche_invalide`, `409 generation_deja_en_cours`) portent chacun une
+ * remédiation distincte, et les remplacer par un message générique reviendrait à jeter la seule
+ * information dont l'utilisateur a besoin pour corriger son geste.
  */
-export async function ouvrirFluxGeneration(
+async function ouvrirFlux(
+  chemin: string,
+  corps: unknown,
+  rappels: RappelsFlux,
+  signal: AbortSignal,
+): Promise<void> {
+  const reponse = await fetch(`/api/chat/conversations/${chemin}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+    body: JSON.stringify(corps),
+    signal,
+  });
+  if (!reponse.ok) {
+    const erreur = await lireErreur(reponse);
+    journal.erreur(`ouverture du flux refusée (${reponse.status} ${erreur.code})`, erreur.message);
+    throw erreur;
+  }
+  if (reponse.body === null) {
+    journal.erreur('flux accepté mais sans corps lisible');
+    throw new ErreurApi(
+      reponse.status,
+      'flux_sans_corps',
+      'La génération a démarré sans flux lisible.',
+      'Recharger la page ; si le défaut persiste, consulter le journal du backend.',
+    );
+  }
+  await drainer(reponse.body, rappels);
+}
+
+/** Tour normal : le message part au bout du chemin actif. */
+export function ouvrirFluxGeneration(
   conversationId: string,
   demande: DemandeGeneration,
   rappels: RappelsFlux,
   signal: AbortSignal,
 ): Promise<void> {
-  const reponse = await fetch(`/api/chat/conversations/${conversationId}/generer`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-    body: JSON.stringify(demande),
-    signal,
-  });
-  if (!reponse.ok || reponse.body === null) {
-    journal.erreur(`ouverture du flux refusée (${reponse.status})`);
-    throw new ErreurApi(
-      reponse.status,
-      'flux_refuse',
-      'La génération n’a pas pu démarrer.',
-      'Vérifier qu’un modèle est chargé et qu’aucune génération n’est déjà en cours.',
-    );
-  }
-  await drainer(reponse.body, rappels);
+  return ouvrirFlux(`${conversationId}/generer`, demande, rappels, signal);
+}
+
+/**
+ * Rejeu : une réponse SŒUR est produite sous le même parent, l'ancienne reste intacte et reste
+ * atteignable par les flèches de variantes. Le flux démarre immédiatement — il n'existe pas de mode
+ * « créer la branche sans générer ».
+ */
+export function ouvrirFluxRejeu(
+  conversationId: string,
+  messageId: string,
+  demande: DemandeRejeu,
+  rappels: RappelsFlux,
+  signal: AbortSignal,
+): Promise<void> {
+  return ouvrirFlux(`${conversationId}/messages/${messageId}/rejouer`, demande, rappels, signal);
+}
+
+/** Édition d'un message utilisateur : le nouveau texte ouvre une branche sœur, puis génère. */
+export function ouvrirFluxEdition(
+  conversationId: string,
+  messageId: string,
+  demande: DemandeEdition,
+  rappels: RappelsFlux,
+  signal: AbortSignal,
+): Promise<void> {
+  return ouvrirFlux(`${conversationId}/messages/${messageId}/editer`, demande, rappels, signal);
 }

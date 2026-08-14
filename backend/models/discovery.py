@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 
 from backend.core.config import get_settings
 from backend.core.errors import TelechargementEchoue
+from backend.models.capacites import Capacite, CapaciteDeduite, SignauxDepot, deduire_capacites, possede_toutes
 from backend.models.storage import FormatModele, est_present
 
 # Marge de surlecture : la déduplication entre passes de filtre retire des entrées, il faut donc
@@ -97,6 +98,10 @@ class ResultatRecherche(BaseModel):
     fichiers_gguf: list[FichierDepot] = Field(default_factory=list)
     taille_totale_octets: int | None = None
     annonce: MetadonneesAnnoncees = Field(default_factory=MetadonneesAnnoncees)
+    # « Déduites » et non « déclarées » : le Hub n'a pas de champ « capacités ». Ce sont nos
+    # conclusions à partir de ses déclarations, et chacune expose les indices qui l'ont produite —
+    # une interface ne peut donc pas les afficher comme un fait vérifié sans mentir sciemment.
+    capacites_deduites: list[CapaciteDeduite] = Field(default_factory=list)
     deja_telecharge: bool = False
 
 
@@ -180,6 +185,35 @@ def _annonce(info: InfoDepotHF) -> MetadonneesAnnoncees:
     )
 
 
+def _description(info: InfoDepotHF) -> str | None:
+    """Description libre publiée par le dépôt, quand il y en a une.
+
+    Le Hub ne garantit pas ce champ : `card_data` est un en-tête YAML libre et la plupart des dépôts
+    n'y écrivent aucune description. Le README n'est volontairement pas lu — ce serait une requête
+    HTTP par résultat pour un signal moins fiable que les étiquettes.
+    """
+    carte = getattr(info, "card_data", None)
+    if carte is None:
+        return None
+    brut = carte.get("description") if isinstance(carte, dict) else getattr(carte, "description", None)
+    return brut if isinstance(brut, str) and brut.strip() else None
+
+
+def _signaux(info: InfoDepotHF) -> SignauxDepot:
+    """Ce que le dépôt déclare de lui-même, réuni pour la déduction de capacités.
+
+    Tous les fichiers sont passés, projecteurs compris : `_fichiers_gguf` écarte les `mmproj` parce
+    qu'ils ne sont pas le modèle, mais c'est justement leur présence qui signale la vision.
+    """
+    return SignauxDepot(
+        depot=info.id,
+        tache=info.pipeline_tag,
+        etiquettes=list(info.tags or []),
+        fichiers=[jumeau.rfilename for jumeau in info.siblings or []],
+        description=_description(info),
+    )
+
+
 def _convertir(info: InfoDepotHF) -> ResultatRecherche:
     """Projette un dépôt du Hub sur le modèle du domaine."""
     depot = info.id
@@ -200,6 +234,7 @@ def _convertir(info: InfoDepotHF) -> ResultatRecherche:
         fichiers_gguf=_fichiers_gguf(info),
         taille_totale_octets=_taille_totale(info),
         annonce=_annonce(info),
+        capacites_deduites=deduire_capacites(_signaux(info)),
         deja_telecharge=est_present(depot),
     )
 
@@ -242,10 +277,54 @@ def _fusionner(flux: Iterable[InfoDepotHF]) -> list[ResultatRecherche]:
     return resultats
 
 
+def _filtrer_capacites(
+    resultats: list[ResultatRecherche],
+    exigees: tuple[Capacite, ...],
+) -> list[ResultatRecherche]:
+    """Ne garde que les dépôts qui laissent entendre TOUTES les capacités demandées."""
+    if not exigees:
+        return resultats
+    retenus = [item for item in resultats if possede_toutes(item.capacites_deduites, exigees)]
+    demandees = [capacite.value for capacite in exigees]
+    logger.debug("Filtre de capacités {} : {} dépôts sur {}", demandees, len(retenus), len(resultats))
+    return retenus
+
+
+def _borne_lecture(page: int, taille_page: int, *, filtre_local: bool) -> int:
+    """Combien d'entrées lire sur le Hub avant de découper la page localement.
+
+    Un filtre appliqué ICI — les capacités, que le Hub ne sait pas exprimer — oblige à lire jusqu'à
+    la borne : sinon la pagination porterait sur une fenêtre arbitraire et `fin_atteinte` mentirait
+    dès la première page. Le coût est assumé et reste plafonné par `LIMITE_RESULTATS_BRUTS`.
+    """
+    if filtre_local:
+        return LIMITE_RESULTATS_BRUTS
+    return min((page + 1) * taille_page + MARGE_PAGINATION, LIMITE_RESULTATS_BRUTS)
+
+
+def _collecter(
+    requete: str,
+    formats: Iterable[FormatRecherche],
+    tri: TriRecherche,
+    limite: int,
+) -> list[ResultatRecherche]:
+    """Listage du Hub, une passe par format demandé, dédupliquées entre elles.
+
+    Le point d'entrée du Hub ne filtre que sur une étiquette à la fois : plusieurs formats valent
+    plusieurs passes, que `_fusionner` recolle.
+    """
+    etiquettes: list[str | None] = [format_.value for format_ in formats] or [None]
+    bruts: list[InfoDepotHF] = []
+    for etiquette in etiquettes:
+        bruts.extend(_lister(requete, etiquette, tri, limite))
+    return _fusionner(bruts)
+
+
 def rechercher(
     requete: str,
     *,
     formats: Iterable[FormatRecherche] = (),
+    capacites: Iterable[Capacite] = (),
     tri: TriRecherche = TriRecherche.TELECHARGEMENTS,
     ordre: Ordre = "desc",
     page: int = 0,
@@ -253,19 +332,18 @@ def rechercher(
 ) -> PageRecherche:
     """Cherche des dépôts sur le Hub et rend une page de résultats exploitables.
 
-    Le Hub ne pagine pas côté serveur pour ce point d'entrée : on lit `(page + 1) × taille` entrées
-    et on découpe. Le coût est assumé et borné par `LIMITE_RESULTATS_BRUTS`.
+    Le Hub ne pagine pas côté serveur pour ce point d'entrée : on lit, on découpe (`_borne_lecture`).
+
+    `capacites` se combine en ET et se résout localement : une capacité correspond à plusieurs
+    étiquettes alternatives (OU), là où le paramètre `filter` de l'API ne sait exprimer qu'un ET
+    d'étiquettes exactes. Omis, il ne change rien au comportement d'origine.
     """
     taille_page = max(1, min(taille_page, TAILLE_PAGE_MAX))
     page = max(0, page)
-    limite = min((page + 1) * taille_page + MARGE_PAGINATION, LIMITE_RESULTATS_BRUTS)
+    exigees = tuple(capacites)
 
-    etiquettes: list[str | None] = [format_.value for format_ in formats] or [None]
-    bruts: list[InfoDepotHF] = []
-    for etiquette in etiquettes:
-        bruts.extend(_lister(requete, etiquette, tri, limite))
-
-    resultats = _fusionner(bruts)
+    limite = _borne_lecture(page, taille_page, filtre_local=bool(exigees))
+    resultats = _filtrer_capacites(_collecter(requete, formats, tri, limite), exigees)
     resultats.sort(key=lambda item: _cle_tri(item, tri), reverse=ordre == "desc")
 
     debut = page * taille_page

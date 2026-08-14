@@ -55,7 +55,12 @@ function extraireDetail(charge: unknown): DetailErreur {
   };
 }
 
-async function lireErreur(reponse: Response): Promise<ErreurApi> {
+/**
+ * Traduit une réponse HTTP en échec exploitable. Exporté pour les flux SSE, dont l'ouverture ne
+ * passe pas par `requete` : sans cela un rejeu refusé (409, 404, 422) perdrait le code et la
+ * remédiation du backend, et l'écran ne pourrait dire QUE l'action a échoué, jamais pourquoi.
+ */
+export async function lireErreur(reponse: Response): Promise<ErreurApi> {
   let detail: DetailErreur = {};
   try {
     detail = extraireDetail(await reponse.json());

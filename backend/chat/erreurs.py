@@ -25,6 +25,31 @@ class GenerationDejaEnCours(EchoHubError):
     remediation_defaut = "Attendre la fin de la génération en cours, ou l'annuler avant d'en relancer une."
 
 
+class MessageIntrouvable(EchoHubError):
+    """Le message visé n'existe pas, ou n'appartient pas à la conversation indiquée.
+
+    Les deux cas rendent la même erreur volontairement : répondre « il existe mais ailleurs »
+    renseignerait sur le contenu d'une autre conversation sans qu'on l'ait demandé.
+    """
+
+    code = "message_introuvable"
+    statut_http = 404
+    remediation_defaut = "Recharger la conversation : le message a pu être supprimé entre-temps."
+
+
+class BrancheInvalide(EchoHubError):
+    """L'opération de branche demandée n'a pas de sens sur ce message.
+
+    Deux cas mesurables : éditer une réponse du modèle (elle deviendrait un faux enregistrement de
+    ce qu'il a produit), et rejouer un message sans aucun historique en amont — il ne resterait
+    rien à envoyer au moteur.
+    """
+
+    code = "branche_invalide"
+    statut_http = 422
+    remediation_defaut = "Seul un message utilisateur s'édite ; une réponse se rejoue depuis son propre parent."
+
+
 class ContratInferenceInvalide(EchoHubError):
     """Le moteur branché ne respecte pas le contrat attendu par `chat`.
 

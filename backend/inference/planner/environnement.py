@@ -20,8 +20,9 @@ NOM_GPU_VISIBLE = "CUDA_VISIBLE_DEVICES"
 
 RAISON_WSL2 = (
     "WSL2 ne supporte pas la sur-souscription de mémoire managée : mesuré à 20 Go de RAM occupés "
-    "et 2 Go de VRAM utilisée, modèle inexploitable. Le partage CPU/GPU passe par le nombre de "
-    "couches, pas par la mémoire unifiée."
+    "et 2 Go de VRAM utilisée, modèle inexploitable. Le partage CPU/GPU passe par le placement "
+    "décidé dans le plan — couches déléguées, ou tenseurs d'experts rappelés en mémoire hôte — "
+    "jamais par la mémoire unifiée."
 )
 
 

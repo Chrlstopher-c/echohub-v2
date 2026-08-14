@@ -26,7 +26,9 @@ from backend.core.errors import ErreurPersistance
 
 T = TypeVar("T", bound=BaseModel)
 
-SCHEMA_VERSION = 1
+# v2 : `messages.parent_id` — une conversation est un arbre, plus une liste. La bascule de version
+# est ce qui garantit que le chaînage des messages hérités ne tourne qu'UNE fois (voir `_MIGRATIONS`).
+SCHEMA_VERSION = 2
 
 # Une connexion SQLite n'est pas partageable entre threads : uvicorn en utilise plusieurs, chacun
 # garde donc la sienne. État partagé assumé et confiné à ce module.
@@ -42,6 +44,10 @@ CREATE TABLE IF NOT EXISTS conversations (
     archivee    INTEGER NOT NULL DEFAULT 0
 );
 
+-- `parent_id` porte l'arbre : NULL = racine de la conversation. Deux messages partageant le même
+-- parent sont deux variantes du même tour (rejeu, édition), et la vue courante n'est qu'un chemin
+-- de la racine à une feuille. ON DELETE SET NULL plutôt que CASCADE : perdre une sous-branche
+-- entière parce qu'un message a disparu serait pire que de la voir remonter en racine.
 CREATE TABLE IF NOT EXISTS messages (
     id                 TEXT PRIMARY KEY,
     conversation_id    TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
@@ -49,7 +55,8 @@ CREATE TABLE IF NOT EXISTS messages (
     contenu            TEXT NOT NULL,
     tokens_generes     INTEGER,
     tokens_par_seconde REAL,
-    cree_le            TEXT NOT NULL
+    cree_le            TEXT NOT NULL,
+    parent_id          TEXT REFERENCES messages(id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, cree_le);
@@ -75,6 +82,41 @@ CREATE TABLE IF NOT EXISTS modeles (
 CREATE INDEX IF NOT EXISTS idx_modeles_depot ON modeles(depot);
 """
 
+# Colonnes ajoutées après coup. Une base déjà remplie ne repasse jamais par `CREATE TABLE` : sans
+# cet ALTER idempotent, la colonne n'existerait que sur les bases neuves et le code lirait une
+# colonne absente sur celle de l'utilisateur. SQLite n'accepte une clause REFERENCES en ALTER que
+# si la valeur par défaut est NULL — c'est le cas, et NULL signifie ici « racine ».
+_COLONNES_ADDITIVES: tuple[tuple[str, str, str], ...] = (
+    (
+        "messages",
+        "parent_id",
+        "ALTER TABLE messages ADD COLUMN parent_id TEXT REFERENCES messages(id) ON DELETE SET NULL",
+    ),
+)
+
+# Créé après les ALTER : sur une base existante, l'index porterait sur une colonne qui n'existe
+# pas encore au moment où le script de schéma s'exécute.
+_INDEX_DIFFERES = ("CREATE INDEX IF NOT EXISTS idx_messages_parent ON messages(parent_id);",)
+
+# Chaînage des messages écrits avant l'arbre : chaque message prend pour parent celui qui le
+# précède dans sa conversation, ce qui rend exactement la même lecture qu'avant la migration.
+# Ne doit tourner QU'UNE fois — une fois les branches en service, un `parent_id` nul est une racine
+# légitime (premier message édité), qu'une seconde passe rattacherait à tort au message précédent.
+_CHAINAGE_MESSAGES_HERITES = """
+UPDATE messages SET parent_id = (
+    SELECT precedent.id FROM messages AS precedent
+    WHERE precedent.conversation_id = messages.conversation_id
+      AND (precedent.cree_le < messages.cree_le
+           OR (precedent.cree_le = messages.cree_le AND precedent.rowid < messages.rowid))
+    ORDER BY precedent.cree_le DESC, precedent.rowid DESC
+    LIMIT 1
+)
+WHERE parent_id IS NULL
+"""
+
+# Migrations de données, jouées quand la version lue en base est strictement inférieure.
+_MIGRATIONS: tuple[tuple[int, str, str], ...] = ((2, "chaînage des messages hérités", _CHAINAGE_MESSAGES_HERITES),)
+
 
 class Conversation(BaseModel):
     """Ligne de `conversations`."""
@@ -97,6 +139,7 @@ class Message(BaseModel):
     tokens_generes: int | None = None
     tokens_par_seconde: float | None = None
     cree_le: datetime
+    parent_id: str | None = None
 
 
 class ModeleEnregistre(BaseModel):
@@ -169,8 +212,33 @@ def close_connection() -> None:
         _local.conn = None
 
 
+def _colonnes_existantes(conn: sqlite3.Connection, table: str) -> set[str]:
+    """Colonnes réellement présentes. Le nom de table vient d'une constante du module, jamais d'une entrée."""
+    return {str(ligne["name"]) for ligne in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+
+def _assurer_colonnes(conn: sqlite3.Connection) -> None:
+    """Ajoute les colonnes manquantes d'une base existante, puis les index qui en dépendent."""
+    for table, colonne, sql in _COLONNES_ADDITIVES:
+        if colonne in _colonnes_existantes(conn, table):
+            continue
+        conn.execute(sql)
+        logger.info("Colonne {}.{} ajoutée à une base existante.", table, colonne)
+    for sql_index in _INDEX_DIFFERES:
+        conn.execute(sql_index)
+
+
+def _appliquer_migrations(conn: sqlite3.Connection, version_lue: int) -> None:
+    """Rejoue les migrations de données postérieures à la version lue, et seulement celles-là."""
+    for version, libelle, sql in _MIGRATIONS:
+        if version <= version_lue:
+            continue
+        lignes = conn.execute(sql).rowcount
+        logger.info("Migration schéma v{} ({}) : {} ligne(s) touchée(s).", version, libelle, lignes)
+
+
 def init_db() -> None:
-    """Crée le schéma s'il manque et vérifie la version. À appeler une fois au démarrage."""
+    """Crée le schéma s'il manque, migre l'existant, vérifie la version. Une fois au démarrage."""
     conn = get_connection()
     version = int(conn.execute("PRAGMA user_version").fetchone()[0])
     if version > SCHEMA_VERSION:
@@ -182,12 +250,14 @@ def init_db() -> None:
     try:
         with conn:
             conn.executescript(_SCHEMA_SQL)
+            _assurer_colonnes(conn)
+            _appliquer_migrations(conn, version)
             conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
     except sqlite3.Error as exc:
         logger.error("Initialisation du schéma échouée : {}", exc)
         raise ErreurPersistance("Initialisation du schéma impossible.", details={"cause": str(exc)}) from exc
 
-    logger.info("Base prête : {} (schéma v{})", get_settings().db_path, SCHEMA_VERSION)
+    logger.info("Base prête : {} (schéma v{}, lue en v{})", get_settings().db_path, SCHEMA_VERSION, version)
 
 
 @contextmanager

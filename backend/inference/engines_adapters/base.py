@@ -16,6 +16,7 @@ from typing import AsyncIterator, ClassVar, Sequence
 
 from backend.inference.engines_adapters.contrat import (
     CauseEchec,
+    ComptageTokens,
     EtatMoteur,
     MessageChat,
     MorceauGeneration,
@@ -57,6 +58,22 @@ class AdaptateurMoteur(ABC):
     @abstractmethod
     def etat(self) -> EtatMoteur | None:
         """Dernier état servi, ou None si rien n'est chargé."""
+
+    async def compter_tokens(self, textes: Sequence[str]) -> ComptageTokens:
+        """Compte les tokens de chaque texte avec le tokenizer du MODÈLE CHARGÉ.
+
+        Cinquième opération, et la seule qui ne soit pas abstraite : tous les moteurs ne tiennent
+        pas leur tokenizer dans ce processus. vLLM tourne dans un sous-processus et ne l'expose pas
+        — il hérite donc de ce refus nommé plutôt que d'une obligation qu'il ne pourrait tenir.
+
+        Le défaut rend une absence, jamais des zéros : un décompte nul se confondrait avec une
+        conversation vide et ferait croire à une fenêtre libre.
+        """
+        del textes  # rien à mesurer sans tokenizer local
+        return ComptageTokens(
+            possible=False,
+            raison=f"Le moteur {self.moteur.value} n'expose pas son tokenizer dans ce processus.",
+        )
 
 
 def exiger_moteur(plan: PlanChargement, attendu: MoteurSupporte) -> None:

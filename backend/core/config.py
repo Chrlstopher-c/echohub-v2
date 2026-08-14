@@ -31,6 +31,9 @@ _SOUS_DOSSIERS: dict[str, str] = {"models_dir": "models", "engines_dir": "engine
 
 _NIVEAUX_VALIDES = frozenset({"TRACE", "DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR", "CRITICAL"})
 
+# Service SearXNG de la pile Docker, atteint par son nom sur le réseau interne (aucun port publié).
+_URL_SEARXNG_DEFAUT = "http://searxng:8080"
+
 
 def _racine_donnees_par_defaut() -> Path:
     """Racine de données propre à la plateforme, utilisée UNIQUEMENT si XDG_DATA_HOME est absent."""
@@ -68,6 +71,14 @@ class Settings(BaseSettings):
     hf_token: SecretStr | None = Field(default=None, validation_alias="HF_TOKEN")
     db_timeout_s: float = Field(default=30.0, gt=0, validation_alias="ECHOHUB_DB_TIMEOUT_S")
 
+    # Recherche web : nom de service Docker résolu sur le réseau interne de la pile, jamais une
+    # adresse publique. Le défaut vaut pour l'exécution en conteneur ; hors Docker, SEARXNG_URL
+    # doit pointer sur l'instance réellement joignable.
+    searxng_url: str = Field(default=_URL_SEARXNG_DEFAUT, validation_alias="SEARXNG_URL")
+    # Plus long que le `request_timeout` de SearXNG (4 s) : le service doit avoir le temps de
+    # rendre ce qu'il a obtenu et de déclarer les moteurs muets, plutôt que d'être coupé avant.
+    searxng_timeout_s: float = Field(default=8.0, gt=0, validation_alias="SEARXNG_TIMEOUT_S")
+
     @field_validator("data_home", mode="before")
     @classmethod
     def _ignorer_valeur_vide(cls, valeur: Any) -> Any:
@@ -82,6 +93,18 @@ class Settings(BaseSettings):
             return valeur
         racine = info.data.get("data_home") or _racine_donnees_par_defaut()
         return Path(racine) / NOM_APPLICATION / _SOUS_DOSSIERS[info.field_name]
+
+    @field_validator("searxng_url", mode="before")
+    @classmethod
+    def _normaliser_url_searxng(cls, valeur: Any) -> str:
+        """Variable vide = absente (cf. `data_home`), et la barre finale est retirée une bonne fois.
+
+        Sans cette normalisation, `http://searxng:8080/` produirait `//search` à la concaténation :
+        une URL que certains serveurs acceptent, d'autres non — un défaut qui n'apparaîtrait qu'au
+        premier appel réel, très loin de sa cause.
+        """
+        texte = str(valeur or "").strip()
+        return (texte or _URL_SEARXNG_DEFAUT).rstrip("/")
 
     @field_validator("log_level", mode="before")
     @classmethod

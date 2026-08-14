@@ -25,9 +25,14 @@ from loguru import logger
 
 from backend.chat import annulation, depot, flux_sse, generation
 from backend.chat.modeles import (
+    ActivationBranche,
+    ArbreConversation,
     ConversationDetaillee,
     CreationConversation,
+    DemandeEdition,
     DemandeGeneration,
+    DemandeRejeu,
+    EtatBranche,
     MajConversation,
     MajReglages,
     MessageChat,
@@ -76,11 +81,19 @@ async def creer_conversation(corps: CreationConversation) -> ResumeConversation:
 @routeur.get("/conversations/{conversation_id}", response_model=ConversationDetaillee)
 @_traduire_erreurs
 async def lire_conversation(conversation_id: str) -> ConversationDetaillee:
-    """Conversation complète : métadonnées, réglages et historique en une réponse."""
+    """Conversation complète : métadonnées, réglages et branche affichée en une réponse.
+
+    `messages` est le chemin actif de l'arbre. Sur une conversation linéaire — toutes celles
+    écrites avant les branches — c'est exactement l'historique complet, dans le même ordre.
+    """
+    conversation = depot.exiger_conversation(conversation_id)
+    branche = depot.lire_branche(conversation_id)
     return ConversationDetaillee(
-        conversation=depot.exiger_conversation(conversation_id),
+        conversation=conversation,
         reglages=depot.lire_reglages(conversation_id),
-        messages=depot.lister_messages(conversation_id),
+        messages=branche.messages,
+        feuille_active=branche.feuille_active,
+        variantes=branche.variantes,
     )
 
 
@@ -119,9 +132,36 @@ async def modifier_reglages(conversation_id: str, corps: MajReglages) -> Reglage
 @routeur.get("/conversations/{conversation_id}/messages", response_model=list[MessageChat])
 @_traduire_erreurs
 async def lister_messages(conversation_id: str) -> list[MessageChat]:
-    """Historique complet, dans l'ordre d'écriture."""
+    """Chemin actif, de la racine à la feuille affichée, dans l'ordre d'écriture."""
     depot.exiger_conversation(conversation_id)
     return depot.lister_messages(conversation_id)
+
+
+@routeur.get("/conversations/{conversation_id}/branche", response_model=EtatBranche)
+@_traduire_erreurs
+async def lire_branche(conversation_id: str) -> EtatBranche:
+    """Vue courante : chemin actif, feuille, et variantes de chaque message du chemin."""
+    depot.exiger_conversation(conversation_id)
+    return depot.lire_branche(conversation_id)
+
+
+@routeur.post("/conversations/{conversation_id}/branche", response_model=EtatBranche)
+@_traduire_erreurs
+async def activer_branche(conversation_id: str, corps: ActivationBranche) -> EtatBranche:
+    """Bascule la vue vers la branche contenant ce message, et rend la vue obtenue.
+
+    Sert les flèches « ‹ 2 / 3 › » du frontend : on lui envoie l'identifiant de la variante
+    choisie, il reçoit le chemin complet à afficher — il n'a aucun arbre à reconstruire.
+    """
+    depot.exiger_conversation(conversation_id)
+    return depot.activer_branche(conversation_id, corps.message_id)
+
+
+@routeur.get("/conversations/{conversation_id}/arbre", response_model=ArbreConversation)
+@_traduire_erreurs
+async def lire_arbre(conversation_id: str) -> ArbreConversation:
+    """Tous les messages, branches abandonnées comprises : rien n'est perdu, et ça se vérifie."""
+    return depot.lire_arbre(conversation_id)
 
 
 @routeur.delete("/conversations/{conversation_id}/messages")
@@ -140,7 +180,34 @@ async def generer(conversation_id: str, corps: DemandeGeneration) -> StreamingRe
     génération déjà en cours restent de vrais statuts HTTP (404, 409). Passé ce point, les en-têtes
     sont partis et tout échec devient un événement `erreur` dans le flux.
     """
-    preparation = generation.preparer(conversation_id, corps)
+    return _flux(generation.preparer(conversation_id, corps))
+
+
+@routeur.post("/conversations/{conversation_id}/messages/{message_id}/rejouer", response_class=StreamingResponse)
+@_traduire_erreurs
+async def rejouer_message(conversation_id: str, message_id: str, corps: DemandeRejeu) -> StreamingResponse:
+    """Rejoue un message dans une sous-branche, et streame la réponse obtenue.
+
+    Sur une réponse du modèle : une nouvelle réponse naît sous le même parent, l'ancienne reste
+    accessible en variante. Sur un message utilisateur : son texte est renvoyé tel quel dans une
+    branche sœur. Dans les deux cas, l'existant est conservé.
+    """
+    return _flux(generation.preparer_rejeu(conversation_id, message_id, corps))
+
+
+@routeur.post("/conversations/{conversation_id}/messages/{message_id}/editer", response_class=StreamingResponse)
+@_traduire_erreurs
+async def editer_message(conversation_id: str, message_id: str, corps: DemandeEdition) -> StreamingResponse:
+    """Édite un message utilisateur : nouvelle branche depuis son parent, puis génération.
+
+    L'historique n'est jamais réécrit — le message d'origine et la réponse qu'il avait obtenue
+    restent lisibles dans l'arbre. Éditer une réponse du modèle est refusé (422).
+    """
+    return _flux(generation.preparer_edition(conversation_id, message_id, corps))
+
+
+def _flux(preparation: generation.PreparationGeneration) -> StreamingResponse:
+    """Enveloppe SSE commune : un seul endroit décide des en-têtes et du type de média."""
     return StreamingResponse(
         _encoder_flux(preparation),
         media_type=flux_sse.TYPE_MEDIA_SSE,

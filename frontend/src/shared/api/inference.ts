@@ -17,6 +17,7 @@ import type {
   CauseEchecMoteur,
   EvenementInference,
   MessageMoteur,
+  OccupationContexte,
   OptionsGenerationMoteur,
   SanteInference,
   SessionChargement,
@@ -86,6 +87,32 @@ export function dechargerModele(signal?: AbortSignal): Promise<StatutInference> 
   return requeteJson<StatutInference>('/inference/decharger', {
     methode: 'POST',
     delaiMs: DELAI_CHARGEMENT_MS,
+    signal,
+  });
+}
+
+export interface DemandeOccupationContexte {
+  readonly prompt_systeme?: string;
+  readonly messages: readonly MessageMoteur[];
+}
+
+/**
+ * Mesure ce que la conversation occupe dans la fenêtre du modèle chargé.
+ *
+ * Le décompte vient du tokenizer du modèle réellement chargé, jamais d'un ratio caractères/tokens :
+ * sur un vocabulaire de plusieurs centaines de milliers d'entrées, une telle constante se trompe
+ * d'un facteur qui rendrait l'affichage mensonger plutôt qu'approximatif.
+ *
+ * Répond toujours 200, y compris quand rien n'est chargé : l'absence de tokenizer est un état
+ * normal, rendu par `mesurable: false` et sa raison — pas une erreur à rattraper.
+ */
+export function mesurerOccupationContexte(
+  requete: DemandeOccupationContexte,
+  signal?: AbortSignal,
+): Promise<OccupationContexte> {
+  return requeteJson<OccupationContexte>('/inference/contexte', {
+    methode: 'POST',
+    corps: requete,
     signal,
   });
 }

@@ -18,7 +18,7 @@ from __future__ import annotations
 import math
 
 from backend.inference.planner.entrees import MetadonneesModele, TypeCacheKV
-from backend.inference.planner.plan import OCTETS_PAR_ELEMENT_KV, BudgetMemoire, PosteMemoire
+from backend.inference.planner.plan import OCTETS_PAR_ELEMENT_KV, BudgetMemoire
 
 # Les activations circulent en f32 dans le graphe de calcul de ggml.
 OCTETS_ACTIVATION = 4
@@ -58,6 +58,69 @@ def poids_par_couche_octets(metadonnees: MetadonneesModele) -> float:
     return metadonnees.taille_octets / metadonnees.nombre_couches
 
 
+def poids_cumule_gpu_octets(metadonnees: MetadonneesModele, couches_gpu: int) -> float:
+    """Poids résident en VRAM pour `couches_gpu` blocs : mesure par bloc si elle existe, moyenne sinon.
+
+    La moyenne fichier/couches répartit implicitement les tenseurs hors blocs sur les couches. Dès
+    qu'on dispose de la mesure par bloc, cette compensation disparaît : les tenseurs hors blocs sont
+    alors facturés explicitement dès la première couche déléguée, llama.cpp y plaçant la tête de
+    sortie. Mesuré sur le 0.5B, `token_embd` reste côté hôte — le compter ici sur-provisionne de sa
+    taille, ce qui est le sens prudent.
+    """
+    if couches_gpu <= 0:
+        return 0.0
+    blocs = metadonnees.octets_par_bloc
+    if not blocs:
+        return couches_gpu * poids_par_couche_octets(metadonnees)
+    retenus = min(couches_gpu, len(blocs))
+    return float(sum(blocs[:retenus]) + (metadonnees.octets_hors_blocs or 0))
+
+
+def couches_attention(metadonnees: MetadonneesModele, couches: int) -> int:
+    """Couches portant un cache KV parmi les `couches` premiers blocs.
+
+    Mesuré sur les deux modèles présents : `full_attention_interval` vaut 4 et seuls les blocs
+    3, 7, 11 … 39 portent un `attn_q.weight`, soit 10 couches sur 40. Facturer le cache KV sur les
+    40 blocs inventait 1,9 Gio de VRAM à 32k et 3,3 Gio à 57k — l'essentiel de la VRAM constatée
+    inutilisée. Clé absente = toutes les couches portent un cache, sans substitution.
+    """
+    intervalle = metadonnees.intervalle_attention_pleine
+    retenues = max(0, couches)
+    if intervalle is None or intervalle <= 1:
+        return retenues
+    return retenues // intervalle
+
+
+def largeur_activation_ffn(metadonnees: MetadonneesModele) -> int | None:
+    """Largeur FFN vive dans le graphe d'un bloc, en éléments — `None` si rien ne la déclare.
+
+    Sur un MoE, ce n'est pas la largeur d'un expert : `nombre_experts_actifs` experts sont routés
+    ensemble à chaque token, plus l'expert partagé. Prendre `expert_feed_forward_length` telle quelle
+    sous-dimensionnerait le tampon d'un facteur 8 sur le modèle mesuré. On retient la plus grande des
+    largeurs déclarées : le tampon doit tenir le bloc le plus large du graphe, et rien ne dit qu'un
+    modèle ne mélange pas blocs denses et blocs à experts.
+    """
+    largeurs = [
+        valeur
+        for valeur in (_largeur_ffn_experts(metadonnees), metadonnees.dimension_ffn)
+        if valeur is not None
+    ]
+    return max(largeurs) if largeurs else None
+
+
+def _largeur_ffn_experts(metadonnees: MetadonneesModele) -> int | None:
+    """Largeur cumulée des experts vivants d'un bloc, ou `None` si le modèle n'en déclare pas.
+
+    L'expert partagé absent est lu comme « aucun expert partagé déclaré » — c'est ainsi que
+    llama.cpp lui-même traite l'absence de la clé, pas une valeur substituée.
+    """
+    largeur_expert = metadonnees.dimension_ffn_expert
+    actifs = metadonnees.nombre_experts_actifs
+    if largeur_expert is None or actifs is None:
+        return None
+    return largeur_expert * actifs + (metadonnees.dimension_ffn_expert_partage or 0)
+
+
 def dimension_tete(metadonnees: MetadonneesModele) -> int:
     """Dimension d'une tête d'attention : lue si déclarée, dérivée seulement à défaut.
 
@@ -85,10 +148,13 @@ def octets_tampons_calcul(
 
     Sans flash attention, la matrice de scores `têtes × batch × contexte` est matérialisée et
     domine tout le reste — c'est le poste qui explose quand on allonge le contexte.
+
+    Largeur FFN non déclarée : le terme d'activations est omis plutôt qu'estimé, et
+    `avertissements_metadonnees` le signale dans le plan. Un tampon inventé se verrait moins qu'un
+    tampon manquant, qui produit un échec de chargement franc et une dégradation.
     """
-    largeur_bloc = (
-        NB_TENSEURS_ATTENTION * metadonnees.dimension_embedding + NB_TENSEURS_FFN * metadonnees.dimension_ffn
-    )
+    largeur_ffn = largeur_activation_ffn(metadonnees) or 0
+    largeur_bloc = NB_TENSEURS_ATTENTION * metadonnees.dimension_embedding + NB_TENSEURS_FFN * largeur_ffn
     activations = batch * largeur_bloc * OCTETS_ACTIVATION
     scores = 0 if flash_attention else batch * metadonnees.nombre_tetes_attention * contexte * OCTETS_ACTIVATION
     logits = metadonnees.taille_vocabulaire * OCTETS_ACTIVATION
@@ -115,13 +181,40 @@ def couches_gpu_maximales(
     Forme close : chaque couche coûte son poids **plus** son cache KV sur toute la longueur du
     contexte. Ignorer le second terme est ce qui faisait déduire à la v1 64 couches sur GPU pour un
     modèle qui en compte 41.
+
+    La forme close suppose un coût uniforme. Dès qu'une mesure la contredit — poids relevé bloc par
+    bloc, ou architecture hybride où une couche sur quatre seulement porte un cache KV — on accumule
+    bloc par bloc au lieu de diviser.
     """
     budget = vram_effective(vram_disponible_octets, ratio_fragmentation)
     budget -= octets_tampons_calcul(metadonnees, contexte, batch, flash_attention)
     if budget <= 0:
         return 0
+    if metadonnees.octets_par_bloc or metadonnees.intervalle_attention_pleine is not None:
+        return _couches_tenables_par_accumulation(metadonnees, budget, contexte=contexte, type_kv=type_kv)
     cout_couche = poids_par_couche_octets(metadonnees) + contexte * octets_kv_par_token_par_couche(metadonnees, type_kv)
     return max(0, min(metadonnees.nombre_couches, int(budget // cout_couche)))
+
+
+def _couches_tenables_par_accumulation(
+    metadonnees: MetadonneesModele,
+    budget: float,
+    *,
+    contexte: int,
+    type_kv: TypeCacheKV,
+) -> int:
+    """Plus grand nombre de blocs dont le coût cumulé tient dans `budget`.
+
+    Boucle bornée par le nombre de blocs du modèle, jamais par une condition dynamique : elle
+    s'arrête au premier cumul qui dépasse, les coûts étant croissants par construction.
+    """
+    kv_par_token = octets_kv_par_token_par_couche(metadonnees, type_kv)
+    for couches in range(1, metadonnees.nombre_couches + 1):
+        cumul = poids_cumule_gpu_octets(metadonnees, couches)
+        cumul += couches_attention(metadonnees, couches) * contexte * kv_par_token
+        if cumul > budget:
+            return couches - 1
+    return metadonnees.nombre_couches
 
 
 def contexte_maximal(
@@ -145,10 +238,15 @@ def contexte_maximal(
     # Tampons estimés au plafond d'entraînement : sans flash attention ils dépendent du contexte,
     # et surprovisionner ici ne peut que rendre le plan plus prudent.
     budget -= octets_tampons_calcul(metadonnees, metadonnees.contexte_entrainement_max, batch, flash_attention)
-    budget -= couches_gpu * poids_par_couche_octets(metadonnees)
+    budget -= poids_cumule_gpu_octets(metadonnees, couches_gpu)
     if budget <= 0:
         return 0
-    tokens = budget / (couches_gpu * octets_kv_par_token_par_couche(metadonnees, type_kv))
+    porteuses = couches_attention(metadonnees, couches_gpu)
+    if porteuses <= 0:
+        # Aucune des couches déléguées ne porte de cache KV : le contexte ne coûte plus de VRAM, il
+        # n'est plus borné que par l'entraînement du modèle.
+        return metadonnees.contexte_entrainement_max
+    tokens = budget / (porteuses * octets_kv_par_token_par_couche(metadonnees, type_kv))
     return aligner(int(tokens), PAS_CONTEXTE)
 
 
@@ -165,120 +263,35 @@ def besoin_ram_octets(
     couches_cpu: int,
     contexte: int,
     type_kv: TypeCacheKV,
+    octets_experts_hote: int = 0,
 ) -> int:
-    """RAM hôte requise : poids des couches restées côté CPU et leur cache KV."""
+    """RAM hôte requise : couches restées côté CPU, leur cache KV, et les experts rappelés en RAM.
+
+    `octets_experts_hote` couvre le cas où toutes les couches sont sur GPU et où seuls des groupes de
+    tenseurs d'experts vivent côté hôte : ces octets ne sont portés par aucune couche CPU.
+    """
     poids = couches_cpu * poids_par_couche_octets(metadonnees)
-    cache = couches_cpu * contexte * octets_kv_par_token_par_couche(metadonnees, type_kv)
-    return int(poids + cache)
+    total = metadonnees.nombre_couches
+    porteuses = couches_attention(metadonnees, total) - couches_attention(metadonnees, total - couches_cpu)
+    cache = porteuses * contexte * octets_kv_par_token_par_couche(metadonnees, type_kv)
+    return int(poids + cache + octets_experts_hote)
 
 
-def construire_budget(
-    metadonnees: MetadonneesModele,
-    *,
-    couches_gpu: int,
-    contexte: int,
-    batch: int,
-    type_kv: TypeCacheKV,
-    flash_attention: bool,
-    vram_disponible_octets: int,
-    ram_disponible_octets: int,
-    ratio_fragmentation: float,
-) -> BudgetMemoire:
-    """Décomposition chiffrée et justifiée de la mémoire engagée par le plan, VRAM et RAM."""
-    return BudgetMemoire(
-        vram_disponible_octets=vram_disponible_octets,
-        postes=postes_vram(
-            metadonnees,
-            couches_gpu=couches_gpu,
-            contexte=contexte,
-            batch=batch,
-            type_kv=type_kv,
-            flash_attention=flash_attention,
-            ratio_fragmentation=ratio_fragmentation,
-        ),
-        ram_requise_octets=besoin_ram_octets(
-            metadonnees,
-            couches_cpu=metadonnees.nombre_couches - couches_gpu,
-            contexte=contexte,
-            type_kv=type_kv,
-        ),
-        ram_disponible_octets=ram_disponible_octets,
-    )
-
-
-def postes_vram(
-    metadonnees: MetadonneesModele,
-    *,
-    couches_gpu: int,
-    contexte: int,
-    batch: int,
-    type_kv: TypeCacheKV,
-    flash_attention: bool,
-    ratio_fragmentation: float,
-) -> tuple[PosteMemoire, ...]:
-    """Les quatre postes de VRAM, chacun chiffré et justifié séparément."""
-    poids = int(couches_gpu * poids_par_couche_octets(metadonnees))
-    cache = int(couches_gpu * contexte * octets_kv_par_token_par_couche(metadonnees, type_kv))
-    tampons = octets_tampons_calcul(metadonnees, contexte, batch, flash_attention)
-    fragmentation = int((poids + cache + tampons) * ratio_fragmentation)
-    return (
-        _poste_poids(metadonnees, couches_gpu, poids),
-        _poste_cache(metadonnees, couches_gpu, contexte, type_kv, cache),
-        _poste_tampons(metadonnees, batch, flash_attention, tampons),
-        _poste_fragmentation(ratio_fragmentation, fragmentation),
-    )
-
-
-def _poste_poids(metadonnees: MetadonneesModele, couches_gpu: int, octets: int) -> PosteMemoire:
-    """Poste des poids : la justification affiche le calcul, pas seulement son résultat."""
-    return PosteMemoire(
-        libelle="Poids des couches sur GPU",
-        octets=octets,
-        justification=(
-            f"{couches_gpu} couches x {_en_mo(poids_par_couche_octets(metadonnees))} Mo, "
-            f"soit la taille du fichier divisée par ses {metadonnees.nombre_couches} couches réelles."
-        ),
-    )
-
-
-def _poste_cache(metadonnees: MetadonneesModele, couches_gpu: int, contexte: int,
-                 type_kv: TypeCacheKV, octets: int) -> PosteMemoire:
-    """Poste du cache KV : c'est lui qui rend le contexte coûteux, il doit être chiffré à part."""
-    return PosteMemoire(
-        libelle="Cache KV",
-        octets=octets,
-        justification=(
-            f"{contexte} tokens x {couches_gpu} couches x "
-            f"{octets_kv_par_token_par_couche(metadonnees, type_kv):.0f} o/token/couche en {type_kv.value}."
-        ),
-    )
-
-
-def _poste_tampons(metadonnees: MetadonneesModele, batch: int, flash_attention: bool, octets: int) -> PosteMemoire:
-    """Poste des tampons de calcul, dominé par la matrice de scores quand flash attention est absente."""
-    complement = (
-        "." if flash_attention else ", plus la matrice de scores d'attention (flash attention désactivée)."
-    )
-    return PosteMemoire(
-        libelle="Tampons de calcul",
-        octets=octets,
-        justification=(
-            f"Activations du graphe pour un batch de {batch}, logits sur "
-            f"{metadonnees.taille_vocabulaire} tokens{complement}"
-        ),
-    )
-
-
-def _poste_fragmentation(ratio: float, octets: int) -> PosteMemoire:
-    """Seul poste non dérivé d'une grandeur du modèle : il est signalé comme tel."""
-    return PosteMemoire(
-        libelle="Réserve de fragmentation",
-        octets=octets,
-        justification=(
-            f"{ratio:.0%} du total alloué, pour la granularité de l'allocateur CUDA. "
-            "Valeur par défaut prudente, non mesurée sur cette machine."
-        ),
-    )
+def avertissements_metadonnees(metadonnees: MetadonneesModele) -> tuple[str, ...]:
+    """Ce que le budget ne sait PAS provisionner, faute de mesure — dit au lieu d'être comblé."""
+    lignes: list[str] = []
+    if largeur_activation_ffn(metadonnees) is None:
+        lignes.append(
+            "Largeur du bloc FFN non déclarée par le modèle : le poste des tampons de calcul est "
+            "sous-provisionné de ce terme. Un échec de chargement fera dégrader le plan."
+        )
+    if metadonnees.intervalle_attention_pleine is not None:
+        lignes.append(
+            f"Architecture hybride : une couche sur {metadonnees.intervalle_attention_pleine} porte "
+            "un cache KV, les autres portent un état récurrent dont la taille n'est pas lue "
+            "(clés `ssm.*`). Ce poste, mesuré à 62,8 Mio sur le 35B, n'est pas provisionné."
+        )
+    return tuple(lignes)
 
 
 def utilisation_memoire_gpu(budget: BudgetMemoire, vram_totale_octets: int) -> float:
@@ -291,8 +304,3 @@ def utilisation_memoire_gpu(budget: BudgetMemoire, vram_totale_octets: int) -> f
         return PLAFOND_UTILISATION_VLLM
     brute = budget.vram_requise_octets / vram_totale_octets
     return min(PLAFOND_UTILISATION_VLLM, math.ceil(brute * 100) / 100)
-
-
-def _en_mo(octets: float) -> int:
-    """Conversion en mébioctets pour les justifications lisibles."""
-    return int(octets / (1024 * 1024))

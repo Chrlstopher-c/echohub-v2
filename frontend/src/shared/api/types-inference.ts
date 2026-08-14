@@ -97,6 +97,47 @@ export interface SessionChargement {
   readonly entrees: readonly EntreeJournal[];
 }
 
+/**
+ * Postes de la fenêtre de contexte. `libre` est un poste à part entière, pas un reste implicite :
+ * l'espace restant se lit et se chiffre comme les autres.
+ */
+export type PosteContexte = 'systeme' | 'utilisateur' | 'assistant' | 'raisonnement' | 'libre';
+
+/** Un poste chiffré par le tokenizer du modèle chargé. */
+export interface PartContexte {
+  readonly poste: PosteContexte;
+  readonly tokens: number;
+  /** Fraction du contexte total, 0 à 1. Calculée par le backend — jamais recomposée à l'affichage. */
+  readonly part: number;
+  /** Nombre de fragments cumulés dans ce poste (messages, blocs de raisonnement). */
+  readonly segments: number;
+}
+
+/**
+ * Ce que la conversation occupe dans la fenêtre du modèle chargé.
+ *
+ * `mesurable: false` n'est pas une erreur : sans modèle chargé il n'existe aucun tokenizer, donc
+ * aucune mesure. Les champs chiffrés restent alors `null` et l'interface doit le dire — afficher
+ * une barre vide laisserait croire à une fenêtre entièrement libre.
+ */
+export interface OccupationContexte {
+  readonly mesurable: boolean;
+  readonly raison: string;
+  readonly moteur: Moteur | null;
+  readonly modele: string | null;
+  /** Contexte RÉELLEMENT servi, lu sur le moteur — pas le contexte natif du modèle. */
+  readonly contexte_total: number | null;
+  /** Contexte demandé par le plan. Un écart avec `contexte_total` est signalé, jamais masqué. */
+  readonly contexte_plan: number | null;
+  readonly tokens_mesures: number | null;
+  readonly tokens_libres: number | null;
+  /** Tokens au-delà de la fenêtre : la conversation n'y tient plus. */
+  readonly depassement_tokens: number | null;
+  readonly postes: readonly PartContexte[];
+  /** Ce que le décompte ne couvre pas, dit explicitement plutôt que comblé par une estimation. */
+  readonly avertissements: readonly string[];
+}
+
 /** Sonde à l'instant t : un moteur mort n'apparaît pas dans l'état mémorisé. */
 export interface SanteInference {
   readonly disponible: boolean;

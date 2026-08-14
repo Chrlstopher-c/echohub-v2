@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState, type ReactElement } from 'react';
+import { Component, useCallback, useEffect, useState } from 'react';
+import type { ErrorInfo, ReactElement, ReactNode } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 
 import { ChatEcran } from './chat';
@@ -229,6 +230,65 @@ function BandeauRefus({ refus }: { readonly refus: string }): ReactElement {
   );
 }
 
+interface FrontiereProps {
+  /** Écran affiché. Il change → la panne appartenait au précédent, la frontière rend la main. */
+  readonly ecran: Ecran;
+  readonly children: ReactNode;
+}
+
+interface EtatFrontiere {
+  readonly panne: string | null;
+}
+
+/*
+ * Filet de dernier recours autour de la zone de contenu.
+ *
+ * Sans lui, une exception levée pendant un rendu ou un effet de layout démonte l'arbre entier :
+ * React 18 laisse alors une page noire, sans message ni trace, et seul un rechargement manuel la
+ * ramène. C'est exactement ce que la doctrine du projet interdit — une absence à la place d'un
+ * fait. Ici l'exception devient un texte affiché et une sortie possible.
+ *
+ * La frontière vit dans App et non dans un domaine : elle est vraie pour les trois écrans, aucun
+ * ne peut la porter sans que les deux autres importent son interne. Elle enveloppe l'AnimatePresence
+ * plutôt que chaque écran, pour couvrir aussi les effets de layout de framer-motion, qui sont au-
+ * dessus des écrans.
+ */
+class FrontiereErreur extends Component<FrontiereProps, EtatFrontiere> {
+  constructor(props: FrontiereProps) {
+    super(props);
+    this.state = { panne: null };
+  }
+
+  static getDerivedStateFromError(cause: unknown): EtatFrontiere {
+    return { panne: cause instanceof Error ? cause.message : String(cause) };
+  }
+
+  override componentDidCatch(cause: Error, infos: ErrorInfo): void {
+    console.error('Écran interrompu par une exception :', cause, infos.componentStack);
+  }
+
+  override componentDidUpdate(precedent: FrontiereProps): void {
+    if (this.state.panne !== null && precedent.ecran !== this.props.ecran) {
+      this.setState({ panne: null });
+    }
+  }
+
+  override render(): ReactNode {
+    if (this.state.panne === null) {
+      return this.props.children;
+    }
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
+        <p className="text-sm text-text">L’écran s’est interrompu.</p>
+        <p className="max-w-lg break-words font-mono text-xs text-text-3">{this.state.panne}</p>
+        <Button variant="primary" size="sm" onClick={() => window.location.reload()}>
+          Recharger
+        </Button>
+      </div>
+    );
+  }
+}
+
 export function App(): ReactElement {
   const [ecran, setEcran] = useState<Ecran>('modeles');
   const [theme, basculerTheme] = useTheme();
@@ -286,21 +346,27 @@ export function App(): ReactElement {
 
       {alerte !== null && <BandeauRefus refus={alerte} />}
 
-      <main className="min-h-0 flex-1">
-        {/* `mode="wait"` : le nouvel écran n'entre qu'une fois l'ancien sorti — deux écrans
-            superposés donneraient deux jeux de mesures visibles en même temps. */}
-        <AnimatePresence mode="wait" initial={false}>
-          <motion.div
-            key={ecran}
-            variants={fadeUp}
-            initial="hidden"
-            animate="visible"
-            exit="exit"
-            className="h-full overflow-y-auto"
-          >
-            {rendreEcran()}
-          </motion.div>
-        </AnimatePresence>
+      {/* Une seule cellule de grille, partagée : les deux écrans s'y superposent le temps du
+          fondu au lieu de s'empiler. C'est ce qui remplace `mode="wait"`, retiré parce qu'il
+          laissait cette zone VIDE — donc noire — pendant la sortie de l'écran quitté, et
+          définitivement vide si cette sortie ne s'achevait pas (démonter un arbre `layoutId`
+          pendant la rafale de rendus d'une génération en cours). Le chevauchement dure 120 ms,
+          le sortant déjà à `opacity: 0` : aucun risque de lire deux jeux de mesures à la fois. */}
+      <main className="grid min-h-0 flex-1 grid-cols-1 grid-rows-1">
+        <FrontiereErreur ecran={ecran}>
+          <AnimatePresence initial={false}>
+            <motion.div
+              key={ecran}
+              variants={fadeUp}
+              initial="hidden"
+              animate="visible"
+              exit="exit"
+              className="col-start-1 row-start-1 h-full min-h-0 overflow-y-auto"
+            >
+              {rendreEcran()}
+            </motion.div>
+          </AnimatePresence>
+        </FrontiereErreur>
       </main>
     </div>
   );
