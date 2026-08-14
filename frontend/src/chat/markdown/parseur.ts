@@ -33,6 +33,18 @@ const MOTIF_CITATION = /^>\s?(.*)$/;
 const MOTIF_SEPARATEUR = /^(-{3,}|\*{3,}|_{3,})$/;
 const CLOTURE_CODE = '```';
 
+/* Deux accès sont indexés hors garantie du typage, et `noUncheckedIndexedAccess` a raison de le
+ * signaler : une ligne au-delà du tableau et un groupe de capture non apparié valent tous deux
+ * `undefined` au runtime. Plutôt que de les taire par un cast, on les ramène à la chaîne vide —
+ * neutre pour toutes les opérations qui suivent (`trim`, `startsWith`, `exec`). */
+function ligneA(lignes: string[], index: number): string {
+  return lignes[index] ?? '';
+}
+
+function groupe(trouve: RegExpExecArray, rang: number): string {
+  return trouve[rang] ?? '';
+}
+
 function segmentDepuisCapture(trouve: RegExpExecArray): SegmentInline {
   // `RegExpExecArray` type ses éléments `string`, alors qu'un groupe non apparié vaut `undefined`
   // au runtime. Le réélargir ici évite de comparer à `undefined` un type qui prétend ne pas l'être.
@@ -75,11 +87,11 @@ interface Avance {
 }
 
 function lireCode(lignes: string[], depart: number): Avance {
-  const langage = lignes[depart].slice(CLOTURE_CODE.length).trim();
+  const langage = ligneA(lignes, depart).slice(CLOTURE_CODE.length).trim();
   const corps: string[] = [];
   let i = depart + 1;
-  while (i < lignes.length && !lignes[i].startsWith(CLOTURE_CODE)) {
-    corps.push(lignes[i]);
+  while (i < lignes.length && !ligneA(lignes, i).startsWith(CLOTURE_CODE)) {
+    corps.push(ligneA(lignes, i));
     i += 1;
   }
   const complet = i < lignes.length;
@@ -93,11 +105,11 @@ function lireListe(lignes: string[], depart: number, ordonnee: boolean): Avance 
   const motif = ordonnee ? MOTIF_NUMERO : MOTIF_PUCE;
   const items: SegmentInline[][] = [];
   let i = depart;
-  let trouve = motif.exec(lignes[i] ?? '');
+  let trouve = motif.exec(ligneA(lignes, i));
   while (trouve !== null) {
-    items.push(analyserInline(trouve[1]));
+    items.push(analyserInline(groupe(trouve, 1)));
     i += 1;
-    trouve = i < lignes.length ? motif.exec(lignes[i]) : null;
+    trouve = i < lignes.length ? motif.exec(ligneA(lignes, i)) : null;
   }
   return { bloc: { type: 'liste', ordonnee, items }, suivant: i };
 }
@@ -105,11 +117,11 @@ function lireListe(lignes: string[], depart: number, ordonnee: boolean): Avance 
 function lireCitation(lignes: string[], depart: number): Avance {
   const parties: string[] = [];
   let i = depart;
-  let trouve = MOTIF_CITATION.exec(lignes[i] ?? '');
+  let trouve = MOTIF_CITATION.exec(ligneA(lignes, i));
   while (trouve !== null) {
-    parties.push(trouve[1]);
+    parties.push(groupe(trouve, 1));
     i += 1;
-    trouve = i < lignes.length ? MOTIF_CITATION.exec(lignes[i]) : null;
+    trouve = i < lignes.length ? MOTIF_CITATION.exec(ligneA(lignes, i)) : null;
   }
   return { bloc: { type: 'citation', contenu: analyserInline(parties.join(' ')) }, suivant: i };
 }
@@ -117,8 +129,8 @@ function lireCitation(lignes: string[], depart: number): Avance {
 function lireParagraphe(lignes: string[], depart: number): Avance {
   const parties: string[] = [];
   let i = depart;
-  while (i < lignes.length && lignes[i].trim() !== '' && !estDebutDeBloc(lignes[i])) {
-    parties.push(lignes[i].trim());
+  while (i < lignes.length && ligneA(lignes, i).trim() !== '' && !estDebutDeBloc(ligneA(lignes, i))) {
+    parties.push(ligneA(lignes, i).trim());
     i += 1;
   }
   return { bloc: { type: 'paragraphe', contenu: analyserInline(parties.join(' ')) }, suivant: i };
@@ -136,14 +148,15 @@ function estDebutDeBloc(ligne: string): boolean {
 }
 
 function lireBloc(lignes: string[], depart: number): Avance {
-  const ligne = lignes[depart];
+  const ligne = ligneA(lignes, depart);
   if (ligne.startsWith(CLOTURE_CODE)) {
     return lireCode(lignes, depart);
   }
   const titre = MOTIF_TITRE.exec(ligne);
   if (titre !== null) {
-    const niveau = titre[1].length as 1 | 2 | 3; // longueur bornée à 3 par le motif lui-même
-    return { bloc: { type: 'titre', niveau, contenu: analyserInline(titre[2]) }, suivant: depart + 1 };
+    const niveau = groupe(titre, 1).length as 1 | 2 | 3; // longueur bornée à 3 par le motif lui-même
+    const contenu = analyserInline(groupe(titre, 2));
+    return { bloc: { type: 'titre', niveau, contenu }, suivant: depart + 1 };
   }
   if (MOTIF_SEPARATEUR.test(ligne.trim())) {
     return { bloc: { type: 'separateur' }, suivant: depart + 1 };
@@ -166,7 +179,7 @@ export function analyserMarkdown(source: string): BlocMarkdown[] {
   let i = 0;
   // Chaque itération consomme au moins une ligne : la boucle est bornée par le nombre de lignes.
   while (i < lignes.length) {
-    if (lignes[i].trim() === '') {
+    if (ligneA(lignes, i).trim() === '') {
       i += 1;
       continue;
     }

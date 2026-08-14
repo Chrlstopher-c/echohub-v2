@@ -52,6 +52,7 @@ def _routeur_du_module(chemin: str) -> APIRouter | None:
 # Ordre d'assemblage : du plus fondamental au plus dépendant.
 _DOMAINES = (
     "backend.system.api",
+    "backend.models.api",
     "backend.engines.api",
     "backend.inference.api",
     "backend.chat.routes",

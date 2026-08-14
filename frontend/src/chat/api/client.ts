@@ -44,11 +44,14 @@ function extraireDetail(charge: unknown): DetailErreur {
   if (!estObjet(charge)) {
     return {};
   }
-  const interne = estObjet(charge.detail) ? charge.detail : charge;
+  // Accès indexé et non par propriété : la charge vient du réseau, ses clés ne sont pas connues
+  // du typage. `noPropertyAccessFromIndexSignature` impose de le dire, et il a raison de le faire.
+  const detail = charge['detail'];
+  const interne = estObjet(detail) ? detail : charge;
   return {
-    code: texteOuVide(interne.code),
-    message: texteOuVide(interne.message),
-    remediation: texteOuVide(interne.remediation),
+    code: texteOuVide(interne['code']),
+    message: texteOuVide(interne['message']),
+    remediation: texteOuVide(interne['remediation']),
   };
 }
 

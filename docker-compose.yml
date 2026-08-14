@@ -16,8 +16,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: echohub:gpu
-    container_name: echohub
+    # Tag distinct de la v1 (`echohub:gpu`) : les deux images coexistent tant que la v2 n'est pas
+    # validée de bout en bout. Elles se disputent en revanche les ports et le GPU — une seule à la fois.
+    image: echohub:v2
+    container_name: echohub-v2
     restart: unless-stopped
 
     # --- GPU : forme Windows/WSL2, active --------------------------------------------------

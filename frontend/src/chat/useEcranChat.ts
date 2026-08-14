@@ -36,8 +36,9 @@ export function useEcranChat(cible: CibleChargement | null): EtatEcranChat {
 
   // Ouvrir la conversation la plus récente évite d'accueillir l'utilisateur sur un écran vide.
   useEffect((): void => {
-    if (conversationActive === null && liste.conversations.length > 0) {
-      setConversationActive(liste.conversations[0].id);
+    const recente = liste.conversations[0];
+    if (conversationActive === null && recente !== undefined) {
+      setConversationActive(recente.id);
     }
   }, [conversationActive, liste.conversations]);
 

@@ -1,0 +1,221 @@
+/*
+ * Assemblage d'une `CibleChargement` à partir de trois domaines : `models` (ce que le fichier
+ * contient), `system` (ce que la machine offre) et `engines` (quels moteurs sont réellement
+ * utilisables).
+ *
+ * Ce module vit à la racine et non dans un domaine, parce qu'il est le seul endroit autorisé à en
+ * connaître trois à la fois. Le mettre dans `chat` obligerait le chat à lire des en-têtes GGUF ;
+ * dans `models`, à mesurer la machine. `chat/plan/cible.ts` l'énonce déjà comme contrat.
+ *
+ * Règle qui gouverne tout le fichier : **ce qui n'a pas été lu ne s'invente pas**. Une métadonnée
+ * absente produit un refus nommé, pas une valeur par défaut. C'est la différence de fond avec la
+ * v1, qui dérivait un contexte et une VRAM du nom d'un dépôt et se trompait sur les trois.
+ *
+ * Fonctions pures : aucun appel réseau ici, donc testables sans backend et sans GPU.
+ */
+
+/*
+ * Les types du PLAN viennent de `chat` et non de `shared/api`, bien que les deux les déclarent :
+ * `chat/api/contrats.ts` et `shared/api/types-plan.ts` sont deux transcriptions du même contrat
+ * pydantic, écrites en parallèle, et elles divergent déjà (`dimension_tete` y est optionnel d'un
+ * côté, nullable de l'autre). Produire ceux du consommateur est la seule façon de ne pas propager
+ * l'écart. Cette duplication est une dette à résorber en amont, pas ici.
+ */
+import type {
+  CibleChargement,
+  MetadonneesModele,
+  ModeleCharge,
+  Moteur,
+  PlateformePlan,
+  ProfilMachinePlan,
+} from '../chat';
+import type {
+  EtatMoteurs,
+  MetadonneesGGUF,
+  ModeleEnregistre,
+  ProfilMachine,
+  StatutInference,
+} from '../shared/api';
+
+/** Refus explicite : ce qui manque, et ce que l'utilisateur peut y faire. */
+export interface RefusCible {
+  readonly manquant: string;
+  readonly remediation: string;
+}
+
+export type ResultatCible = { readonly cible: CibleChargement } | { readonly refus: RefusCible };
+
+const REMEDIATION_METADONNEES =
+  "Lancer « Vérifier » sur ce modèle depuis l'écran Modèles : le rapport de cohérence nomme " +
+  'précisément ce que son en-tête ne déclare pas.';
+
+/** Plateformes que le planificateur sait traiter. macOS et « inconnue » n'en font pas partie. */
+const PLATEFORMES_PLANIFIABLES: readonly PlateformePlan[] = ['linux_natif', 'wsl2', 'windows'];
+
+function estPlanifiable(plateforme: string): plateforme is PlateformePlan {
+  return (PLATEFORMES_PLANIFIABLES as readonly string[]).includes(plateforme);
+}
+
+/** Moteurs dont la sonde a réellement réussi — « installé » ne suffit pas, la v1 confondait les deux. */
+export function moteursUtilisables(moteurs: EtatMoteurs | null): Moteur[] {
+  if (moteurs === null) {
+    return [];
+  }
+  const disponibles: Moteur[] = [];
+  if (moteurs.llamacpp.fonctionnel) disponibles.push('llama.cpp');
+  if (moteurs.vllm.fonctionnel) disponibles.push('vllm');
+  return disponibles;
+}
+
+/**
+ * Modèle occupant le GPU, s'il y en a un. Le planificateur en a besoin pour décider d'une éjection :
+ * le GPU est exclusif, et un chargement qui l'ignore échoue sur une VRAM déjà prise.
+ */
+export function modelesCharges(statut: StatutInference | null): ModeleCharge[] {
+  const moteur = statut?.etat_moteur;
+  if (statut === null || statut.etat !== 'pret' || moteur === null || moteur === undefined) {
+    return [];
+  }
+  return [
+    {
+      identifiant: moteur.modele,
+      moteur: moteur.moteur,
+      // `null` signifie « non mesuré » : compter 0 ferait croire que le GPU est libre.
+      vram_octets: moteur.vram_apres_octets ?? 0,
+    },
+  ];
+}
+
+export function versProfilPlan(
+  profil: ProfilMachine,
+  moteurs: EtatMoteurs | null,
+  statut: StatutInference | null,
+): ProfilMachinePlan | RefusCible {
+  const gpu = profil.gpu_principal;
+  if (gpu === null) {
+    return { manquant: 'aucun GPU mesuré', remediation: "Vérifier l'exposition du GPU au conteneur." };
+  }
+  if (!estPlanifiable(profil.plateforme)) {
+    return {
+      manquant: `plateforme « ${profil.plateforme} » hors du champ du planificateur`,
+      remediation: 'Exécuter EchoHub sous Linux natif, WSL2 ou Windows.',
+    };
+  }
+  const majeur = gpu.compute_majeur;
+  const mineur = gpu.compute_mineur;
+  return {
+    plateforme: profil.plateforme,
+    index_gpu: gpu.index,
+    nom_gpu: gpu.nom,
+    vram_totale_octets: profil.vram_totale_octets,
+    vram_libre_octets: profil.vram_libre_octets,
+    ram_libre_octets: profil.ram_disponible_octets,
+    moteurs_disponibles: moteursUtilisables(moteurs),
+    modeles_charges: modelesCharges(statut),
+    capacite_calcul: majeur === null || mineur === null ? null : [majeur, mineur],
+  };
+}
+
+/** Les seuls champs sans lesquels aucun plan n'est calculable — tous doivent être LUS. */
+interface ChampsRequis {
+  nombre_couches: number;
+  dimension_embedding: number;
+  dimension_ffn: number;
+  nombre_tetes_attention: number;
+  contexte_entrainement_max: number;
+  taille_vocabulaire: number;
+  taille_octets: number;
+}
+
+/** Champ requis absent ou nul : on nomme lequel plutôt que de livrer un plan bâti sur du vide. */
+function exiger(valeur: number | null | undefined, nom: string): number | RefusCible {
+  if (valeur === null || valeur === undefined || valeur <= 0) {
+    return { manquant: `${nom} absent de l'en-tête GGUF`, remediation: REMEDIATION_METADONNEES };
+  }
+  return valeur;
+}
+
+function estRefus(valeur: number | RefusCible): valeur is RefusCible {
+  return typeof valeur !== 'number';
+}
+
+export function versMetadonneesPlan(
+  modele: ModeleEnregistre,
+  gguf: MetadonneesGGUF | null,
+): MetadonneesModele | RefusCible {
+  if (gguf === null) {
+    return {
+      manquant: `métadonnées illisibles pour ${modele.id}`,
+      remediation:
+        modele.format === 'gguf'
+          ? REMEDIATION_METADONNEES
+          : "Le planificateur n'accepte aujourd'hui que des modèles GGUF.",
+    };
+  }
+  const requis: Record<keyof ChampsRequis, number | RefusCible> = {
+    nombre_couches: exiger(gguf.block_count, 'nombre de couches'),
+    dimension_embedding: exiger(gguf.longueur_embedding, "dimension d'embedding"),
+    dimension_ffn: exiger(gguf.longueur_feed_forward, 'dimension FFN'),
+    nombre_tetes_attention: exiger(gguf.attention.nb_tetes, "nombre de têtes d'attention"),
+    contexte_entrainement_max: exiger(gguf.contexte_natif, "contexte d'entraînement"),
+    taille_vocabulaire: exiger(gguf.taille_vocabulaire, 'taille du vocabulaire'),
+    taille_octets: exiger(modele.taille_octets, 'taille du fichier'),
+  };
+  for (const valeur of Object.values(requis)) {
+    if (estRefus(valeur)) {
+      return valeur;
+    }
+  }
+  // Cast justifié : la boucle qui précède a rendu tout refus, il ne reste que des nombres. Le
+  // typage ne peut pas suivre un narrowing porté par une itération sur les valeurs.
+  return assembler(modele, gguf, requis as ChampsRequis);
+}
+
+function assembler(modele: ModeleEnregistre, gguf: MetadonneesGGUF, requis: ChampsRequis): MetadonneesModele {
+  return {
+    identifiant: modele.id,
+    format: modele.format,
+    architecture: gguf.architecture,
+    taille_octets: requis.taille_octets,
+    nombre_couches: requis.nombre_couches,
+    dimension_embedding: requis.dimension_embedding,
+    dimension_ffn: requis.dimension_ffn,
+    nombre_tetes_attention: requis.nombre_tetes_attention,
+    // GQA : moins de têtes KV que de têtes Q. Non déclaré = pas de GQA, les deux sont égales —
+    // c'est la convention du format, pas une estimation de notre part.
+    nombre_tetes_kv: gguf.attention.nb_tetes_kv ?? requis.nombre_tetes_attention,
+    // Laissé à `null` quand absent : `budget.dimension_tete` sait dériver, et Qwen3 déclare un
+    // `head_dim` qui NE suit PAS la convention embedding/têtes. Dériver ici serait faux.
+    dimension_tete: gguf.attention.dimension_cle,
+    contexte_entrainement_max: requis.contexte_entrainement_max,
+    taille_vocabulaire: requis.taille_vocabulaire,
+    quantification: gguf.quantification_mesuree ?? gguf.quantification_declaree,
+    est_moe: (gguf.nb_experts ?? 0) > 1,
+  };
+}
+
+export function construireCible(
+  modele: ModeleEnregistre,
+  gguf: MetadonneesGGUF | null,
+  profil: ProfilMachine,
+  moteurs: EtatMoteurs | null,
+  statut: StatutInference | null,
+): ResultatCible {
+  const metadonnees = versMetadonneesPlan(modele, gguf);
+  if ('manquant' in metadonnees) {
+    return { refus: metadonnees };
+  }
+  const profilPlan = versProfilPlan(profil, moteurs, statut);
+  if ('manquant' in profilPlan) {
+    return { refus: profilPlan };
+  }
+  return {
+    cible: {
+      cheminModele: modele.chemin,
+      nomModele: modele.fichier ?? modele.depot,
+      // Préférences vides : l'utilisateur n'a rien demandé. Le planificateur décide seul, et c'est
+      // exactement ce que l'écran de chat affichera comme plan initial.
+      demande: { metadonnees, profil: profilPlan, preferences: {} },
+    },
+  };
+}

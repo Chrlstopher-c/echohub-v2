@@ -17,10 +17,12 @@ export interface RepereDebit {
 /** Provenance exacte du relevé — affichée telle quelle, jamais résumée en « ~40 tok/s ». */
 export const PROVENANCE_REPERES = 'RTX 5080 · Qwen3.6-35B-A3B IQ4_XS · 29/41 couches sur GPU';
 
-export const REPERES_DEBIT: readonly RepereDebit[] = [
+// `as const` fige la liste en tuple : le premier repère existe alors pour le typage, ce qu'un
+// `readonly RepereDebit[]` ne garantit pas. `satisfies` conserve la vérification de forme.
+export const REPERES_DEBIT = [
   { contexte: 32_768, tokensParSeconde: 41.0 },
   { contexte: 57_344, tokensParSeconde: 19.6 },
-];
+] as const satisfies readonly RepereDebit[];
 
 /*
  * Dernier contexte dont le débit mesuré est resté haut. Au-delà, la seule mesure disponible montre

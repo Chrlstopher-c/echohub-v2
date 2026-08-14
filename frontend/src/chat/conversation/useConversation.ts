@@ -42,7 +42,7 @@ interface Socle {
 
 function dernierDebit(messages: MessageChat[]): number | null {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const debit = messages[index].tokens_par_seconde;
+    const debit = messages[index]?.tokens_par_seconde ?? null;
     if (debit !== null && debit > 0) {
       return debit;
     }

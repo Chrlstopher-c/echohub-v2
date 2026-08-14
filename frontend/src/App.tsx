@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState, type ReactElement } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 
-import { EcranChat } from './chat';
+import { ChatEcran } from './chat';
+import { useCible } from './cible';
 import { EcranModeles } from './models';
 import { EcranSysteme } from './system';
 import { Button, cn, fadeUp, TONE_VAR, transitionBase, type Tone } from './shared/design';
@@ -11,8 +12,13 @@ import { lireEtatInference, type EtatChargement, type StatutInference } from './
  * Mise en page générale et navigation entre les trois écrans du MVP.
  *
  * Contrat avec les domaines : chaque dossier d'écran expose SON composant depuis son `index.ts`
- * (`models` -> `EcranModeles`, `chat` -> `EcranChat`, `system` -> `EcranSysteme`). Rien d'autre
+ * (`models` -> `EcranModeles`, `chat` -> `ChatEcran`, `system` -> `EcranSysteme`). Rien d'autre
  * n'est importé d'eux — App ne connaît ni leurs hooks, ni leurs sous-composants.
+ *
+ * App est aussi le seul point de RENCONTRE des domaines : choisir un modèle dans `models` doit
+ * produire une cible que `chat` sait planifier, et cela demande de croiser trois mesures. Ce
+ * croisement est délégué à `cible/`, jamais fait ici ni dans un domaine — un domaine qui en
+ * connaîtrait deux autres cesserait d'être remplaçable.
  *
  * L'état d'inférence est affiché ici, dans le bandeau, parce qu'il est vrai pour toute
  * l'application : le GPU est une ressource exclusive, un seul modèle est chargé à la fois. Le
@@ -183,21 +189,42 @@ function IconeTheme({ theme }: { readonly theme: Theme }): ReactElement {
   );
 }
 
-function rendreEcran(ecran: Ecran): ReactElement {
-  switch (ecran) {
-    case 'modeles':
-      return <EcranModeles />;
-    case 'chat':
-      return <EcranChat />;
-    case 'systeme':
-      return <EcranSysteme />;
-  }
+/** Refus d'assemblage : une métadonnée manque. Affiché tel quel — l'utilisateur peut agir dessus. */
+function BandeauRefus({ refus }: { readonly refus: string }): ReactElement {
+  return (
+    <div className="border-b border-border px-4 py-2 text-xs" style={{ color: TONE_VAR.caution }}>
+      {refus}
+    </div>
+  );
 }
 
 export function App(): ReactElement {
   const [ecran, setEcran] = useState<Ecran>('modeles');
   const [theme, basculerTheme] = useTheme();
   const statut = useEtatInference();
+  const { cible, refus, erreur, choisir } = useCible();
+
+  // Sélectionner un modèle amène sur le chat : c'est là que le plan est montré avant d'être appliqué.
+  const surChoixModele = useCallback(
+    (modele: Parameters<typeof choisir>[0]): void => {
+      choisir(modele);
+      setEcran('chat');
+    },
+    [choisir],
+  );
+
+  const rendreEcran = (): ReactElement => {
+    switch (ecran) {
+      case 'modeles':
+        return <EcranModeles onCharger={surChoixModele} />;
+      case 'chat':
+        return <ChatEcran cible={cible} />;
+      case 'systeme':
+        return <EcranSysteme />;
+    }
+  };
+
+  const alerte = refus === null ? erreur : `${refus.manquant} — ${refus.remediation}`;
 
   return (
     <div className="flex h-screen flex-col bg-bg text-text">
@@ -226,6 +253,8 @@ export function App(): ReactElement {
         </div>
       </header>
 
+      {alerte !== null && <BandeauRefus refus={alerte} />}
+
       <main className="min-h-0 flex-1">
         {/* `mode="wait"` : le nouvel écran n'entre qu'une fois l'ancien sorti — deux écrans
             superposés donneraient deux jeux de mesures visibles en même temps. */}
@@ -238,7 +267,7 @@ export function App(): ReactElement {
             exit="exit"
             className="h-full overflow-y-auto"
           >
-            {rendreEcran(ecran)}
+            {rendreEcran()}
           </motion.div>
         </AnimatePresence>
       </main>

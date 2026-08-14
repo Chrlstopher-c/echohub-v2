@@ -46,13 +46,14 @@ function estEvenement(valeur: unknown): valeur is EvenementInstallation {
   const objet = proprietes(valeur);
   // `etape` distingue un événement d'installation d'une erreur métier sérialisée dans le même
   // flux — le backend émet les deux formes sur le même canal.
-  return objet !== null && typeof objet.etape === 'string' && typeof objet.message === 'string';
+  return objet !== null && typeof objet['etape'] === 'string' && typeof objet['message'] === 'string';
 }
 
 function messageDeCharge(valeur: unknown): string {
   const objet = proprietes(valeur);
-  if (objet !== null && typeof objet.message === 'string') {
-    return objet.message;
+  const message = objet === null ? undefined : objet['message'];
+  if (typeof message === 'string') {
+    return message;
   }
   return 'Le flux d’installation a renvoyé une charge inattendue.';
 }
