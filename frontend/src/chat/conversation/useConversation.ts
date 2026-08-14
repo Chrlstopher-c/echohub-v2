@@ -1,0 +1,162 @@
+/*
+ * Conversation courante : historique persisté, réglages, et branchement de la génération.
+ *
+ * Le message de l'utilisateur est ajouté localement dès l'envoi pour que le fil réagisse
+ * immédiatement, puis l'historique complet est relu à la fin du flux : le backend reste la source
+ * de vérité, l'optimisme local ne vit que le temps d'une génération.
+ */
+
+import { useCallback, useEffect, useState } from 'react';
+import { messageErreur } from '../api/client';
+import type {
+  ConversationDetaillee,
+  MajReglages,
+  MessageChat,
+  ReglagesConversation,
+} from '../api/contrats';
+import { ecrireReglages, lireConversation, listerMessages } from '../api/conversations-api';
+import { journal } from '../api/journal';
+import { useGeneration } from './useGeneration';
+
+export interface EtatConversation {
+  detail: ConversationDetaillee | null;
+  messages: MessageChat[];
+  brouillon: string | null;
+  genere: boolean;
+  erreur: string | null;
+  /** Débit mesuré de la dernière réponse complète — une mesure, pas une prévision. */
+  debitObserve: number | null;
+  envoyer: (contenu: string) => Promise<void>;
+  annuler: () => Promise<void>;
+  enregistrerReglages: (patch: MajReglages) => Promise<void>;
+}
+
+interface Socle {
+  detail: ConversationDetaillee | null;
+  messages: MessageChat[];
+  erreur: string | null;
+  setDetail: (detail: ConversationDetaillee) => void;
+  setMessages: (messages: MessageChat[]) => void;
+  setErreur: (erreur: string | null) => void;
+}
+
+function dernierDebit(messages: MessageChat[]): number | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const debit = messages[index].tokens_par_seconde;
+    if (debit !== null && debit > 0) {
+      return debit;
+    }
+  }
+  return null;
+}
+
+function messageLocal(conversationId: string, contenu: string): MessageChat {
+  return {
+    id: `local-${Date.now()}`,
+    conversation_id: conversationId,
+    role: 'user',
+    contenu,
+    tokens_generes: null,
+    tokens_par_seconde: null,
+    cree_le: new Date().toISOString(),
+    modele_id: null,
+    interrompu: false,
+  };
+}
+
+/** Charge la conversation et son historique, et les remet à zéro quand la sélection change. */
+function useSocle(conversationId: string | null): Socle {
+  const [detail, setDetail] = useState<ConversationDetaillee | null>(null);
+  const [messages, setMessages] = useState<MessageChat[]>([]);
+  const [erreur, setErreur] = useState<string | null>(null);
+
+  useEffect((): (() => void) | undefined => {
+    setDetail(null);
+    setMessages([]);
+    if (conversationId === null) {
+      return undefined;
+    }
+    const controle = new AbortController();
+    lireConversation(conversationId, controle.signal)
+      .then((charge): void => {
+        setDetail(charge);
+        setMessages(charge.messages);
+        setErreur(null);
+      })
+      .catch((cause: unknown): void => {
+        if (controle.signal.aborted) {
+          return;
+        }
+        journal.erreur('conversation illisible', cause);
+        setErreur(messageErreur(cause));
+      });
+    return (): void => controle.abort();
+  }, [conversationId]);
+
+  return { detail, messages, erreur, setDetail, setMessages, setErreur };
+}
+
+export function useConversation(conversationId: string | null): EtatConversation {
+  const socle = useSocle(conversationId);
+  const { setMessages, setErreur } = socle;
+
+  const rafraichirMessages = useCallback(
+    async (id: string): Promise<void> => {
+      try {
+        setMessages(await listerMessages(id));
+      } catch (cause) {
+        journal.erreur('historique illisible', cause);
+        setErreur(messageErreur(cause));
+      }
+    },
+    [setMessages, setErreur],
+  );
+
+  const generation = useGeneration(conversationId, rafraichirMessages);
+  const enregistrerReglages = useEnregistrementReglages(conversationId, socle);
+
+  const envoyer = useCallback(
+    async (contenu: string): Promise<void> => {
+      if (conversationId === null) {
+        return;
+      }
+      setMessages([...socle.messages, messageLocal(conversationId, contenu)]);
+      await generation.envoyer(contenu);
+    },
+    [conversationId, socle.messages, setMessages, generation],
+  );
+
+  return {
+    detail: socle.detail,
+    messages: socle.messages,
+    brouillon: generation.brouillon,
+    genere: generation.genere,
+    erreur: generation.erreur ?? socle.erreur,
+    debitObserve: dernierDebit(socle.messages),
+    envoyer,
+    annuler: generation.annuler,
+    enregistrerReglages,
+  };
+}
+
+function useEnregistrementReglages(
+  conversationId: string | null,
+  socle: Socle,
+): (patch: MajReglages) => Promise<void> {
+  const { detail, setDetail, setErreur } = socle;
+  return useCallback(
+    async (patch: MajReglages): Promise<void> => {
+      if (conversationId === null || detail === null) {
+        return;
+      }
+      try {
+        const reglages: ReglagesConversation = await ecrireReglages(conversationId, patch);
+        setDetail({ ...detail, reglages });
+      } catch (cause) {
+        journal.erreur('enregistrement des réglages refusé', cause);
+        setErreur(messageErreur(cause));
+      }
+    },
+    [conversationId, detail, setDetail, setErreur],
+  );
+}

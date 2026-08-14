@@ -1,0 +1,132 @@
+"""Configuration typée d'EchoHub v2 — source unique des chemins et des réglages runtime.
+
+Règle héritée d'un défaut mesuré sur la v1 : aucun chemin absolu n'est codé en dur. La v1 portait
+`/mnt/models/echohub` comme défaut dans cinq modules ; ce chemin tombait hors du volume Docker, et
+chaque recréation du conteneur perdait les modèles téléchargés.
+
+Deux invariants en découlent :
+1. l'environnement prime sur tout défaut, sans exception ;
+2. à défaut d'environnement, tout se range SOUS le répertoire de données de l'application — qui est
+   précisément ce que l'infrastructure monte en volume persistant.
+"""
+
+from __future__ import annotations
+
+import os
+import platform
+from functools import lru_cache
+from pathlib import Path
+from typing import Any
+
+from loguru import logger
+from pydantic import Field, SecretStr, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from backend.core.errors import ConfigurationInvalide
+
+NOM_APPLICATION = "echohub"
+
+# Sous-dossier attribué à chaque chemin dérivé quand la variable d'environnement est absente.
+_SOUS_DOSSIERS: dict[str, str] = {"models_dir": "models", "engines_dir": "engines"}
+
+_NIVEAUX_VALIDES = frozenset({"TRACE", "DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR", "CRITICAL"})
+
+
+def _racine_donnees_par_defaut() -> Path:
+    """Racine de données propre à la plateforme, utilisée UNIQUEMENT si XDG_DATA_HOME est absent."""
+    systeme = platform.system()
+    if systeme == "Windows":
+        return Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming")
+    if systeme == "Darwin":
+        return Path.home() / "Library" / "Application Support"
+    return Path.home() / ".local" / "share"
+
+
+class Settings(BaseSettings):
+    """Réglages du backend, lus dans l'environnement (le `.env` ne sert qu'au poste de dev)."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        populate_by_name=True,
+        # Les défauts passent par les validateurs : c'est ce qui rend les chemins dérivés effectifs.
+        validate_default=True,
+    )
+
+    # Déclaré en premier : les chemins dérivés ci-dessous s'appuient sur sa valeur déjà validée.
+    data_home: Path = Field(default_factory=_racine_donnees_par_defaut, validation_alias="XDG_DATA_HOME")
+    models_dir: Path = Field(default=None, validation_alias="MODELS_DIR")
+    engines_dir: Path = Field(default=None, validation_alias="ENGINES_DIR")
+
+    host: str = Field(default="127.0.0.1", validation_alias="ECHOHUB_HOST")
+    port: int = Field(default=37821, ge=1, le=65535, validation_alias="ECHOHUB_PORT")
+
+    log_level: str = Field(default="INFO", validation_alias="ECHOHUB_LOG_LEVEL")
+    log_to_file: bool = Field(default=True, validation_alias="ECHOHUB_LOG_TO_FILE")
+
+    hf_token: SecretStr | None = Field(default=None, validation_alias="HF_TOKEN")
+    db_timeout_s: float = Field(default=30.0, gt=0, validation_alias="ECHOHUB_DB_TIMEOUT_S")
+
+    @field_validator("data_home", mode="before")
+    @classmethod
+    def _ignorer_valeur_vide(cls, valeur: Any) -> Any:
+        """Docker injecte parfois une variable vide : la traiter comme absente, pas comme `Path('.')`."""
+        return valeur if valeur not in (None, "") else _racine_donnees_par_defaut()
+
+    @field_validator("models_dir", "engines_dir", mode="before")
+    @classmethod
+    def _deriver_de_data_home(cls, valeur: Any, info: Any) -> Any:
+        """Un chemin non fourni tombe sous `data_home`, donc dans le volume persistant."""
+        if valeur not in (None, ""):
+            return valeur
+        racine = info.data.get("data_home") or _racine_donnees_par_defaut()
+        return Path(racine) / NOM_APPLICATION / _SOUS_DOSSIERS[info.field_name]
+
+    @field_validator("log_level", mode="before")
+    @classmethod
+    def _normaliser_niveau(cls, valeur: Any) -> str:
+        niveau = str(valeur or "INFO").upper()
+        if niveau not in _NIVEAUX_VALIDES:
+            raise ValueError(f"Niveau de log inconnu : {niveau}. Valeurs admises : {sorted(_NIVEAUX_VALIDES)}")
+        return niveau
+
+    @property
+    def data_dir(self) -> Path:
+        """Répertoire applicatif : base de données, logs, caches."""
+        return self.data_home / NOM_APPLICATION
+
+    @property
+    def logs_dir(self) -> Path:
+        return self.data_dir / "logs"
+
+    @property
+    def db_path(self) -> Path:
+        return self.data_dir / "echohub.db"
+
+    def repertoires(self) -> tuple[Path, ...]:
+        return (self.data_dir, self.logs_dir, self.models_dir, self.engines_dir)
+
+    def preparer_repertoires(self) -> None:
+        """Crée les répertoires nécessaires. Appelé avant toute écriture disque."""
+        for chemin in self.repertoires():
+            try:
+                chemin.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                logger.error("Création du répertoire {} impossible : {}", chemin, exc)
+                raise ConfigurationInvalide(
+                    f"Répertoire inutilisable : {chemin}",
+                    remediation="Vérifier les droits d'écriture et le montage du volume correspondant.",
+                    details={"chemin": str(chemin), "cause": str(exc)},
+                ) from exc
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    """Instance unique des réglages. Le cache évite de relire l'environnement à chaque appel."""
+    return Settings()
+
+
+def reset_settings_cache() -> None:
+    """Vide le cache — réservé aux tests, qui modifient l'environnement entre deux cas."""
+    get_settings.cache_clear()

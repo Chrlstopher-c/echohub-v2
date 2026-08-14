@@ -1,0 +1,114 @@
+/*
+ * Styles impossibles à exprimer en classes Tailwind : pseudo-éléments du slider,
+ * scrollbars, respect global de prefers-reduced-motion.
+ */
+
+/* ---- Base document ---- */
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--accent-soft);
+}
+
+/* ---- Slider (input range) — le rail est dessiné par le composant,
+   l'input natif ne fournit que le pouce et l'accessibilité clavier ---- */
+.eh-range {
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  cursor: pointer;
+}
+
+.eh-range:disabled {
+  cursor: not-allowed;
+}
+
+.eh-range::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: var(--text);
+  border: 2px solid var(--bg);
+  box-shadow: var(--shadow-1);
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+.eh-range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: var(--text);
+  border: 2px solid var(--bg);
+  box-shadow: var(--shadow-1);
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+.eh-range:active::-webkit-slider-thumb {
+  transform: scale(1.15);
+}
+
+.eh-range:focus-visible {
+  outline: none;
+}
+
+.eh-range:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+.eh-range:focus-visible::-moz-range-thumb {
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+/* ---- Scrollbars — fines et de la couleur de la structure ---- */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 9999px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ---- Zone hachurée : réserve mémoire non disponible (bureau Windows) ---- */
+.eh-hatched {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    transparent,
+    transparent 3px,
+    var(--border-strong) 3px,
+    var(--border-strong) 4px
+  );
+}
+
+/* ---- Accessibilité : couper tout mouvement si l'OS le demande ---- */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

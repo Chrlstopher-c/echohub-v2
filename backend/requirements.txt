@@ -1,0 +1,49 @@
+# EchoHub v2 — dépendances backend.
+#
+# Périmètre volontairement réduit au MVP (system / engines / models / inference / chat).
+# Rien pour le RAG, les connecteurs ou le fine-tuning : hors MVP, cf. ARCHITECTURE.md.
+#
+# Bornes de version : on ne fige que ce qui est justifié par une contrainte connue. Inventer
+# une borne « prudente » non mesurée reproduirait le défaut central de la v1 (des constantes
+# posées par raisonnement). Le vrai verrouillage viendra d'un lockfile (pip-compile) une fois
+# l'application validée sur la machine cible.
+
+# --- API HTTP -------------------------------------------------------------------------------
+fastapi
+uvicorn[standard]
+# Requis par FastAPI dès qu'une route utilise Form/UploadFile. Absent du requirements.txt de la
+# v1 alors que le code en dépendait : crash au démarrage, comblé à la main dans le venv puis
+# jamais reporté. Il reste ici même si aucune route ne l'utilise encore — le coût est nul, la
+# panne qu'il évite ne l'est pas.
+python-multipart
+
+# --- Structures et journalisation -----------------------------------------------------------
+# pydantic v2 imposé : le planificateur expose ses plans en modèles typés (v1 incompatible).
+pydantic>=2
+loguru
+
+# --- Accès externes -------------------------------------------------------------------------
+httpx                 # client HTTP asynchrone (recherche Hugging Face, sondes moteurs)
+huggingface_hub       # recherche, métadonnées et téléchargement des modèles
+python-dotenv         # lecture du .env en exécution native (hors Docker)
+
+# --- Mesure matérielle (domaine system) -----------------------------------------------------
+# Le planificateur mesure, il ne suppose pas : RAM libre réelle et processus via psutil, VRAM
+# libre réelle via NVML. NVML est le chemin programmatique officiel — préférable au parsing du
+# texte de `nvidia-smi`, dont le format n'est pas un contrat.
+psutil
+nvidia-ml-py
+
+# --- Moteur d'inférence ---------------------------------------------------------------------
+# ATTENTION : cette ligne installe le wheel PyPI, qui est CPU-only. L'image Docker le
+# RÉINSTALLE ensuite depuis les sources avec le support CUDA (cf. Dockerfile). Sans cette
+# recompilation, tout « fonctionne » mais rien ne touche le GPU.
+# Aucune borne de version : la seule version dont la compilation Blackwell est vérifiée est
+# celle du dernier build réussi, et elle n'est pas relevée à ce jour. À figer par mesure.
+llama-cpp-python
+
+# --- Tests ----------------------------------------------------------------------------------
+# ARCHITECTURE.md exige un planificateur testable sans GPU (métadonnées et budget mémoire
+# injectés). Les tests tournent donc aussi dans l'image, seul endroit où existe le build CUDA.
+pytest
+pytest-asyncio

@@ -1,0 +1,9 @@
+/*
+ * Directives Tailwind uniquement. Les tokens, polices et primitives du design system sont
+ * importés par `main.tsx`, dans un ordre précis : `primitives.css` doit passer APRÈS le preflight
+ * de Tailwind, qui remet à zéro `body` et écraserait sinon le fond du thème sombre.
+ */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;

@@ -1,0 +1,54 @@
+# EchoHub v2 — contexte de build Docker.
+#
+# Le contexte entier est envoyé au démon AVANT la première instruction du Dockerfile : ce qui
+# est oublié ici ralentit chaque build et peut se retrouver figé dans une couche d'image.
+
+# --- Environnements recréés dans l'image, jamais copiés depuis l'hôte -----------------------
+# Le venv de l'hôte est souvent un venv Windows : copié dans l'image, il masquerait le venv
+# Linux et le llama-cpp-python compilé pour CUDA.
+backend/.venv/
+.venv/
+.venv-vllm/
+**/__pycache__/
+*.pyc
+frontend/node_modules/
+frontend/dist/
+
+# --- Données utilisateur et modèles : vivent dans des volumes nommés, jamais dans l'image ---
+data/
+models/
+*.gguf
+*.safetensors
+*.db
+*.sqlite3
+
+# --- Journaux et fichiers de PID ------------------------------------------------------------
+logs/
+*.log
+*.pid
+
+# --- Secrets --------------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+
+# --- VCS, outillage local -------------------------------------------------------------------
+.git/
+.gitignore
+.github/
+.claude/
+.brainstorm/
+.ruff_cache/
+.pytest_cache/
+.echoforge.yml
+
+# --- Documentation : aucune n'est lue à l'exécution -----------------------------------------
+# reference/ contient les archives de la v1 (~140 Ko de markdown) : utile au développeur,
+# inutile à l'image.
+reference/
+*.md
+
+# --- Scripts d'exécution native : sans objet dans le conteneur ------------------------------
+start.sh
+stop.sh
+restart.sh

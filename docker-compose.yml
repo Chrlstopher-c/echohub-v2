@@ -1,0 +1,100 @@
+# EchoHub v2 — orchestration locale.
+#
+# Cible : Windows 11 + Docker Desktop + WSL2. C'est ce qui détermine la syntaxe GPU ci-dessous,
+# et elle est INVERSÉE d'une plateforme à l'autre (cf. COMPATIBILITE-GPU.md) :
+#
+#   Windows + Docker Desktop + WSL2 → deploy.resources.reservations.devices  (forme active ici)
+#                                      `nvidia.com/gpu=all` échoue : "unresolvable CDI devices"
+#   Linux natif avec CDI seul       → devices: ["nvidia.com/gpu=all"]
+#                                      `--gpus all` échoue : "AMD CDI spec not found"
+#
+# Passer d'une machine à l'autre = permuter les deux blocs, rien d'autre.
+name: echohub
+
+services:
+  echohub:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: echohub:gpu
+    container_name: echohub
+    restart: unless-stopped
+
+    # --- GPU : forme Windows/WSL2, active --------------------------------------------------
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    # --- GPU : forme Linux natif + CDI, documentée, inactive -------------------------------
+    # devices:
+    #   - nvidia.com/gpu=all
+
+    # torch (vLLM) alloue en mémoire partagée. Le défaut Docker est de 64 Mo, insuffisant dès
+    # qu'un worker démarre : l'échec se présente comme un plantage obscur, pas comme un manque
+    # de place.
+    shm_size: "2gb"
+
+    ports:
+      - "${ECHOHUB_PORT_WEB:-37820}:80"          # interface web (nginx)
+      - "${ECHOHUB_PORT_API:-37821}:37821"       # API FastAPI directe, pour le débogage
+
+    volumes:
+      # Volumes nommés : MODELS_DIR et XDG_DATA_HOME pointent DEDANS (cf. Dockerfile). Tout ce
+      # que le backend écrit ailleurs est perdu à la reconstruction de l'image.
+      - echohub_models:/data/models              # modèles téléchargés (des dizaines de Go)
+      - echohub_userdata:/data/user              # base SQLite, configuration, journaux
+
+      # --- Développement : code monté depuis l'hôte, inactif par défaut -------------------
+      # Décommenter pour éditer le backend sans reconstruire (`docker compose restart echohub`).
+      # Le volume anonyme sur .venv est INDISSOCIABLE du bind mount : sans lui, un venv Windows
+      # présent sur l'hôte masquerait le venv Linux de l'image, et le llama-cpp-python compilé
+      # pour CUDA disparaîtrait purement et simplement.
+      # - ./backend:/app/backend
+      # - /app/backend/.venv
+
+    environment:
+      MODELS_DIR: /data/models
+      XDG_DATA_HOME: /data/user
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      HF_TOKEN: ${HF_TOKEN:-}
+      # GGML_CUDA_ENABLE_UNIFIED_MEMORY est volontairement ABSENTE : sous WSL2 elle immobilise
+      # le modèle en RAM avec la VRAM figée à 2 Go (mesuré). ggml active le comportement sur la
+      # simple présence de la variable — une valeur vide suffirait à nuire. L'entrypoint la
+      # retire même si l'environnement hôte la transmet.
+
+    healthcheck:
+      # Interroge nginx, pas une route d'API : la page statique existe dès le premier démarrage,
+      # ce qui donne un signal fiable sans dépendre de l'avancement du backend.
+      test: ["CMD", "curl", "-fsS", "http://localhost/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  # --- Recherche web, prévue mais pas dans le MVP ------------------------------------------
+  # Sous profil : `docker compose up` ne le démarre PAS et il ne consomme rien. Il n'est là que
+  # pour éviter de retoucher l'infrastructure le jour où la recherche web arrivera :
+  #   docker compose --profile recherche-web up -d
+  # Le backend l'atteindra alors sur http://searxng:8080 (réseau interne, aucun port publié).
+  searxng:
+    profiles: ["recherche-web"]
+    image: searxng/searxng:latest
+    container_name: echohub-searxng
+    restart: unless-stopped
+    volumes:
+      - echohub_searxng:/etc/searxng
+    environment:
+      SEARXNG_BASE_URL: http://searxng:8080/
+    expose:
+      - "8080"
+
+volumes:
+  echohub_models:
+  echohub_userdata:
+  echohub_searxng:

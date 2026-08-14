@@ -30,3 +30,5 @@ logs/
 .ruff_cache/
 .pytest_cache/
 .DS_Store
+
+.pytest_cache/

@@ -1,0 +1,124 @@
+/*
+ * Tokens du design system — unique source de valeurs.
+ * Aucun composant ne référence une valeur brute : uniquement ces variables.
+ * Thème sombre par défaut ; le clair surcharge les mêmes noms sous [data-theme='light'].
+ */
+
+:root {
+  /* ---- Surfaces — l'élévation vient de la teinte, pas de l'ombre ---- */
+  --bg:        #0e0e11;
+  --surface:   #16161a;
+  --surface-2: #1d1d23;
+  --overlay:   #24242c;
+
+  --border:        rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.16);
+
+  /* ---- Texte ---- */
+  --text:   #ececf1;
+  --text-2: #9494a6;
+  --text-3: #5c5c6b;
+
+  /* ---- Accent : action possible, activité en cours ---- */
+  --accent:       #8a7aff;
+  --accent-hover: #a396ff;
+  --accent-soft:  rgba(138, 122, 255, 0.14);
+  --on-accent:    #ffffff;
+  --ring:         rgba(138, 122, 255, 0.45);
+
+  /* ---- États : sain / compromis (récupérable) / limite (fatal) ---- */
+  --ok:            #4cc38a;
+  --ok-soft:       rgba(76, 195, 138, 0.14);
+  --caution:       #e5b454;
+  --caution-soft:  rgba(229, 180, 84, 0.14);
+  --critical:      #e5644e;
+  --critical-soft: rgba(229, 100, 78, 0.14);
+
+  /* ---- Mémoire : le vocabulaire du plan de chargement ----
+     RAM en sable : enfant de la famille caution — l'offload EST le compromis. */
+  --mem-vram:      #56b3f5;
+  --mem-vram-soft: rgba(86, 179, 245, 0.16);
+  --mem-ram:       #c19a5e;
+  --mem-ram-soft:  rgba(193, 154, 94, 0.16);
+  --mem-kv:        #c973d6;
+  --mem-kv-soft:   rgba(201, 115, 214, 0.16);
+
+  /* ---- États d'un modèle — alias, pour que le sens reste central ---- */
+  --state-idle:      var(--text-3);
+  --state-loading:   var(--accent);
+  --state-ready:     var(--ok);
+  --state-degraded:  var(--caution);
+  --state-fatal:     var(--critical);
+
+  /* ---- Typographie ---- */
+  --font-ui:   'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
+
+  --text-2xs: 0.6875rem; /* 11px — annotations, axes */
+  --text-xs:  0.75rem;   /* 12px — libellés secondaires */
+  --text-sm:  0.8125rem; /* 13px — corps de l'interface */
+  --text-md:  0.9375rem; /* 15px — sous-titres */
+  --text-lg:  1.125rem;  /* 18px — titres de section */
+  --text-xl:  1.5rem;    /* 24px — titres d'écran */
+  --text-2xl: 2rem;      /* 32px — chiffres héros */
+
+  /* ---- Rayons — un enfant ne dépasse jamais son parent ---- */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+
+  /* ---- Ombres — uniquement pour décoller les couches flottantes ---- */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 4px 12px rgba(0, 0, 0, 0.45);
+  --shadow-3: 0 12px 32px rgba(0, 0, 0, 0.55);
+
+  /* Voile derrière les modales. */
+  --scrim: rgba(0, 0, 0, 0.6);
+
+  /* ---- Mouvement ---- */
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+  --dur-slow: 280ms;
+  --ease-out:    cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+}
+
+[data-theme='light'] {
+  --bg:        #f6f6f8;
+  --surface:   #ffffff;
+  --surface-2: #efeff3;
+  --overlay:   #ffffff;
+
+  --border:        rgba(18, 18, 28, 0.1);
+  --border-strong: rgba(18, 18, 28, 0.2);
+
+  --text:   #1a1a22;
+  --text-2: #5c5c6e;
+  --text-3: #9a9aa8;
+
+  --accent:       #6a58f0;
+  --accent-hover: #5a48e0;
+  --accent-soft:  rgba(106, 88, 240, 0.12);
+  --ring:         rgba(106, 88, 240, 0.4);
+
+  --ok:            #1f9d63;
+  --ok-soft:       rgba(31, 157, 99, 0.12);
+  --caution:       #a97a1a;
+  --caution-soft:  rgba(169, 122, 26, 0.12);
+  --critical:      #cc4632;
+  --critical-soft: rgba(204, 70, 50, 0.12);
+
+  --mem-vram:      #1f7fd1;
+  --mem-vram-soft: rgba(31, 127, 209, 0.14);
+  --mem-ram:       #8a6a33;
+  --mem-ram-soft:  rgba(138, 106, 51, 0.14);
+  --mem-kv:        #a24fb5;
+  --mem-kv-soft:   rgba(162, 79, 181, 0.14);
+
+  --shadow-1: 0 1px 2px rgba(18, 18, 28, 0.08);
+  --shadow-2: 0 4px 12px rgba(18, 18, 28, 0.1);
+  --shadow-3: 0 12px 32px rgba(18, 18, 28, 0.14);
+
+  --scrim: rgba(12, 12, 20, 0.4);
+}
