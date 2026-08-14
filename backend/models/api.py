@@ -124,25 +124,17 @@ def synchroniser() -> ResumeSynchronisation:
         raise _en_http(exc) from exc
 
 
-@router.get("/registre/{identifiant}", response_model=ModeleEnregistre)
-def lire_modele(identifiant: str) -> ModeleEnregistre:
-    try:
-        return obtenir_modele(identifiant)
-    except EchoHubError as exc:
-        raise _en_http(exc) from exc
-
-
-@router.delete("/registre/{identifiant}", response_model=ResultatOubli)
-def oublier(identifiant: str) -> ResultatOubli:
-    """Retire l'entrée du registre. Les fichiers restent sur le disque, délibérément."""
-    try:
-        oublier_modele(identifiant)
-    except EchoHubError as exc:
-        raise _en_http(exc) from exc
-    return ResultatOubli(oublie=True)
-
-
-@router.get("/registre/{identifiant}/metadonnees", response_model=MetadonneesGGUF | None)
+# `:path` sur l'identifiant, et les routes SUFFIXÉES déclarées avant la route nue.
+#
+# Un identifiant de registre vaut `<depot>::<fichier>` et le dépôt contient un `/`
+# (`mradermacher/Qwen3.6-27B-…-GGUF::…gguf`). Le navigateur l'encode bien en `%2F`, mais le
+# serveur le décode AVANT le routage : un paramètre à segment unique ne correspond alors plus, et
+# toutes les routes du registre répondaient 404 sur les modèles issus du Hub — seuls les dossiers
+# sans `/` fonctionnaient, ce qui donnait un défaut à moitié visible.
+#
+# `{identifiant:path}` est glouton : déclaré avant, il avalerait `/metadonnees` et `/coherence`
+# dans l'identifiant lui-même. L'ordre ci-dessous n'est donc pas cosmétique.
+@router.get("/registre/{identifiant:path}/metadonnees", response_model=MetadonneesGGUF | None)
 def lire_metadonnees(identifiant: str) -> MetadonneesGGUF | None:
     """Métadonnées LUES dans l'en-tête GGUF — seule entrée valable du planificateur.
 
@@ -155,13 +147,31 @@ def lire_metadonnees(identifiant: str) -> MetadonneesGGUF | None:
         raise _en_http(exc) from exc
 
 
-@router.get("/registre/{identifiant}/coherence", response_model=RapportCoherence)
+@router.get("/registre/{identifiant:path}/coherence", response_model=RapportCoherence)
 def verifier(identifiant: str) -> RapportCoherence:
     """Confronte ce que le modèle déclare à ce qu'il contient réellement."""
     try:
         return verifier_modele_enregistre(identifiant)
     except EchoHubError as exc:
         raise _en_http(exc) from exc
+
+
+@router.get("/registre/{identifiant:path}", response_model=ModeleEnregistre)
+def lire_modele(identifiant: str) -> ModeleEnregistre:
+    try:
+        return obtenir_modele(identifiant)
+    except EchoHubError as exc:
+        raise _en_http(exc) from exc
+
+
+@router.delete("/registre/{identifiant:path}", response_model=ResultatOubli)
+def oublier(identifiant: str) -> ResultatOubli:
+    """Retire l'entrée du registre. Les fichiers restent sur le disque, délibérément."""
+    try:
+        oublier_modele(identifiant)
+    except EchoHubError as exc:
+        raise _en_http(exc) from exc
+    return ResultatOubli(oublie=True)
 
 
 # ---------------------------------------------------------------------------- transferts

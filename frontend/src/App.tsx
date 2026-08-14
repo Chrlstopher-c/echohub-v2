@@ -6,7 +6,7 @@ import { useCible } from './cible';
 import { EcranModeles } from './models';
 import { EcranSysteme } from './system';
 import { Button, cn, fadeUp, TONE_VAR, transitionBase, type Tone } from './shared/design';
-import { lireEtatInference, type EtatChargement, type StatutInference } from './shared/api';
+import { dechargerModele, lireEtatInference, type EtatChargement, type StatutInference } from './shared/api';
 
 /*
  * Mise en page générale et navigation entre les trois écrans du MVP.
@@ -83,8 +83,11 @@ function useTheme(): readonly [Theme, () => void] {
 }
 
 /** Sondage borné par le démontage du composant ; chaque requête porte en plus son propre délai. */
-function useEtatInference(): StatutInference | null {
+function useEtatInference(): readonly [StatutInference | null, () => void] {
   const [statut, setStatut] = useState<StatutInference | null>(null);
+  // Incrémenté pour forcer un relevé hors du rythme de sondage — après une éjection, attendre
+  // cinq secondes afficherait un état que l'utilisateur vient lui-même de rendre faux.
+  const [reveil, setReveil] = useState(0);
   useEffect(() => {
     const controleur = new AbortController();
     let monte = true;
@@ -105,8 +108,9 @@ function useEtatInference(): StatutInference | null {
       window.clearInterval(minuterie);
       controleur.abort();
     };
-  }, []);
-  return statut;
+  }, [reveil]);
+  const resonder = useCallback((): void => setReveil((n) => n + 1), []);
+  return [statut, resonder];
 }
 
 function Marque(): ReactElement {
@@ -150,10 +154,32 @@ function Onglet({ libelle, actif, onClick }: OngletProps): ReactElement {
   );
 }
 
-function EtatInference({ statut }: { readonly statut: StatutInference | null }): ReactElement {
+interface EtatInferenceProps {
+  readonly statut: StatutInference | null;
+  readonly onEjecter: () => void;
+}
+
+/*
+ * Le GPU est exclusif : tant qu'un modèle l'occupe, aucun autre ne peut être chargé. L'éjection
+ * appartient donc au bandeau, à côté de l'état — et pas à un écran, car elle est vraie partout.
+ * Sans elle, un modèle chargé hors de cette page ne pouvait plus être libéré depuis l'interface.
+ */
+function EtatInference({ statut, onEjecter }: EtatInferenceProps): ReactElement {
   const etat: EtatChargement = statut?.etat ?? 'inactif';
   const modele = statut?.modele ?? null;
   const inconnu = statut === null;
+  const [ejection, setEjection] = useState(false);
+
+  const ejecter = useCallback((): void => {
+    setEjection(true);
+    void dechargerModele()
+      .catch((cause: unknown) => console.warn('Éjection refusée :', cause))
+      .finally(() => {
+        setEjection(false);
+        onEjecter();
+      });
+  }, [onEjecter]);
+
   return (
     <div className="flex items-center gap-2" title={statut?.message ?? undefined}>
       <span
@@ -163,6 +189,11 @@ function EtatInference({ statut }: { readonly statut: StatutInference | null }):
       />
       <span className="text-xs text-text-2">{inconnu ? 'backend injoignable' : LIBELLE_ETAT[etat]}</span>
       {modele !== null && <span className="max-w-[14rem] truncate font-mono text-xs text-text-3">{modele}</span>}
+      {etat === 'pret' && (
+        <Button variant="ghost" size="sm" onClick={ejecter} disabled={ejection} title="Libérer la VRAM">
+          {ejection ? 'éjection…' : 'Éjecter'}
+        </Button>
+      )}
     </div>
   );
 }
@@ -201,7 +232,7 @@ function BandeauRefus({ refus }: { readonly refus: string }): ReactElement {
 export function App(): ReactElement {
   const [ecran, setEcran] = useState<Ecran>('modeles');
   const [theme, basculerTheme] = useTheme();
-  const statut = useEtatInference();
+  const [statut, resonderEtat] = useEtatInference();
   const { cible, refus, erreur, choisir } = useCible();
 
   // Sélectionner un modèle amène sur le chat : c'est là que le plan est montré avant d'être appliqué.
@@ -241,7 +272,7 @@ export function App(): ReactElement {
           ))}
         </nav>
         <div className="flex flex-1 items-center justify-end gap-3">
-          <EtatInference statut={statut} />
+          <EtatInference statut={statut} onEjecter={resonderEtat} />
           <Button
             variant="ghost"
             size="sm"

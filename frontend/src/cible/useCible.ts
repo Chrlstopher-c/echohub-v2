@@ -11,7 +11,7 @@
  * échecs silencieux de la v1.
  */
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { CibleChargement } from '../chat';
 import {
@@ -19,6 +19,7 @@ import {
   lireEtatMoteurs,
   lireProfilMachine,
   metadonneesModele,
+  obtenirModele,
   type ModeleEnregistre,
 } from '../shared/api';
 import { construireCible, type RefusCible } from './conversion';
@@ -82,6 +83,34 @@ export function useCible(): EtatCible {
         if (generation.current === mienne) setEnCours(false);
       });
   }, []);
+
+  /*
+   * Un modèle peut être chargé sans que CETTE page l'ait demandé : un autre onglet, un appel
+   * direct à l'API, ou simplement un rechargement après sélection. L'interface doit alors montrer
+   * le modèle réellement en VRAM, pas « aucun modèle sélectionné » — deux affirmations
+   * contradictoires à l'écran valent pire que pas d'information.
+   *
+   * L'autorité est `/inference/etat` : on part de ce qu'il annonce, et on retrouve l'entrée
+   * correspondante au registre. Ne s'exécute qu'une fois, et jamais par-dessus un choix explicite.
+   */
+  const adopte = useRef(false);
+  useEffect((): void => {
+    if (adopte.current || cible !== null) {
+      return;
+    }
+    adopte.current = true;
+    const adopter = async (): Promise<void> => {
+      const statut = await lireEtatInference();
+      if (statut.etat !== 'pret' || statut.modele === null) {
+        return;
+      }
+      choisir(await obtenirModele(statut.modele));
+    };
+    void adopter().catch((cause: unknown): void => {
+      // Échec sans conséquence : l'utilisateur garde la sélection manuelle. On trace, sans alerter.
+      console.warn('Modèle déjà chargé non repris dans l’interface :', cause);
+    });
+  }, [cible, choisir]);
 
   return { cible, refus, erreur, enCours, choisir };
 }
