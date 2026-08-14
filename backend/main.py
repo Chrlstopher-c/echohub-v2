@@ -59,15 +59,39 @@ _DOMAINES = (
 )
 
 
+def _preparer_persistance() -> None:
+    """Crée le schéma commun, PUIS celui du chat — l'ordre est imposé par le domaine.
+
+    `core.init_db()` porte les tables partagées, dont `modeles` : sans cet appel le registre
+    répond « lecture en base échouée » sur une table qui n'a jamais existé, et l'écran Modèles
+    reste vide sans que rien n'indique pourquoi.
+    """
+    from backend.chat import initialiser as initialiser_chat
+    from backend.core.db import init_db
+
+    init_db()
+    initialiser_chat()
+
+
+def _reprendre_transferts() -> None:
+    """Un transfert coupé par un redémarrage doit repartir où il en était, pas disparaître."""
+    from backend.models import gestionnaire
+
+    repris = gestionnaire().reprendre_interrompus()
+    if repris:
+        logger.info(f"{len(repris)} téléchargement(s) interrompu(s) repris")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("EchoHub v2 — démarrage")
-    try:
-        from backend.chat import initialiser as initialiser_chat
-
-        initialiser_chat()
-    except Exception as e:
-        logger.error(f"initialisation du domaine chat échouée ({type(e).__name__}: {e})")
+    # Chaque étape est isolée : une panne de reprise de transfert ne doit pas empêcher l'API de
+    # servir, et l'échec est journalisé plutôt que silencieux.
+    for etape in (_preparer_persistance, _reprendre_transferts):
+        try:
+            etape()
+        except Exception as e:
+            logger.error(f"{etape.__name__} a échoué ({type(e).__name__}: {e})")
     yield
     logger.info("EchoHub v2 — arrêt")
 
