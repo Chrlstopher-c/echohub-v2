@@ -1,0 +1,32 @@
+# Environnements
+.venv/
+venv/
+__pycache__/
+*.pyc
+node_modules/
+dist/
+build/
+
+# Donnees locales et modeles (jamais dans le depot)
+*.gguf
+*.safetensors
+models/
+data/
+chroma_data/
+*.db
+*.sqlite3
+
+# Logs (reset a chaque restart, jamais versionnes)
+logs/
+*.log
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Outils
+.claude/
+.ruff_cache/
+.pytest_cache/
+.DS_Store
