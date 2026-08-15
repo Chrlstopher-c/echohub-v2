@@ -39,6 +39,7 @@ from backend.inference.engines_adapters.contrat import (
     PlanChargement,
     Sante,
     assembler_occupation,
+    decouper_images,
     decouper_segments,
 )
 from backend.inference.engines_adapters.diagnostic import Diagnostic, EchecChargement, qualifier
@@ -285,6 +286,18 @@ class SuperviseurInference:
         contexte_plan = etat_moteur.contexte if etat_moteur is not None else None
         if not comptage.possible or comptage.contexte_moteur is None:
             return self._contexte_non_mesurable(comptage.raison, contexte_plan)
+
+        # Les images suivent la même discipline que le texte : une conversation qui en porte et
+        # dont le coût ne peut pas être mesuré rend TOUTE l'occupation non mesurable, plutôt que
+        # d'afficher un total qui sous-compterait silencieusement ce qu'elle occupe réellement.
+        images = decouper_images(messages)
+        tokens_images: int | None = None
+        if images:
+            comptage_images = await self._actif.compter_multimodal(images)
+            if not comptage_images.possible:
+                return self._contexte_non_mesurable(comptage_images.raison, contexte_plan)
+            tokens_images = sum(comptage_images.tokens_par_image)
+
         return assembler_occupation(
             segments,
             comptage.tokens_par_texte,
@@ -292,6 +305,8 @@ class SuperviseurInference:
             contexte_plan=contexte_plan,
             moteur=self._statut.moteur,
             modele=self._statut.modele,
+            tokens_images=tokens_images,
+            nombre_images=len(images),
         )
 
     def _contexte_non_mesurable(self, raison: str, contexte_plan: int | None = None) -> OccupationContexte:

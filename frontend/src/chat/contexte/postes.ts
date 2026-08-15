@@ -21,6 +21,9 @@ import type { PosteContexte } from '../../shared/api';
  * - `systeme` en orchidée : la famille du coût de contexte. Le prompt système est le coût fixe,
  *   payé à chaque tour avant qu'un mot de conversation n'existe.
  * - `utilisateur` en pervenche : la famille de l'action de l'utilisateur.
+ * - `images` en pervenche également, même famille que `utilisateur` : une pièce jointe plutôt
+ *   qu'une frappe, mais le même coût du point de vue de qui l'a fourni. Le libellé propre suffit
+ *   à les distinguer dans la légende ; aucune nuance de la palette sémantique n'existe pour ça.
  * - `assistant` en cyan : la famille de ce qui réside dans la carte, réemployée ici pour ce que le
  *   modèle a produit. C'est le maillon le plus faible de cette correspondance — il mériterait un
  *   token dédié plutôt qu'un emprunt à la famille mémoire.
@@ -28,6 +31,7 @@ import type { PosteContexte } from '../../shared/api';
 export const TONE_POSTE: Record<PosteContexte, Tone> = {
   systeme: 'kv',
   utilisateur: 'accent',
+  images: 'accent',
   assistant: 'vram',
   raisonnement: 'caution',
   libre: 'neutral',
@@ -36,6 +40,7 @@ export const TONE_POSTE: Record<PosteContexte, Tone> = {
 export const LIBELLE_POSTE: Record<PosteContexte, string> = {
   systeme: 'Prompt système',
   utilisateur: 'Vos messages',
+  images: 'Images jointes',
   assistant: 'Réponses',
   raisonnement: 'Raisonnement',
   libre: 'Libre',
@@ -44,6 +49,8 @@ export const LIBELLE_POSTE: Record<PosteContexte, string> = {
 export const DESCRIPTION_POSTE: Record<PosteContexte, string> = {
   systeme: "Instructions renvoyées au modèle à chaque tour, avant tout message.",
   utilisateur: 'Ce que vous avez écrit, tel que le modèle le relit à chaque tour.',
+  images: "Pièces jointes image, mesurées par le découpage réel du projecteur de vision chargé — "
+    + "jamais une formule sur leur résolution.",
   assistant: 'Réponses visibles du modèle, hors blocs de raisonnement.',
   raisonnement: "Blocs <think> conservés dans l'historique : ils repartent au modèle et coûtent "
     + 'donc du contexte, sans être relus par vous.',
