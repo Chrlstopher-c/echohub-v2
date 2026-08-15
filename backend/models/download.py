@@ -304,11 +304,38 @@ class GestionnaireTelechargements:
 
     # --- annulation ---------------------------------------------------------------------------
 
+    def oublier(self, identifiant: str, *, supprimer_fichiers: bool = False) -> Telechargement:
+        """Retire du journal un transfert déjà terminé, échoué ou annulé.
+
+        Distinct d'`annuler`, qui interrompt un transfert VIVANT. Sans cette opération, une entrée
+        terminée restait affichée pour toujours et le bouton de suppression ne produisait rien —
+        `annuler` rendait l'état inchangé sans rien faire, ce qui ressemblait exactement à une
+        interface morte.
+
+        Les fichiers ne partent que si on le demande : une ligne d'historique et des gigaoctets sur
+        le disque ne se suppriment pas d'un même geste sans le dire.
+        """
+        courant = self.etat(identifiant)
+        if courant.etat not in ETATS_TERMINAUX:
+            return self.annuler(identifiant, supprimer_fichiers=supprimer_fichiers)
+        return self._retirer_entree(courant, supprimer_fichiers)
+
+    def _retirer_entree(self, etat: Telechargement, supprimer_fichiers: bool) -> Telechargement:
+        """Efface l'entrée du journal, et les fichiers si on l'a demandé. Sans condition d'état."""
+        if supprimer_fichiers:
+            supprimer(Path(etat.chemin), etat.fichier)
+        with self._verrou:
+            self._etats.pop(etat.identifiant, None)
+            self._journal.ecrire(self._etats)
+        logger.info("Transfert oublié : {} (fichiers supprimés : {})", etat.identifiant, supprimer_fichiers)
+        return etat
+
     def annuler(self, identifiant: str, *, supprimer_fichiers: bool = False) -> Telechargement:
         """Annule un téléchargement. L'ordre des étapes est ce qui rend l'opération sûre."""
         courant = self.etat(identifiant)
         if courant.etat in ETATS_TERMINAUX:
-            return courant
+            # Rien à interrompre : la demande porte alors sur l'entrée d'historique elle-même.
+            return self._retirer_entree(courant, supprimer_fichiers)
 
         # 1. l'intention est persistée d'abord : une coupure ici ne laisse pas un état « en cours »
         #    orphelin au redémarrage.

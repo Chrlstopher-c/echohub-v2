@@ -59,6 +59,10 @@ DELAI_VERROU_GENERATION_S = 5.0
 # délai, on rend une absence nommée — bien moins coûteux qu'une requête qui pend pendant des minutes.
 DELAI_VERROU_COMPTAGE_S = 2.0
 
+# Budget de la passe « le modèle veut-il un outil ? ». Un appel tient en quelques dizaines de
+# tokens ; ce plafond borne le seul moment de la génération qui soit invisible à l'utilisateur.
+TOKENS_PROPOSITION_OUTILS = 192
+
 # Variable dont la seule présence dégrade gravement le chargement sous WSL2 (mesuré : VRAM figée à
 # 2 Go, plusieurs minutes de chargement). Elle n'est jamais posée ici ; si l'environnement la porte
 # sans que le plan l'ait demandée, on le signale plutôt que de charger en silence dans ce mode.
@@ -395,12 +399,24 @@ class AdaptateurLlamaCpp(AdaptateurMoteur):
             llm = self._llm
             if llm is None:
                 return []
+            # Le plafond de la conversation est REMPLACÉ, il n'est pas hérité. Cette passe n'est
+            # pas streamée : tout ce qu'elle produit se fait en silence, écran figé côté
+            # utilisateur. Avec le max_tokens d'une vraie réponse (1024 et plus), un modèle qui
+            # ne veut pas d'outil rédige ici une réponse complète que personne ne lira, puis la
+            # génération visible recommence tout — deux fois le temps, dont la moitié invisible.
+            # Mesuré le 2026-08-15 sur un 27B partiellement en RAM : chargement apparemment
+            # infini au second message, alors que le 0,5B passait sans qu'on voie rien.
+            #
+            # Un appel d'outil tient en quelques dizaines de tokens. Un modèle qui n'en a pas
+            # émis dans ce budget n'en émettra pas : on arrête et on génère normalement.
+            arguments = _arguments_echantillonnage(options)
+            arguments["max_tokens"] = TOKENS_PROPOSITION_OUTILS
             reponse = llm.create_chat_completion(
                 messages=[message.model_dump() for message in messages],
                 tools=list(outils),
                 tool_choice="auto",
                 stream=False,
-                **_arguments_echantillonnage(options),
+                **arguments,
             )
         except Exception as exc:  # noqa: BLE001 — un modèle qui gère mal `tools` ne doit rien casser
             logger.warning("Proposition d'outils impossible ({}) : génération sans outil.", exc)
