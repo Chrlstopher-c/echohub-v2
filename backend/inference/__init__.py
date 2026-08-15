@@ -116,6 +116,35 @@ def _annonce(nom: str, arguments: object) -> str:
     return f"{nom}({detail})" if detail else nom
 
 
+def _appels_demandes(texte: str) -> list[dict[str, Any]]:
+    """Appels d'outils repérés dans ce que le modèle vient d'écrire.
+
+    Lus dans le TEXTE reçu, parce que c'est là qu'ils arrivent : avec le gabarit natif d'un GGUF,
+    llama-cpp-python ne remplit pas `tool_calls` et le modèle émet `<tool_call>{…}</tool_call>`
+    au fil du flux. Le lire ici évite un second appel au moteur — qui construirait un prompt
+    différent, perdrait le cache et doublerait le temps avant le premier token.
+    """
+    from backend.inference.engines_adapters.adaptateur_llama_cpp import _appels_dans_le_texte
+
+    return _appels_dans_le_texte(texte)
+
+
+async def _executer_appels(
+    appels: list[dict[str, Any]],
+    messages: list[MessageChat],
+) -> AsyncIterator[dict[str, Any]]:
+    """Exécute les appels demandés, en annonçant chacun dans le flux, et enrichit la conversation."""
+    from backend.outils import executer
+
+    for appel in appels:
+        nom, arguments = _texte_appel(appel)
+        yield {"texte": f"{BALISE_OUTIL_OUVRANTE}{_annonce(nom, arguments)}\n"}
+        resultat = await executer(nom, arguments)
+        etat = "résultat" if resultat.succes else "échec"
+        yield {"texte": f"{resultat.texte}{BALISE_OUTIL_FERMANTE}\n\n"}
+        messages.append(MessageChat(role="assistant", content=f"[outil {resultat.nom} — {etat}]\n{resultat.texte}"))
+
+
 async def _resoudre_outils(
     messages: list[MessageChat],
     options: OptionsGeneration,
@@ -174,28 +203,37 @@ class MoteurChat:
         return self._flux(requete)
 
     async def _flux(self, requete: object) -> AsyncIterator[dict[str, Any]]:
+        from backend.outils import format_moteur
+
         messages = _messages_depuis(getattr(requete, "messages", None))
         options = _options_depuis(getattr(requete, "parametres", None))
-        # La phase d'outils s'affiche pendant qu'elle se déroule : ses fragments partent au client
-        # au fil de l'eau, et le dernier élément porte la conversation enrichie des résultats.
-        async for etape in _resoudre_outils(messages, options):
-            texte = etape.get("texte")
-            if isinstance(texte, str):
-                yield {"texte": texte}
-            enrichis = etape.get("messages")
-            if isinstance(enrichis, list):
-                messages = enrichis
+        outils = format_moteur()
         debut = time.monotonic()
         tokens = 0
 
-        async for morceau in superviseur.generer(messages, options):
-            if morceau.type == "token" and morceau.contenu:
-                tokens += 1
-                yield {"texte": morceau.contenu}
-            elif morceau.type == "erreur":
-                # Le flux HTTP est déjà ouvert : signaler dans le flux est la seule façon d'informer.
-                logger.error("Génération interrompue par le moteur : {}", morceau.contenu)
-                raise RuntimeError(morceau.contenu or "Le moteur a interrompu la génération.")
+        # UN SEUL appel au moteur par tour, outils déclarés dedans. Le tour suivant n'a lieu que si
+        # le modèle a réellement demandé un outil ; sinon la boucle s'arrête au premier passage.
+        for tour in range(TOURS_OUTILS_MAX):
+            recu: list[str] = []
+            async for morceau in superviseur.generer(messages, options, outils):
+                if morceau.type == "token" and morceau.contenu:
+                    tokens += 1
+                    recu.append(morceau.contenu)
+                    yield {"texte": morceau.contenu}
+                elif morceau.type == "erreur":
+                    # Le flux HTTP est déjà ouvert : signaler dedans est la seule façon d'informer.
+                    logger.error("Génération interrompue par le moteur : {}", morceau.contenu)
+                    raise RuntimeError(morceau.contenu or "Le moteur a interrompu la génération.")
+            appels = _appels_demandes("".join(recu))
+            if not appels or not outils:
+                break
+            messages = list(messages) + [MessageChat(role="assistant", content="".join(recu))]
+            async for etape in _executer_appels(appels, messages):
+                texte = etape.get("texte")
+                if isinstance(texte, str):
+                    yield {"texte": texte}
+        else:
+            logger.warning("Borne de {} tours d'outils atteinte.", TOURS_OUTILS_MAX)
 
         ecoule = time.monotonic() - debut
         # Le compte de tokens est celui des morceaux réellement reçus, et le débit en découle. Si

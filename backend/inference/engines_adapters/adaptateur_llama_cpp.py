@@ -446,7 +446,16 @@ class AdaptateurLlamaCpp(AdaptateurMoteur):
         self,
         messages: Sequence[MessageChat],
         options: OptionsGeneration,
+        outils: Sequence[dict[str, Any]] | None = None,
     ) -> AsyncIterator[MorceauGeneration]:
+        """Flux de tokens. `outils` est déclaré au modèle DANS ce même appel, jamais dans un autre.
+
+        Un second appel préalable pour demander « veux-tu un outil ? » construirait un prompt
+        différent de celui de la génération, et invaliderait le cache de prompt de llama.cpp : sur
+        un modèle de 27 milliards de paramètres partiellement en RAM, cela revient à payer DEUX
+        évaluations complètes du prompt avant le premier token affiché. Mesuré le 2026-08-15 :
+        plusieurs dizaines de secondes d'écran figé, imperceptibles sur un modèle de 0,5 milliard.
+        """
         if self._llm is None:
             raise EchecChargement(
                 Diagnostic(
@@ -457,7 +466,7 @@ class AdaptateurLlamaCpp(AdaptateurMoteur):
             )
         plafond = options.max_tokens or self._contexte
         return flux_depuis_bloquant(
-            lambda arret: self._iterer(messages, options, arret),
+            lambda arret: self._iterer(messages, options, arret, outils),
             iterations_max=plafond + 1,  # +1 : le morceau de fin n'est pas un token
         )
 
@@ -466,12 +475,15 @@ class AdaptateurLlamaCpp(AdaptateurMoteur):
         messages: Sequence[MessageChat],
         options: OptionsGeneration,
         arret: threading.Event,
+        outils: Sequence[dict[str, Any]] | None = None,
     ) -> Iterator[MorceauGeneration]:
         """Boucle bloquante exécutée dans un fil, sous verrou : une génération à la fois."""
         if not self._verrou_generation.acquire(timeout=DELAI_VERROU_GENERATION_S):
             raise RuntimeError("Une génération est déjà en cours sur ce modèle.")
         try:
+            extra: dict[str, Any] = {"tools": list(outils), "tool_choice": "auto"} if outils else {}
             flux = self._llm.create_chat_completion(  # type: ignore[union-attr]
+                **extra,
                 messages=[message.model_dump() for message in messages],
                 stream=True,
                 **_arguments_echantillonnage(options),
@@ -518,15 +530,43 @@ def _charger_json_tolerant(charge: str) -> dict[str, Any] | None:
     return None
 
 
+# Second dialecte, CONSTATÉ le 2026-08-15 sur les dérivés Qwen3.6 chargés ici : l'appel n'est pas
+# du JSON mais du balisage, `<function=nom><parameter=cle>valeur</parameter></function>`. C'est la
+# convention des gabarits de la famille Qwen3-Coder. Les deux formes cohabitent selon le modèle, et
+# aucune n'est devinable à l'avance : on lit celle qui arrive.
+_MOTIF_FONCTION_BALISEE = re.compile(r"<function=(?P<nom>[\w.-]+)>(?P<corps>.*?)</function>", re.DOTALL)
+_MOTIF_PARAMETRE = re.compile(r"<parameter=(?P<cle>[\w.-]+)>(?P<valeur>.*?)</parameter>", re.DOTALL)
+
+
+def _appels_balises(texte: str) -> list[dict[str, Any]]:
+    """Appels au format balisé. Les valeurs sont rendues telles quelles, seulement détourées."""
+    appels: list[dict[str, Any]] = []
+    for fonction in _MOTIF_FONCTION_BALISEE.finditer(texte):
+        arguments = {p.group("cle"): p.group("valeur").strip() for p in _MOTIF_PARAMETRE.finditer(fonction.group("corps"))}
+        appels.append({"type": "function", "function": {"name": fonction.group("nom"), "arguments": arguments}})
+    return appels
+
+
 def _appels_dans_le_texte(texte: str) -> list[dict[str, Any]]:
-    """Appels trouvés dans le texte, ramenés à la forme `tool_calls` du reste de la chaîne."""
+    """Appels trouvés dans le texte, ramenés à la forme `tool_calls` du reste de la chaîne.
+
+    Deux dialectes sont acceptés parce que les deux ont été observés sur cette machine : JSON dans
+    `<tool_call>`, et balisage `<function=…>`. Le second est cherché aussi hors de `<tool_call>` —
+    certains gabarits l'émettent seul.
+    """
     appels: list[dict[str, Any]] = []
     for trouve in _MOTIF_APPEL_TEXTE.finditer(texte):
-        charge = _charger_json_tolerant(trouve.group("charge"))
-        nom = str(charge.get("name", "")) if charge else ""
-        if not nom:
+        charge = trouve.group("charge")
+        balises = _appels_balises(charge)
+        if balises:
+            appels.extend(balises)
             continue
-        appels.append({"type": "function", "function": {"name": nom, "arguments": charge.get("arguments", {})}})
+        objet = _charger_json_tolerant(charge)
+        nom = str(objet.get("name", "")) if objet else ""
+        if nom:
+            appels.append({"type": "function", "function": {"name": nom, "arguments": objet.get("arguments", {})}})
+    if not appels:
+        appels.extend(_appels_balises(texte))
     return appels
 
 

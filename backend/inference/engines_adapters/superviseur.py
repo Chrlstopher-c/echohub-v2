@@ -310,6 +310,7 @@ class SuperviseurInference:
         self,
         messages: Sequence[MessageChat],
         options: OptionsGeneration,
+        outils: Sequence[dict[str, object]] | None = None,
     ) -> AsyncIterator[MorceauGeneration]:
         """Flux de tokens du modèle chargé. Refuse tant qu'aucun modèle n'est prêt."""
         if self._actif is None or self._statut.etat is not EtatChargement.PRET:
@@ -320,7 +321,7 @@ class SuperviseurInference:
                     remediation="Charger un modèle avant de générer.",
                 )
             )
-        return self._actif.generer(messages, options)
+        return self._actif.generer(messages, options, outils)
 
     async def proposer_outils(
         self,

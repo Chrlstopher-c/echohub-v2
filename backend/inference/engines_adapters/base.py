@@ -47,6 +47,7 @@ class AdaptateurMoteur(ABC):
         self,
         messages: Sequence[MessageChat],
         options: OptionsGeneration,
+        outils: Sequence[dict[str, object]] | None = None,
     ) -> AsyncIterator[MorceauGeneration]:
         """Flux de tokens du modèle chargé. Se termine toujours par un morceau `fin`."""
 
