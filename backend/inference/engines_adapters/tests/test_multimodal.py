@@ -13,6 +13,7 @@ Ce que ce fichier prouve, dans l'ordre :
 
 from __future__ import annotations
 
+import asyncio
 import base64
 from pathlib import Path
 from typing import Any
@@ -211,6 +212,113 @@ def test_handler_vision_qui_leve_a_la_construction_rend_none_sans_bloquer(
 
     adaptateur = _AdaptateurTest()
     assert adaptateur._handler_vision(tmp_path / "modele.gguf", None) is None
+
+
+# ------------------------------------------ journal de chargement : reste servable avec vision
+
+
+def test_journal_de_chargement_avec_vision_reste_serialisable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reproduit le plantage réel de la route `/inference/journal` (500,
+    `PydanticSerializationError: Unable to serialize unknown type: MTMDChatHandler`) : un
+    chargement avec projecteur de vision inscrivait l'objet handler lui-même — pas une donnée sur
+    lui — dans les `details` de l'entrée de journal. Assemblage complet via `charger()`, la méthode
+    qui a réellement produit le plantage, pas une réimplémentation de sa logique."""
+    from backend.inference.engines_adapters.contrat import MoteurSupporte, PlanChargement
+    from backend.inference.engines_adapters.journal import JournalChargement
+
+    modele = tmp_path / "modele.gguf"
+    modele.write_bytes(b"GGUF" + b"\x00" * 8)  # en-tête suffisant pour `preverifier_source`
+    projecteur = tmp_path / "mmproj-test.gguf"
+    projecteur.write_bytes(b"faux-mmproj")
+    monkeypatch.setattr(module_llama_cpp, "fichiers_projecteurs", lambda dossier: [projecteur])
+
+    class HandlerFactice:
+        def __init__(self, clip_model_path: str) -> None:
+            self.clip_model_path = clip_model_path
+
+    monkeypatch.setattr("llama_cpp.llama_chat_format.MTMDChatHandler", HandlerFactice)
+
+    class LlamaFactice:
+        def __init__(self, **kwargs: object) -> None:
+            self.kwargs = kwargs
+
+    class ModuleFactice:
+        Llama = LlamaFactice
+
+    monkeypatch.setattr(module_llama_cpp.AdaptateurLlamaCpp, "_importer", lambda self, session: ModuleFactice)
+
+    plan = PlanChargement(
+        moteur=MoteurSupporte.LLAMA_CPP, chemin_modele=str(modele),
+        identifiant_modele="test/vision::modele.gguf", couches_gpu=0, contexte=2048, batch=512,
+    )
+    journal = JournalChargement()
+    session = journal.ouvrir(plan)
+    adaptateur = module_llama_cpp.AdaptateurLlamaCpp()
+
+    asyncio.run(adaptateur.charger(plan, session))
+
+    entree = next(e for e in session.entrees if "Chargement de" in e.message)
+    assert "chat_handler" not in entree.details["parametres"]
+    assert entree.details["vision_chargee"] is True
+
+    # Ce que la route fait réellement (`response_model=list[SessionChargement]`) : FastAPI
+    # sérialise via pydantic-core. Un objet non prévu par le schéma y lève
+    # `PydanticSerializationError` — exactement le 500 observé en conteneur.
+    session.model_dump_json()
+
+
+def test_vision_detachee_quand_vram_libre_sous_la_marge(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reproduit la cause du plantage natif réel (SIGABRT, `GGML_ASSERT(buffer)` dans
+    `ggml-backend.cpp`, sur `cudaMalloc` en échec au premier `_init_mtmd_context`) : une VRAM libre
+    sous la marge mesurée pour l'encodeur visuel doit détacher `chat_handler` plutôt que de laisser
+    la prochaine mesure ou génération tenter l'allocation qui abat le processus."""
+    from backend.inference.engines_adapters.vram import MesureVram
+
+    class HandlerFactice:
+        pass
+
+    class LlamaFactice:
+        def __init__(self) -> None:
+            self.chat_handler = HandlerFactice()
+
+    adaptateur = module_llama_cpp.AdaptateurLlamaCpp()
+    adaptateur._llm = LlamaFactice()
+
+    vram_juste_sous_la_marge = MesureVram(
+        index=0, total_octets=12 * 1024**3,
+        utilisee_octets=12 * 1024**3 - (module_llama_cpp.MARGE_VISION_OCTETS - 1),
+        libre_octets=module_llama_cpp.MARGE_VISION_OCTETS - 1,
+    )
+    adaptateur._detacher_vision_si_vram_insuffisante(vram_juste_sous_la_marge, None)
+
+    assert adaptateur._llm.chat_handler is None
+
+
+def test_vision_reste_attachee_quand_vram_libre_couvre_la_marge() -> None:
+    """Validation dans l'autre sens : au-dessus de la marge, le handler n'est jamais touché."""
+    from backend.inference.engines_adapters.vram import MesureVram
+
+    class HandlerFactice:
+        pass
+
+    class LlamaFactice:
+        def __init__(self) -> None:
+            self.chat_handler = HandlerFactice()
+
+    adaptateur = module_llama_cpp.AdaptateurLlamaCpp()
+    adaptateur._llm = LlamaFactice()
+    handler_avant = adaptateur._llm.chat_handler
+
+    vram_au_dessus_de_la_marge = MesureVram(
+        index=0, total_octets=12 * 1024**3,
+        utilisee_octets=12 * 1024**3 - (module_llama_cpp.MARGE_VISION_OCTETS + 1024**3),
+        libre_octets=module_llama_cpp.MARGE_VISION_OCTETS + 1024**3,
+    )
+    adaptateur._detacher_vision_si_vram_insuffisante(vram_au_dessus_de_la_marge, None)
+
+    assert adaptateur._llm.chat_handler is handler_avant
 
 
 def test_parametres_sans_projecteur_ne_porte_pas_de_chat_handler(
