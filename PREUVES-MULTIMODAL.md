@@ -106,3 +106,44 @@ $ curl -X POST /inference/contexte  (petite.png, sans projecteur)
 Aucun champ `tokens_mesures` chiffré : l'absence de mesure est nommée, jamais rendue par un 0.
 
 **Les trois valeurs mesurées : 18, 18, 786.**
+
+## Preuve 3 — le repli sans tour de vision, via l'interface réelle
+
+**Obtenue.**
+
+Modèle chargé : `unsloth/Qwen3-VL-2B-Instruct-GGUF::Qwen3-VL-2B-Instruct-Q4_K_M.gguf` — aucun
+`mmproj*.gguf` dans son dossier (14 quantifications présentes, 0 projecteur), donc jamais de
+`chat_handler`. Test mené dans le navigateur réel (Playwright, Chromium headless), pas en
+appel HTTP direct : composeur du Chat, image `petite.png` déposée via l'`input[type=file]`
+caché (`data-testid="entree-fichier"`), message tapé, bouton **Envoyer** cliqué.
+
+Premier essai (« Que vois-tu sur cette image ? ») : envoi non bloqué, génération de 286 tokens
+à 80,5 tok/s, mais le modèle n'a produit que du raisonnement (tentatives d'appel de l'outil
+`presenter_fichier`, bornées à 3 tours) sans texte de réponse final — comportement du modèle
+documenté par ailleurs dans `TODO.md` (ré-émission d'appel d'outil), pas un blocage de
+l'application. Extrait de son raisonnement, à l'Étape 1, dans ses propres mots :
+
+> « L'image que vous avez jointe est une image de 128×128 pixels, d'une taille de 1 Ko. J'ai
+> besoin de voir l'image pour répondre à votre question. Pour cela, je vais utiliser le tool
+> `presenter_fichier` afin de montrer la capture d'écran de l'image. »
+
+Second essai, nouvelle conversation, même modèle, même image, prompt reformulé pour éviter la
+boucle d'outils (« Sans appeler aucun outil, dis-moi en une phrase ce que tu sais de cette
+image d'après sa description. ») : envoi non bloqué, génération complète de 144 tokens à
+89,1 tok/s. **Réponse du modèle, intégrale, telle qu'affichée dans le fil :**
+
+> « Je ne peux pas analyser l'image car elle n'est pas accessible ici. Pour obtenir une
+> description de l'image, je devrais avoir la capacité d'observer ou d'intégrer les données
+> visuelles. L'image que vous avez jointe est décrite comme étant une image de 128x128 pixels
+> et de taille 1 Ko, mais sans pouvoir voir ou interpréter cette image, je ne peux pas donner
+> une description précise de sa nature, de ses couleurs, de son contenu ou de tout autre
+> détail visuel. Si vous avez des informations supplémentaires sur l'image que vous voudriez
+> comprendre, veuillez me les fournir. »
+
+C'est le modèle qui dit, avec ses mots, qu'il ne peut pas voir l'image — jamais l'application.
+
+**Assertion Playwright** (`browser_evaluate` sur `document.body.innerText`, page entière après
+génération) : recherche insensible à la casse de « ne prend pas en charge », « non supporté(e) »,
+« unsupported », « not supported ». Résultat : `formules_trouvees: []`, sur 2408 caractères de
+DOM. Aucune erreur console ni erreur de page (`browser_get_console_errors` → `total: 0`).
+Capture d'écran : `logs/screenshots/preuve3_repli_sans_vision.png`.
