@@ -1,0 +1,11 @@
+# Fins de ligne — LF partout, y compris dans la copie de travail Windows.
+#
+# Sans ce fichier, `core.autocrlf=true` (défaut de Git for Windows) convertit les scripts shell en
+# CRLF au checkout. `docker/entrypoint.sh` entre alors dans l'image Linux avec un shebang
+# `#!/usr/bin/env bash\r` : le noyau cherche un interpréteur nommé « bash\r », ne le trouve pas, et
+# le conteneur boucle en redémarrage sur le code 127. Mesuré le 2026-08-15, après un simple `git
+# pull` sur la machine Windows — aucune modification de source en cause.
+#
+# La seule cible d'exécution du projet est Linux (conteneur ou natif) : il n'existe aucun fichier
+# qui gagne à être en CRLF. `text=auto` laisse Git détecter le binaire tout seul.
+* text=auto eol=lf
