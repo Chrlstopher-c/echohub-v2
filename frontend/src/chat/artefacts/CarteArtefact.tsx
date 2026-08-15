@@ -37,7 +37,8 @@ export function CarteArtefact({ artefact }: CarteArtefactProps): ReactElement {
         onClick={() => setOuvert(true)}
         data-testid="carte-artefact"
         className={cn(
-          'flex w-full max-w-sm items-center gap-2.5 rounded-md border border-border bg-surface px-3 py-2',
+          'flex w-full min-h-[44px] max-w-full items-center gap-2.5 rounded-md border border-border',
+          'bg-surface px-3 py-2 lg:max-w-sm',
           'text-left transition-colors duration-fast hover:border-border-strong hover:bg-surface-2',
         )}
       >

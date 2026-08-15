@@ -105,11 +105,13 @@ interface BarreProps {
 function BarreRessource({ titre, capaciteOctets, echelle, segments, mesure }: BarreProps): ReactElement {
   const part = `${((capaciteOctets / echelle) * 100).toFixed(3)}%`;
   return (
-    <div>
-      <div className="mb-1 flex items-baseline justify-between gap-2">
+    <div className="min-w-0">
+      <div className="mb-1 flex flex-wrap items-baseline justify-between gap-x-2">
         <span className="text-xs text-text-2">{titre}</span>
         <span className="font-mono text-xs tabular-nums text-text">{mesure}</span>
       </div>
+      {/* Largeur en pourcentage de l'échelle commune : la barre suit le conteneur, elle ne suppose
+          aucune largeur de colonne. */}
       <div className="flex overflow-hidden rounded-xs bg-surface-2" style={{ width: part }}>
         {segments.map((segment) => (
           <SegmentBarre key={segment.cle} segment={segment} capacite={capaciteOctets} />
@@ -119,19 +121,34 @@ function BarreRessource({ titre, capaciteOctets, echelle, segments, mesure }: Ba
   );
 }
 
+function LigneLegende({ segment }: { segment: Segment }): ReactElement {
+  return (
+    <li className="flex min-w-0 flex-wrap items-baseline gap-x-1.5">
+      <span
+        aria-hidden="true"
+        className={cn('h-2 w-2 shrink-0 rounded-xs', segment.hachure && 'eh-hatched')}
+        style={segment.hachure ? undefined : { backgroundColor: TONE_VAR[segment.tone] }}
+      />
+      <span className="min-w-0 flex-1 truncate text-2xs text-text-2">{segment.libelle}</span>
+      <span className="shrink-0 font-mono text-2xs tabular-nums text-text">
+        {formaterOctets(segment.octets)}
+      </span>
+      {/* Sans survol, l'infobulle n'est pas le seul porteur de la justification : elle est écrite
+          sous la valeur. La densité de bureau la remet dans l'infobulle seule. */}
+      <span className="w-full break-words pl-3.5 text-2xs leading-snug text-text-3 lg:hidden">
+        {segment.justification}
+      </span>
+    </li>
+  );
+}
+
 function Legende({ segments }: { segments: Segment[] }): ReactElement {
   return (
-    <ul className="grid grid-cols-2 gap-x-3 gap-y-1">
+    // Une colonne au doigt : à deux colonnes dans un tiroir étroit, le libellé est tronqué au point
+    // de ne plus nommer le poste, ce qui est justement le rôle de la légende.
+    <ul className="grid grid-cols-1 gap-x-3 gap-y-1 lg:grid-cols-2">
       {segments.map((segment) => (
-        <li key={segment.cle} className="flex items-baseline gap-1.5">
-          <span
-            aria-hidden="true"
-            className={cn('h-2 w-2 shrink-0 rounded-xs', segment.hachure && 'eh-hatched')}
-            style={segment.hachure ? undefined : { backgroundColor: TONE_VAR[segment.tone] }}
-          />
-          <span className="flex-1 truncate text-2xs text-text-2">{segment.libelle}</span>
-          <span className="font-mono text-2xs tabular-nums text-text">{formaterOctets(segment.octets)}</span>
-        </li>
+        <LigneLegende key={segment.cle} segment={segment} />
       ))}
     </ul>
   );

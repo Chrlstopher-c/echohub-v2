@@ -36,13 +36,15 @@ function BarreRepere({ contexte, tokensParSeconde }: { contexte: number; tokensP
   const largeur = `${((tokensParSeconde / DEBIT_REPERE_MAX) * 100).toFixed(1)}%`;
   return (
     <li className="flex items-center gap-2">
-      <span className="w-16 shrink-0 font-mono text-2xs tabular-nums text-text-2">
+      {/* Colonnes resserrées au doigt, densité de bureau restaurée en `lg:` : les deux chiffres
+          restent alignés entre eux, mais ne mangent plus la barre dans un tiroir étroit. */}
+      <span className="w-12 shrink-0 font-mono text-2xs tabular-nums text-text-2 lg:w-16">
         {formaterTokens(contexte)}
       </span>
-      <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-2">
+      <span className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-surface-2">
         <span className="block h-full rounded-full" style={{ width: largeur, backgroundColor: TONE_VAR.kv }} />
       </span>
-      <span className="w-20 shrink-0 text-right font-mono text-2xs tabular-nums text-text">
+      <span className="w-16 shrink-0 text-right font-mono text-2xs tabular-nums text-text lg:w-20">
         {formaterDebit(tokensParSeconde)}
       </span>
     </li>
@@ -51,8 +53,8 @@ function BarreRepere({ contexte, tokensParSeconde }: { contexte: number; tokensP
 
 function ReperesMesures(): ReactElement {
   return (
-    <div>
-      <p className="mb-1.5 text-2xs text-text-2">Débits mesurés — {PROVENANCE_REPERES}</p>
+    <div className="min-w-0">
+      <p className="mb-1.5 break-words text-2xs text-text-2">Débits mesurés — {PROVENANCE_REPERES}</p>
       <ul className="space-y-1">
         {REPERES_DEBIT.map((repere) => (
           <BarreRepere key={repere.contexte} contexte={repere.contexte} tokensParSeconde={repere.tokensParSeconde} />
@@ -99,7 +101,7 @@ export function ArbitrageContexte({
 }: ArbitrageContexteProps): ReactElement {
   const valeur = contexteDemande ?? plan.contexte.valeur;
   return (
-    <div className="space-y-3">
+    <div className="min-w-0 space-y-3">
       <Slider
         id="contexte"
         label="Contexte demandé"
@@ -121,7 +123,9 @@ export function ArbitrageContexte({
           </Badge>
         )}
       </div>
-      <p className="font-mono text-2xs leading-relaxed text-text-3">{plan.contexte.justification}</p>
+      <p className="break-words font-mono text-2xs leading-relaxed text-text-3">
+        {plan.contexte.justification}
+      </p>
       <ReperesMesures />
     </div>
   );

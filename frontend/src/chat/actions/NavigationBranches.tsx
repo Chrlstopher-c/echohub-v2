@@ -12,7 +12,8 @@ import type { ReactElement } from 'react';
 import { IconeChevronDroite, IconeChevronGauche } from './icones';
 
 const CLASSE_FLECHE =
-  'inline-flex h-4 w-4 items-center justify-center rounded-xs text-text-3 ' +
+  'inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-xs text-text-3 ' +
+  'lg:h-4 lg:w-4 lg:min-h-0 lg:min-w-0 ' +
   'transition-colors duration-fast ease-out hover:text-text focus-visible:outline-none ' +
   'focus-visible:shadow-[0_0_0_2px_var(--ring)] disabled:opacity-35 disabled:hover:text-text-3';
 

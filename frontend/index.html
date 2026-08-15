@@ -2,7 +2,10 @@
 <html lang="fr" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- `viewport-fit=cover` : la page va jusque sous l'encoche, et `env(safe-area-inset-*)` (donc
+         les classes .eh-marge-sure-*) devient renseigné. Ni `user-scalable=no` ni `maximum-scale` :
+         empêcher le zoom est une régression d'accessibilité, pas une correction de mise en page. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <!-- Sombre par défaut, conformément à DESIGN.md : la couleur de fond du navigateur doit
          correspondre à --bg avant même que la feuille de styles soit chargée, sinon un flash
          blanc traverse le premier rendu. -->

@@ -33,9 +33,9 @@ const TEXTE: Record<ToneMemoire, string> = {
 export function BarreMemoire({ libelle, jauge, tone, legende }: BarreMemoireProps): ReactElement {
   return (
     <div>
-      <div className="mb-1.5 flex items-baseline justify-between gap-3">
+      <div className="mb-1.5 flex flex-wrap items-baseline justify-between gap-x-3">
         <span className="text-xs text-text-2">{libelle}</span>
-        <span className="font-mono text-xs tabular-nums text-text">
+        <span className="whitespace-nowrap font-mono text-xs tabular-nums text-text">
           <span className={TEXTE[tone]}>{enGo(jauge.libreOctets)}</span>
           {` / ${enGo(jauge.totalOctets)} Go libres`}
         </span>

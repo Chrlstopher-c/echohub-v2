@@ -23,6 +23,7 @@ function Pagination({ recherche }: { recherche: EtatRecherche }): ReactElement {
     <div className="flex shrink-0 gap-1.5">
       <Button
         size="sm"
+        className="grow lg:grow-0"
         disabled={page === 0 || recherche.chargement}
         onClick={(): void => recherche.allerPage(page - 1)}
       >
@@ -30,6 +31,7 @@ function Pagination({ recherche }: { recherche: EtatRecherche }): ReactElement {
       </Button>
       <Button
         size="sm"
+        className="grow lg:grow-0"
         disabled={(recherche.page?.fin_atteinte ?? true) || recherche.chargement}
         onClick={(): void => recherche.allerPage(page + 1)}
       >
@@ -62,7 +64,7 @@ export function PanneauDecouverte({ recherche, budget, onChoisir }: PanneauDecou
         exigees={recherche.critere.capacites}
         onChoisir={onChoisir}
       />
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex flex-col-reverse gap-3 lg:flex-row lg:items-start lg:justify-between lg:gap-4">
         <BandeauReserve />
         <Pagination recherche={recherche} />
       </div>

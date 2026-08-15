@@ -35,7 +35,7 @@ function Segment({ part }: { part: PartContexte }): ReactElement {
 function Ligne({ part }: { part: PartContexte }): ReactElement {
   const libelle = LIBELLE_POSTE[part.poste];
   return (
-    <li className="flex items-baseline gap-2">
+    <li className="flex flex-wrap items-baseline gap-x-2">
       <span
         aria-hidden="true"
         className="h-2 w-2 shrink-0 rounded-xs"
@@ -50,8 +50,12 @@ function Ligne({ part }: { part: PartContexte }): ReactElement {
         {formaterTokens(part.tokens)}
       </span>
       {/* Colonne de largeur fixe : le pourcentage ne déplace jamais le reste de la ligne. */}
-      <span className="w-14 shrink-0 text-right font-mono text-2xs tabular-nums text-text-2">
+      <span className="w-12 shrink-0 text-right font-mono text-2xs tabular-nums text-text-2 lg:w-14">
         {formaterPart(part.part)}
+      </span>
+      {/* Sans survol, la description du poste ne peut pas rester dans la seule infobulle. */}
+      <span className="w-full break-words pl-4 text-2xs leading-snug text-text-3 lg:hidden">
+        {DESCRIPTION_POSTE[part.poste]}
       </span>
     </li>
   );
@@ -65,7 +69,7 @@ export interface BarreContexteProps {
 
 export function BarreContexte({ postes, depassement }: BarreContexteProps): ReactElement {
   return (
-    <div className="space-y-2">
+    <div className="min-w-0 space-y-2">
       <div
         className="flex h-2 w-full overflow-hidden rounded-xs bg-surface-2"
         style={depassement > 0 ? { boxShadow: CADRE_DEPASSEMENT } : undefined}

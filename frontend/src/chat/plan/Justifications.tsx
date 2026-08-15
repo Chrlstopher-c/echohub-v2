@@ -23,9 +23,9 @@ interface LigneProps {
 function Ligne({ libelle, valeur, justification, plafonnee, demande }: LigneProps): ReactElement {
   return (
     <li className="py-1.5">
-      <div className="flex items-baseline justify-between gap-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3">
         <span className="text-xs text-text-2">{libelle}</span>
-        <span className="font-mono text-xs tabular-nums text-text">{valeur}</span>
+        <span className="break-all font-mono text-xs tabular-nums text-text">{valeur}</span>
       </div>
       {plafonnee && demande !== undefined && (
         <div className="mt-1">
@@ -72,7 +72,9 @@ function Environnement({ plan }: { plan: PlanDeChargement }): ReactElement | nul
       <ul className="divide-y divide-border">
         {plan.variables_environnement.map((variable) => (
           <li key={variable.nom} className="py-1.5">
-            <span className="font-mono text-xs text-text">
+            {/* `break-all` : un nom de variable d'environnement est un mot insécable long, il
+                déborderait du tiroir au lieu de passer à la ligne. */}
+            <span className="block break-all font-mono text-xs text-text">
               {variable.nom}={variable.valeur}
             </span>
             <p className="mt-0.5 text-2xs leading-relaxed text-text-3">{variable.justification}</p>
@@ -80,7 +82,7 @@ function Environnement({ plan }: { plan: PlanDeChargement }): ReactElement | nul
         ))}
         {plan.variables_refusees.map((refusee) => (
           <li key={refusee.nom} className="py-1.5">
-            <span className="font-mono text-xs text-text-2 line-through">{refusee.nom}</span>
+            <span className="break-all font-mono text-xs text-text-2 line-through">{refusee.nom}</span>
             <Badge tone="caution" className="ml-1.5">
               non posée
             </Badge>
@@ -102,8 +104,8 @@ function Ejections({ plan }: { plan: PlanDeChargement }): ReactElement | null {
         {plan.ejections_requises.map((ejection) => (
           <li key={ejection.identifiant}>
             <div className="flex items-baseline justify-between gap-2">
-              <span className="truncate text-xs text-text">{ejection.identifiant}</span>
-              <span className="font-mono text-xs tabular-nums text-mem-vram">
+              <span className="min-w-0 truncate text-xs text-text">{ejection.identifiant}</span>
+              <span className="shrink-0 font-mono text-xs tabular-nums text-mem-vram">
                 +{formaterOctets(ejection.vram_liberee_octets)}
               </span>
             </div>
@@ -149,7 +151,7 @@ export function Justifications({ plan }: JustificationsProps): ReactElement {
     lignes.push(ligneDepuis('VRAM préallouée (vLLM)', plan.utilisation_memoire_gpu, formaterPourcentage));
   }
   return (
-    <div className="space-y-3">
+    <div className="min-w-0 space-y-3">
       <Section titre="Valeurs du plan">
         <ul className="divide-y divide-border">{lignes}</ul>
       </Section>

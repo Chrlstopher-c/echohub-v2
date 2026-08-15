@@ -4,6 +4,16 @@
  */
 
 /* ---- Base document ---- */
+html,
+body {
+  /* Le corps ne défile JAMAIS horizontalement : tout contenu large (ruban de couches, blocs de
+     code, tableaux) défile dans son propre conteneur, sans emporter la page entière. */
+  overflow-x: hidden;
+  /* Coupe le rebond élastique de la page et l'élan qui traverse un panneau arrivé en butée. */
+  overscroll-behavior: none;
+  max-width: 100%;
+}
+
 body {
   background: var(--bg);
   color: var(--text);
@@ -11,6 +21,29 @@ body {
   font-size: var(--text-sm);
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
+  /* Supprime le délai de 300 ms au tap. Ne désactive PAS le zoom : `pinch-zoom` reste autorisé
+     par `manipulation`, seul le double-tap-zoom disparaît. */
+  touch-action: manipulation;
+}
+
+/* ---- Hauteur de l'application ----
+   `100vh` est faux sur téléphone (barre d'URL escamotable) et `100dvh` ignore le clavier virtuel.
+   Trois déclarations, du repli le plus large au plus juste : le navigateur retient la dernière
+   qu'il comprend. Une chaîne de classes Tailwind ne garantirait pas cet ordre de sortie. */
+.eh-hauteur-app {
+  height: 100vh;
+  height: 100dvh;
+  height: var(--hauteur-visuelle, 100dvh);
+}
+
+/* ---- Encoches et barres système ---- */
+.eh-marge-sure-bas {
+  padding-bottom: max(8px, env(safe-area-inset-bottom));
+}
+
+.eh-marge-sure-x {
+  padding-left: max(16px, env(safe-area-inset-left));
+  padding-right: max(16px, env(safe-area-inset-right));
 }
 
 ::selection {
@@ -69,6 +102,19 @@ body {
 
 .eh-range:focus-visible::-moz-range-thumb {
   box-shadow: 0 0 0 3px var(--ring);
+}
+
+/* Au doigt, un pouce de 14 px est plus petit que le point de contact : il devient insaisissable. */
+@media (pointer: coarse) {
+  .eh-range::-webkit-slider-thumb {
+    width: 20px;
+    height: 20px;
+  }
+
+  .eh-range::-moz-range-thumb {
+    width: 20px;
+    height: 20px;
+  }
 }
 
 /* ---- Scrollbars — fines et de la couleur de la structure ---- */

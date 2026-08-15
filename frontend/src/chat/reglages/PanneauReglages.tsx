@@ -36,7 +36,7 @@ interface SectionProps {
 
 function Section({ titre, children }: { titre: string; children: ReactNode }): ReactElement {
   return (
-    <section className="space-y-3">
+    <section className="min-w-0 space-y-3">
       <h3 className="text-xs font-medium text-text">{titre}</h3>
       {children}
     </section>
@@ -114,7 +114,7 @@ function ChampGraine({ pilotage }: SectionProps): ReactElement {
 function Entete({ pilotage }: SectionProps): ReactElement {
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-2xs text-text-3">Enregistré au fil de la saisie.</p>
         <BadgeEnregistrement etat={pilotage.etat} />
       </div>
@@ -183,7 +183,7 @@ export function PanneauReglages({
 }: PanneauReglagesProps): ReactElement {
   const pilotage = useReglagesConversation(conversationId, reglages, onEnregistre);
   return (
-    <div className={cn('space-y-5', className)}>
+    <div className={cn('min-w-0 space-y-5', className)}>
       <Entete pilotage={pilotage} />
       <Section titre="Instructions permanentes">
         <ChampTexte

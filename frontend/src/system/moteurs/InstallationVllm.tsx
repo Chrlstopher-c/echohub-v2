@@ -40,7 +40,7 @@ function Journal({ evenements }: { evenements: EvenementInstallation[] }): React
       {evenements.map((evenement) => (
         <li key={`${evenement.horodatage}-${evenement.etape}`} className="flex gap-2 text-2xs">
           <span className="shrink-0 font-mono tabular-nums text-text-3">{LIBELLE_ETAPE[evenement.etape]}</span>
-          <span className={COULEUR_NIVEAU[evenement.niveau]}>{evenement.message}</span>
+          <span className={`min-w-0 break-words ${COULEUR_NIVEAU[evenement.niveau]}`}>{evenement.message}</span>
         </li>
       ))}
     </ul>
@@ -67,7 +67,8 @@ function Avancement({ evenements }: { evenements: EvenementInstallation[] }): Re
 }
 
 const CHAMP_VERSION =
-  'h-8 w-full rounded-sm border border-border bg-surface-2 px-2.5 font-mono text-sm tabular-nums ' +
+  // 44 px de haut au doigt, densité de bureau rétablie en `lg:`.
+  'h-11 w-full rounded-sm border border-border bg-surface-2 px-2.5 font-mono text-sm tabular-nums lg:h-8 ' +
   'text-text outline-none focus-visible:shadow-[0_0_0_3px_var(--ring)] disabled:opacity-45';
 
 function Formulaire({ installation }: { installation: EtatInstallation }): ReactElement {
@@ -76,7 +77,7 @@ function Formulaire({ installation }: { installation: EtatInstallation }): React
   const saisie = version.trim();
   return (
     <div className="flex flex-wrap items-end gap-2">
-      <label className="grow">
+      <label className="min-w-0 grow basis-48">
         <span className="mb-1 block text-xs text-text-2">Version vLLM à installer</span>
         <input
           value={version}

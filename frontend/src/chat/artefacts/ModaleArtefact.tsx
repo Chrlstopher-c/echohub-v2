@@ -86,7 +86,8 @@ function CorpsApercu({ etat }: { etat: EtatContenu }): ReactElement {
       sandbox="allow-scripts"
       srcDoc={etat.texte}
       data-testid="apercu-html"
-      className="h-[60vh] w-full rounded-sm border border-border bg-white"
+      // `dvh` et non `vh` : sous la barre d'URL escamotable, 60vh dépasse ce qui est réellement visible.
+      className="h-[60dvh] w-full rounded-sm border border-border bg-white"
     />
   );
 }

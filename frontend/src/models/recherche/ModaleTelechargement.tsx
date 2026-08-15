@@ -33,7 +33,8 @@ function LigneVariante({
         onClick={onChoisir}
         aria-pressed={choisie}
         className={cn(
-          'flex w-full items-center justify-between gap-3 rounded-sm border px-2.5 py-2 text-left',
+          'flex min-h-[44px] w-full items-center justify-between gap-3 rounded-sm border px-2.5 py-2 text-left',
+          'lg:min-h-0',
           'transition-colors duration-fast ease-out',
           choisie ? 'border-accent bg-accent-soft' : 'border-border bg-surface-2 hover:border-border-strong',
         )}
@@ -151,7 +152,9 @@ export function ModaleTelechargement({ depot, budget, onFermer, onLance }: Modal
     >
       {erreur !== null && <p className="mb-3 text-xs text-critical">{erreur}</p>}
       {lancement.echec !== null && <p className="mb-3 text-xs text-critical">{lancement.echec}</p>}
-      <ul className="max-h-72 space-y-1.5 overflow-y-auto">
+      {/* Sous le seuil, la modale est déjà plein écran et son corps défile : une seconde borne de
+          hauteur y créerait un défilement dans le défilement. Le plafond reste un geste de bureau. */}
+      <ul className="space-y-1.5 lg:max-h-72 lg:overflow-y-auto">
         {liste.map((variante) => (
           <LigneVariante
             key={variante.fichier ?? 'dossier'}

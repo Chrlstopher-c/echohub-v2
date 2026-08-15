@@ -28,13 +28,18 @@ function LigneVersion({
   suppressionEnCours: boolean;
 }): ReactElement {
   return (
-    <li className="flex items-center justify-between gap-3 border-t border-border py-2 first:border-t-0">
-      <div className="min-w-0">
-        <div className="flex items-center gap-2">
+    <li
+      className={
+        'flex flex-wrap items-center justify-between gap-2 border-t border-border py-2 ' +
+        'first:border-t-0 lg:flex-nowrap lg:gap-3'
+      }
+    >
+      <div className="min-w-0 grow">
+        <div className="flex flex-wrap items-center gap-2">
           <span className="font-mono text-xs tabular-nums text-text">{version.version}</span>
           <Badge tone={version.utilisable ? 'ok' : 'caution'}>{version.utilisable ? 'validé' : version.statut}</Badge>
         </div>
-        <p className="truncate text-2xs text-text-3">
+        <p className="break-words text-2xs text-text-3 lg:truncate">
           {`torch ${version.version_torch ?? '—'} · transformers ${version.version_transformers ?? '—'} · `}
           {octetsLisibles(version.taille_octets)}
         </p>

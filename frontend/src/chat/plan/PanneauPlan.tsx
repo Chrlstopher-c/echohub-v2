@@ -23,12 +23,12 @@ import type { EtatPlan } from './usePlan';
 function EnTete({ cible, etatPlan }: { cible: CibleChargement; etatPlan: EtatPlan }): ReactElement {
   const plan = etatPlan.plan;
   return (
-    <div className="flex items-center justify-between gap-2">
-      <div className="min-w-0">
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <div className="min-w-0 flex-1">
         <p className="truncate text-md font-semibold text-text">{cible.nomModele}</p>
         <p className="truncate text-2xs text-text-3">{cible.demande.profil.nom_gpu}</p>
       </div>
-      <div className="flex shrink-0 items-center gap-1.5">
+      <div className="flex shrink-0 flex-wrap items-center gap-1.5">
         {plan !== null && <Badge tone="neutral">{plan.moteur.valeur}</Badge>}
         {plan !== null && plan.niveau_degradation > 0 && (
           <Badge tone="caution">replié · niveau {plan.niveau_degradation}</Badge>
@@ -53,7 +53,7 @@ function Actions({ cible, plan, chargement }: ActionsProps): ReactElement {
   const enCours = chargement.statut?.etat === 'en_cours';
   const pret = chargement.statut?.etat === 'pret';
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex flex-wrap items-center gap-2">
       <Button
         variant="primary"
         size="sm"
@@ -160,7 +160,7 @@ export function PanneauPlan({ cible, etatPlan, chargement, debitObserve }: Panne
   const plan = etatPlan.plan;
   return (
     <Card title="Plan de chargement" padding="sm">
-      <div className="space-y-4">
+      <div className="min-w-0 space-y-4">
         <EnTete cible={cible} etatPlan={etatPlan} />
         {etatPlan.erreur !== null && (
           <p className="text-xs leading-relaxed text-critical">{etatPlan.erreur}</p>

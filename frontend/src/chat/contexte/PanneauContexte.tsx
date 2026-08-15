@@ -55,7 +55,7 @@ function Entete({ mesure, enAttente }: { mesure: MesureFermee | null; enAttente:
     return null;
   }
   return (
-    <span className="flex items-baseline gap-2">
+    <span className="flex flex-wrap items-baseline justify-end gap-x-2">
       {mesure.depassement > 0 && (
         <Badge tone="critical">{`+${formaterTokens(mesure.depassement)} hors fenêtre`}</Badge>
       )}

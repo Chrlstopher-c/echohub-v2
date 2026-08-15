@@ -1,14 +1,16 @@
 import type { ReactElement } from 'react';
-import { Badge, Button } from '../shared/design';
+import { cn, Feuille } from '../shared/design';
 import { FournisseurActions, useActionsFil, type EtatActionsFil } from './actions';
 import { PanneauContexte } from './contexte';
 import { Composeur } from './conversation/Composeur';
 import { FilMessages } from './conversation/FilMessages';
 import { ListeConversations } from './conversation/ListeConversations';
+import { EnTeteChat } from './EnTeteChat';
 import { ModaleReglages } from './reglages';
 import { PanneauPlan } from './plan/PanneauPlan';
 import type { CibleChargement } from './plan/cible';
 import { useEcranChat, type EtatEcranChat } from './useEcranChat';
+import { useTiroirsChat, type EtatTiroirsChat } from './useTiroirsChat';
 
 /*
  * Écran de conversation. Trois colonnes : les conversations, l'échange, et le plan de chargement.
@@ -16,33 +18,11 @@ import { useEcranChat, type EtatEcranChat } from './useEcranChat';
  * Le plan occupe une colonne permanente plutôt qu'une modale : ce n'est pas une étape qu'on
  * traverse avant de discuter, c'est l'état de la machine pendant qu'on discute. Le débit mesuré de
  * la dernière réponse remonte d'ailleurs du fil vers le plan — la conversation devient la mesure.
+ *
+ * Sous 1024 px, 656 px de décor fixe ne laissent plus de fil lisible : les deux colonnes latérales
+ * deviennent des tiroirs (`Feuille`) et l'échange prend tout l'écran. Au-dessus du seuil `Feuille`
+ * est un passe-plat — la mise en page à trois colonnes est rigoureusement inchangée.
  */
-
-interface EnTeteProps {
-  titre: string;
-  modele: string | null;
-  pret: boolean;
-  onReglages: () => void;
-}
-
-function EnTeteChat({ titre, modele, pret, onReglages }: EnTeteProps): ReactElement {
-  return (
-    <header className="flex items-center justify-between gap-3 border-b border-border px-6 py-3">
-      <div className="min-w-0">
-        <h1 className="truncate text-md font-semibold text-text">{titre}</h1>
-        {modele !== null && <p className="truncate text-2xs text-text-3">{modele}</p>}
-      </div>
-      <div className="flex shrink-0 items-center gap-2">
-        <Badge tone={pret ? 'ok' : 'neutral'} dot>
-          {pret ? 'moteur prêt' : 'moteur inactif'}
-        </Badge>
-        <Button variant="ghost" size="sm" onClick={onReglages}>
-          Réglages
-        </Button>
-      </div>
-    </header>
-  );
-}
 
 function FilVide({ cible }: { cible: CibleChargement | null }): ReactElement {
   return (
@@ -67,7 +47,12 @@ function empechementSaisie(conversationChoisie: boolean, moteurPret: boolean): s
     return 'Créez une conversation pour commencer.';
   }
   if (!moteurPret) {
-    return 'Aucun modèle chargé : la réponse ne pourra pas être générée tant que le plan, à droite, n’en charge un.';
+    // « à droite » n'existe plus sous 1024 px, où le plan est un tiroir : nommer le panneau, pas
+    // sa position, sinon la remédiation désigne un endroit absent au doigt.
+    return (
+      'Aucun modèle chargé : la réponse ne pourra pas être générée tant que le panneau de plan '
+      + 'n’en charge un.'
+    );
   }
   return '';
 }
@@ -79,20 +64,23 @@ interface ColonneProps {
 
 interface ColonneEchangeProps extends ColonneProps {
   fil: EtatActionsFil;
+  tiroirs: EtatTiroirsChat;
 }
 
-function ColonneEchange({ etat, cible, fil }: ColonneEchangeProps): ReactElement {
+function ColonneEchange({ etat, cible, fil, tiroirs }: ColonneEchangeProps): ReactElement {
   const { courante, conversationActive, moteurPret } = etat;
   // Deux flux peuvent alimenter le fil : le composeur et un rejeu lancé depuis un message. Le
   // moteur n'en sert qu'un à la fois (le backend refuse le second), donc l'écran n'en montre qu'un.
   const genere = courante.genere || fil.genere;
   return (
-    <section className="flex min-w-0 flex-1 flex-col">
+    <section className="flex min-h-0 min-w-0 flex-1 flex-col">
       <EnTeteChat
         titre={courante.detail?.conversation.titre ?? 'Conversation'}
         modele={etat.chargement.statut?.modele ?? cible?.nomModele ?? null}
         pret={moteurPret}
         onReglages={() => etat.ouvrirReglages(true)}
+        onOuvrirConversations={() => tiroirs.ouvrir('conversations')}
+        onOuvrirPlan={() => tiroirs.ouvrir('plan')}
       />
       <LigneErreur texte={courante.erreur ?? fil.erreur} />
       {/* `fil.messages` est le chemin de branche servi par le serveur ; tant qu'il n'est pas
@@ -120,7 +108,7 @@ function LigneErreur({ texte }: { texte: string | null }): ReactElement | null {
   if (texte === null) {
     return null;
   }
-  return <p className="border-b border-border px-6 py-2 text-xs text-critical">{texte}</p>;
+  return <p className="shrink-0 border-b border-border px-3 py-2 text-xs text-critical lg:px-6">{texte}</p>;
 }
 
 /*
@@ -159,7 +147,13 @@ function ColonnePlan({ etat, cible }: ColonneProps): ReactElement {
     content: message.contenu,
   }));
   return (
-    <aside className="flex w-[26rem] shrink-0 flex-col gap-3 overflow-y-auto border-l border-border p-3">
+    // Dans le tiroir, la largeur vient du panneau : une largeur fixe y déborderait à 390 px.
+    <aside
+      className={cn(
+        'flex w-full min-w-0 max-w-full flex-col gap-3 overflow-y-auto overflow-x-hidden p-3',
+        'lg:w-[26rem] lg:shrink-0 lg:border-l lg:border-border',
+      )}
+    >
       <PanneauPlan
         cible={cible}
         etatPlan={etat.etatPlan}
@@ -200,6 +194,38 @@ function PanneauDeReglages({ etat }: { etat: EtatEcranChat }): ReactElement | nu
   );
 }
 
+/*
+ * Ouvrir ou créer une conversation change l'écran DERRIÈRE le voile : garder le tiroir ouvert
+ * masquerait le résultat de l'action qu'on vient de déclencher. Au-dessus du seuil, `fermer` porte
+ * sur un état déjà nul — le comportement de la colonne en flux est inchangé.
+ */
+function TiroirConversations({ etat, tiroirs }: { etat: EtatEcranChat; tiroirs: EtatTiroirsChat }): ReactElement {
+  return (
+    <Feuille
+      ouverte={tiroirs.tiroir === 'conversations'}
+      onFermer={tiroirs.fermer}
+      cote="gauche"
+      titre="Conversations"
+    >
+      <ListeConversations
+        conversations={etat.liste.conversations}
+        conversationActive={etat.conversationActive}
+        erreur={etat.liste.erreur}
+        onOuvrir={(id) => {
+          etat.choisirConversation(id);
+          tiroirs.fermer();
+        }}
+        onCreer={() => {
+          etat.creerConversation();
+          tiroirs.fermer();
+        }}
+        onSupprimer={etat.supprimerConversation}
+        onRenommer={etat.renommerConversation}
+      />
+    </Feuille>
+  );
+}
+
 export interface ChatEcranProps {
   /**
    * Modèle sélectionné et entrées mesurées du planificateur, fournis par les domaines `models` et
@@ -214,19 +240,19 @@ export function ChatEcran({ cible }: ChatEcranProps): ReactElement {
   // déjà le moteur, et sa fin est le moment où la feuille active a pu changer sans qu'on l'ait
   // demandé — donc le moment où la vue de branche doit être relue.
   const fil = useActionsFil(etat.conversationActive, etat.courante.genere);
+  const tiroirs = useTiroirsChat();
   return (
-    <div className="flex h-full min-h-0 bg-bg">
-      <ListeConversations
-        conversations={etat.liste.conversations}
-        conversationActive={etat.conversationActive}
-        erreur={etat.liste.erreur}
-        onOuvrir={etat.choisirConversation}
-        onCreer={etat.creerConversation}
-        onSupprimer={etat.supprimerConversation}
-        onRenommer={etat.renommerConversation}
-      />
-      <ColonneEchange etat={etat} cible={cible} fil={fil} />
-      <ColonnePlan etat={etat} cible={cible} />
+    <div className="flex h-full min-h-0 overflow-x-hidden bg-bg">
+      <TiroirConversations etat={etat} tiroirs={tiroirs} />
+      <ColonneEchange etat={etat} cible={cible} fil={fil} tiroirs={tiroirs} />
+      <Feuille
+        ouverte={tiroirs.tiroir === 'plan'}
+        onFermer={tiroirs.fermer}
+        cote="droite"
+        titre="Plan de chargement"
+      >
+        <ColonnePlan etat={etat} cible={cible} />
+      </Feuille>
       <PanneauDeReglages etat={etat} />
     </div>
   );

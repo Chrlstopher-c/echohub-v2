@@ -99,9 +99,15 @@ function useSaisieEntiere(
   return { texte, ecart: texte.trim() !== afficher(valeur), saisir, quitter };
 }
 
+/*
+ * Le champ occupe toute la largeur disponible au doigt et retrouve ses 9rem alignés à droite à
+ * partir de `lg` : une largeur fixe supposerait la colonne de 416px qui n'existe plus dans un tiroir.
+ * `min-h-[44px]` porte la cible tactile sans toucher la densité de bureau.
+ */
 const CLASSE_CHAMP =
-  'w-36 rounded-sm border border-border bg-surface-2 px-2 py-1 text-right font-mono text-xs '
-  + 'tabular-nums text-text outline-none focus:border-border-strong';
+  'min-h-[44px] w-full flex-1 rounded-sm border border-border bg-surface-2 px-2 py-1 text-right '
+  + 'font-mono text-xs tabular-nums text-text outline-none focus:border-border-strong '
+  + 'lg:min-h-0 lg:w-36 lg:flex-none';
 
 interface EntreeNombreProps {
   readonly id: string;
@@ -112,11 +118,11 @@ interface EntreeNombreProps {
 
 function EntreeNombre({ id, libelle, saisie, apres = null }: EntreeNombreProps): ReactElement {
   return (
-    <div className="flex items-center justify-between gap-3">
+    <div className="flex flex-col items-stretch gap-1 lg:flex-row lg:items-center lg:justify-between lg:gap-3">
       <label htmlFor={id} className="text-xs text-text-2">
         {libelle}
       </label>
-      <span className="flex items-center gap-2">
+      <span className="flex min-w-0 items-center gap-2">
         {apres}
         <input
           id={id}
@@ -231,15 +237,16 @@ interface EtatVideProps {
 
 function EtatVide({ vide, etiquette, onEffacer }: EtatVideProps): ReactElement {
   if (vide) {
-    return <span className="text-2xs text-text-3">{etiquette}</span>;
+    return <span className="shrink-0 text-2xs text-text-3">{etiquette}</span>;
   }
   // Bordé, donc lisible comme un contrôle : cliquer vide le champ et pose l'état que le mot nomme.
   return (
     <button
       type="button"
       onClick={onEffacer}
-      className="rounded-xs border border-border px-1.5 py-0.5 text-2xs text-text-2
-        transition-colors duration-fast hover:border-border-strong hover:text-text"
+      className="min-h-[44px] min-w-[44px] shrink-0 rounded-xs border border-border px-1.5 py-0.5
+        text-2xs text-text-2 transition-colors duration-fast hover:border-border-strong
+        hover:text-text lg:min-h-0 lg:min-w-0"
     >
       {etiquette}
     </button>

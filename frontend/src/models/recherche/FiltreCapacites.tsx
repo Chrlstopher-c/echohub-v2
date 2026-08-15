@@ -1,5 +1,5 @@
 import type { ReactElement } from 'react';
-import { Badge, Tooltip, cn } from '../../shared/design';
+import { Badge, Tooltip, cn, useEstGrandEcran } from '../../shared/design';
 import type { Capacite, DefinitionCapacite } from '../api/types';
 import type { VocabulaireCapacites } from './useDefinitionsCapacites';
 
@@ -14,7 +14,44 @@ import type { VocabulaireCapacites } from './useDefinitionsCapacites';
  * 2. Le trait tireté n'est pas décoratif — c'est le mot visuel de « déduit ». Il se retrouve à
  *    l'identique sur les badges des résultats, si bien qu'une capacité ne peut jamais être
  *    confondue avec une mesure, qui se compose toujours en trait plein.
+ *
+ * 3. Sous 1024 px, la définition NE PEUT PAS rester dans une infobulle : l'infobulle du design
+ *    devient elle-même déclenchable à l'appui, or ces puces sont déjà des boutons — le même appui
+ *    porterait deux sens. Les puces deviennent donc des rangées où la définition est écrite sous le
+ *    libellé. Le tiroir de filtres a la hauteur pour ça, et l'information cesse d'être cachée.
  */
+
+/** Rangée tactile : libellé, définition lisible, état porté par `aria-pressed` comme la puce. */
+function RangeeCapacite({
+  definition,
+  actif,
+  onBasculer,
+}: {
+  definition: DefinitionCapacite;
+  actif: boolean;
+  onBasculer: () => void;
+}): ReactElement {
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={onBasculer}
+        aria-pressed={actif}
+        className={cn(
+          'flex min-h-[44px] w-full flex-col items-start gap-0.5 rounded-sm border border-dashed',
+          'px-2.5 py-2 text-left outline-none transition-colors duration-fast ease-out',
+          'focus-visible:shadow-[0_0_0_3px_var(--ring)]',
+          actif ? 'border-accent bg-accent-soft' : 'border-border bg-surface-2',
+        )}
+      >
+        <span className={cn('text-xs font-medium', actif ? 'text-accent' : 'text-text-2')}>
+          {definition.libelle}
+        </span>
+        <span className="text-2xs leading-relaxed text-text-3">{definition.definition}</span>
+      </button>
+    </li>
+  );
+}
 
 function PuceCapacite({
   definition,
@@ -64,6 +101,7 @@ function EnTeteFiltre({ actives, onEffacer }: { actives: number; onEffacer: () =
             onClick={onEffacer}
             className={cn(
               'rounded-xs px-1 text-2xs text-text-2 outline-none',
+              'min-h-[44px] min-w-[44px] lg:min-h-0 lg:min-w-0',
               'transition-colors duration-fast ease-out hover:text-text',
               'focus-visible:shadow-[0_0_0_3px_var(--ring)]',
             )}
@@ -104,16 +142,49 @@ export function FiltreCapacites({
   return (
     <div className="space-y-1.5">
       <EnTeteFiltre actives={selection.length} onEffacer={onEffacer} />
-      <div className="flex flex-wrap items-center gap-1.5">
-        {vocabulaire.definitions.map((definition) => (
-          <PuceCapacite
+      <ListeCapacites
+        definitions={vocabulaire.definitions}
+        selection={selection}
+        onBasculer={onBasculer}
+      />
+    </div>
+  );
+}
+
+function ListeCapacites({
+  definitions,
+  selection,
+  onBasculer,
+}: {
+  definitions: readonly DefinitionCapacite[];
+  selection: readonly Capacite[];
+  onBasculer: (capacite: Capacite) => void;
+}): ReactElement {
+  const estGrandEcran = useEstGrandEcran();
+  if (!estGrandEcran) {
+    return (
+      <ul className="space-y-1.5">
+        {definitions.map((definition) => (
+          <RangeeCapacite
             key={definition.capacite}
             definition={definition}
             actif={selection.includes(definition.capacite)}
             onBasculer={(): void => onBasculer(definition.capacite)}
           />
         ))}
-      </div>
+      </ul>
+    );
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {definitions.map((definition) => (
+        <PuceCapacite
+          key={definition.capacite}
+          definition={definition}
+          actif={selection.includes(definition.capacite)}
+          onBasculer={(): void => onBasculer(definition.capacite)}
+        />
+      ))}
     </div>
   );
 }

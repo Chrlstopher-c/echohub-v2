@@ -9,8 +9,12 @@
  *    message, sur un écran dont DESIGN.md exige la densité.
  * 2. Survol ET focus clavier. `group-hover` seul rendrait les actions inatteignables sans souris ;
  *    `group-focus-within` les révèle dès qu'un de leurs boutons prend le focus par tabulation.
- * 3. Pointeur grossier. Sur un appareil sans survol, la rangée reste affichée en retrait
- *    (opacité réduite) plutôt que masquée : une action sans second chemin d'accès n'existe pas.
+ * 3. Sous 1024 px, la rangée est VISIBLE EN PERMANENCE et rendue EN FLUX sous le message. Le survol
+ *    n'existe pas au doigt : une action seulement au survol est une action absente. Elle passe en
+ *    flux parce que ses boutons y font 44 px de haut — hors flux, ils recouvriraient le message
+ *    suivant, l'espace inter-messages n'en faisant que 20. Rien ne « bouge à l'apparition » pour
+ *    autant : sur ces écrans la rangée n'apparaît jamais, elle est là dès le rendu. À partir de
+ *    `lg:`, le comportement de bureau est restitué à l'identique.
  *
  * La navigation entre variantes, elle, n'est PAS conditionnée au survol — c'est une information sur
  * l'état de la conversation, pas une action.
@@ -24,10 +28,15 @@ import { NavigationBranches } from './NavigationBranches';
 import { RangeeActions } from './RangeeActions';
 
 const CLASSE_REVELEE =
-  'ml-auto pointer-events-none opacity-0 transition-opacity duration-fast ease-out ' +
-  'group-hover/msg:pointer-events-auto group-hover/msg:opacity-100 ' +
-  'group-focus-within/msg:pointer-events-auto group-focus-within/msg:opacity-100 ' +
-  '[@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-60';
+  'ml-auto pointer-events-auto opacity-100 transition-opacity duration-fast ease-out ' +
+  'lg:pointer-events-none lg:opacity-0 ' +
+  'lg:group-hover/msg:pointer-events-auto lg:group-hover/msg:opacity-100 ' +
+  'lg:group-focus-within/msg:pointer-events-auto lg:group-focus-within/msg:opacity-100';
+
+/* En flux sous le message au doigt, hors flux (ancré au bas du message) à partir de `lg:`. */
+const CLASSE_BARRE =
+  'mt-1 flex flex-wrap items-start gap-2 ' +
+  'lg:pointer-events-none lg:absolute lg:inset-x-0 lg:top-full lg:z-10 lg:mt-0 lg:h-0 lg:flex-nowrap';
 
 interface BarreProps {
   message: MessageChat;
@@ -43,7 +52,7 @@ function Barre({ message, actions }: BarreProps): ReactElement {
     }
   };
   return (
-    <div className="pointer-events-none absolute inset-x-0 top-full z-10 flex h-0 items-start gap-2">
+    <div className={CLASSE_BARRE}>
       {index >= 0 && freres.length > 1 && (
         <span className="pointer-events-auto pt-1">
           <NavigationBranches

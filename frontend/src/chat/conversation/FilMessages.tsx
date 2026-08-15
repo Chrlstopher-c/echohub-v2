@@ -43,7 +43,13 @@ export function FilMessages({ messages, brouillon, vide }: FilMessagesProps): Re
 
   const aucunContenu = messages.length === 0 && brouillon === null;
   return (
-    <div ref={conteneur} onScroll={surDefilement} className="flex-1 overflow-y-auto px-6 py-5">
+    // `min-h-0` : sans lui, ce bloc flex refuse de rétrécir sous la hauteur de son contenu et pousse
+    // le composeur hors de l'écran dès que le fil s'allonge — visible d'abord sur petit écran.
+    <div
+      ref={conteneur}
+      onScroll={surDefilement}
+      className="min-h-0 flex-1 overflow-y-auto px-3 py-4 lg:px-6 lg:py-5"
+    >
       {aucunContenu ? (
         vide
       ) : (

@@ -91,14 +91,14 @@ function Ligne({
 }): ReactElement {
   return (
     <Card level="raised" padding="sm">
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between lg:gap-3">
         <div className="min-w-0">
           <p className="truncate text-sm font-medium text-text">{telechargement.depot}</p>
           <p className="truncate font-mono text-2xs tabular-nums text-text-3">
             {telechargement.fichier ?? 'dépôt entier'}
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 lg:shrink-0 lg:flex-nowrap">
           <Badge tone={TON_ETAT[telechargement.etat]} dot pulse={estActif(telechargement)}>
             {LIBELLE_ETAT[telechargement.etat]}
           </Badge>

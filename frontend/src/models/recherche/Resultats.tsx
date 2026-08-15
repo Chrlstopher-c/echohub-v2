@@ -74,13 +74,15 @@ function Resume({ liste }: { liste: readonly Variante[] }): ReactElement | null 
 }
 
 function EnTeteDepot({ resultat, avant }: { resultat: ResultatRecherche; avant: Variante | null }): ReactElement {
+  // Sous le seuil, badges et titre ne se disputent plus la largeur : le titre garde sa ligne,
+  // les badges passent dessous et enroulent. Au-dessus, la ligne unique d'origine.
   return (
-    <div className="mb-2 flex items-start justify-between gap-3">
-      <div className="min-w-0">
+    <div className="mb-2 flex flex-col items-start gap-1.5 lg:flex-row lg:justify-between lg:gap-3">
+      <div className="min-w-0 max-w-full">
         <h3 className="truncate text-md font-semibold text-text">{resultat.nom}</h3>
         <p className="truncate text-2xs text-text-3">{resultat.auteur ?? resultat.depot}</p>
       </div>
-      <div className="flex shrink-0 items-center gap-1.5">
+      <div className="flex flex-wrap items-center gap-1.5 lg:shrink-0 lg:flex-nowrap">
         {resultat.gated && <Badge tone="caution">accès restreint</Badge>}
         {resultat.deja_telecharge && <Badge tone="ok">sur le disque</Badge>}
         {avant !== null && <PastilleFaisabilite faisabilite={avant.faisabilite} />}
@@ -114,7 +116,12 @@ function CarteDepot({
       </div>
 
       <div className="mt-3 flex justify-end">
-        <Button size="sm" variant="secondary" onClick={(): void => onChoisir(resultat)}>
+        <Button
+          size="sm"
+          variant="secondary"
+          className="w-full lg:w-auto"
+          onClick={(): void => onChoisir(resultat)}
+        >
           Télécharger…
         </Button>
       </div>
@@ -132,12 +139,28 @@ export interface ResultatsProps {
   onChoisir: (resultat: ResultatRecherche) => void;
 }
 
+/*
+ * `grid-cols-[minmax(0,1fr)]` et non `grid-cols-1` : une piste `1fr` vaut `minmax(auto, 1fr)`, et
+ * le minimum `auto` d'un élément de grille est son contenu minimal. Un nom de dépôt long suffisait
+ * donc à imposer une carte de 629 px dans un écran de 375 — mesuré le 2026-08-15, les cartes
+ * débordaient et l'écran paraissait resté en version bureau. Le `minmax(0, …)` autorise la piste à
+ * descendre sous ce minimum, et le contenu se replie normalement. Même raison pour le `min-w-0`
+ * posé sur chaque enfant.
+ */
 export function Resultats({ resultats, budget, vocabulaire, exigees, onChoisir }: ResultatsProps): ReactElement {
   return (
-    <div className="grid gap-3 md:grid-cols-2">
+    <div className="grid grid-cols-[minmax(0,1fr)] gap-3 lg:grid-cols-2">
       <AnimatePresence initial={false}>
         {resultats.map((resultat) => (
-          <motion.div key={resultat.depot} variants={fadeUp} initial="hidden" animate="visible" exit="exit" layout>
+          <motion.div
+            key={resultat.depot}
+            variants={fadeUp}
+            initial="hidden"
+            animate="visible"
+            exit="exit"
+            layout
+            className="min-w-0"
+          >
             <CarteDepot
               resultat={resultat}
               budget={budget}

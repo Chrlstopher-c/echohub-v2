@@ -32,7 +32,9 @@ function Rangee({ titre, compte, total, indices, couleur, anime }: RangeeProps):
           {compte} / {total}
         </span>
       </div>
-      <div className="flex min-h-[0.75rem] flex-wrap gap-[2px]">
+      {/* `flex-wrap` : les cellules retombent à la ligne dans un tiroir étroit plutôt que de
+          déborder — leur largeur de 6px reste une unité de comptage, pas une mesure de conteneur. */}
+      <div className="flex min-h-[0.75rem] min-w-0 flex-wrap gap-[2px]">
         {indices.map((indice) => (
           <motion.span
             key={indice}
@@ -60,7 +62,7 @@ export function RubanCouches({ plan }: RubanCouchesProps): ReactElement {
   const anime = total <= CELLULES_ANIMEES_MAX;
   return (
     <LayoutGroup>
-      <div className="space-y-2.5">
+      <div className="min-w-0 space-y-2.5">
         <Rangee
           titre="Couches sur GPU"
           compte={surGpu}
@@ -77,7 +79,9 @@ export function RubanCouches({ plan }: RubanCouchesProps): ReactElement {
           couleur={TONE_VAR.ram}
           anime={anime}
         />
-        <p className="font-mono text-2xs leading-relaxed text-text-3">{plan.couches_gpu.justification}</p>
+        <p className="break-words font-mono text-2xs leading-relaxed text-text-3">
+          {plan.couches_gpu.justification}
+        </p>
       </div>
     </LayoutGroup>
   );
