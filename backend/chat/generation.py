@@ -238,7 +238,9 @@ def _preparation(
     message_utilisateur_id: str | None,
 ) -> PreparationGeneration:
     """Assemble la préparation. Un seul endroit construit la requête envoyée au moteur."""
-    requete = RequeteGeneration(messages=messages, parametres=parametres, modele_id=modele_id)
+    requete = RequeteGeneration(
+        messages=messages, parametres=parametres, modele_id=modele_id, conversation_id=conversation_id
+    )
     return PreparationGeneration(
         conversation_id=conversation_id,
         message_id=message_assistant,

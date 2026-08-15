@@ -13,9 +13,10 @@ conversation, et il ne parle jamais à l'utilisateur directement.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 # Le résultat d'un outil repart dans le contexte : sans borne, une page web de 200 Ko ferait sauter
 # la fenêtre du modèle et supprimerait l'historique de la conversation. Tronquer est visible et
@@ -43,6 +44,26 @@ class DescriptionOutil(BaseModel):
         }
 
 
+class ContexteExecution(BaseModel):
+    """Identité de la conversation qui exécute l'outil, et racine du bac qui lui est propre.
+
+    Immuable à dessein (plan d'exécution, section 2.5) : un outil confiné écrit dans le bac de SA
+    conversation, jamais dans celui d'une autre. Porter un objet plutôt que l'identifiant nu évite
+    à chaque outil de reconstruire le chemin du bac — une politique de nommage dupliquée à deux
+    endroits finit toujours par diverger, et la première divergence écrit hors du bon bac.
+
+    Construit une seule fois par tour, dans `MoteurChat._flux` (`backend/inference/__init__.py`) :
+    ce n'est ni une variable globale, ni un contexte implicite, ni un attribut posé sur le module du
+    registre. Le fait qu'une seule génération tourne à la fois aujourd'hui est une propriété du
+    moteur, pas une garantie d'architecture — ce contexte ne s'appuie jamais dessus.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    conversation_id: str
+    racine_bac: Path
+
+
 class ResultatOutil(BaseModel):
     """Ce qui repart au modèle après l'exécution.
 
@@ -65,7 +86,9 @@ class ResultatOutil(BaseModel):
 
 # Un outil s'exécute de façon asynchrone : le seul outil du MVP fait un appel réseau, et bloquer la
 # boucle pendant une recherche gèlerait toutes les autres requêtes de l'application.
-Execution = Callable[[dict[str, Any]], Awaitable[str]]
+# Le second paramètre porte l'identité de la conversation : un outil qui touche le disque (lot L2)
+# en a besoin pour écrire dans le bon bac. Un outil qui n'en a pas l'usage l'ignore simplement.
+Execution = Callable[[dict[str, Any], ContexteExecution], Awaitable[str]]
 
 
 class Outil(BaseModel):

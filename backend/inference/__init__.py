@@ -155,6 +155,7 @@ def _appels_demandes(texte: str) -> list[dict[str, Any]]:
 async def _executer_appels(
     appels: list[dict[str, Any]],
     messages: list[MessageChat],
+    contexte: ContexteExecution,
 ) -> AsyncIterator[dict[str, Any]]:
     """Exécute les appels demandés, en annonçant chacun dans le flux, et enrichit la conversation."""
     from backend.outils import executer
@@ -164,7 +165,7 @@ async def _executer_appels(
         # L'entrée part AVANT l'exécution : c'est ce qui rend l'attente lisible plutôt que muette.
         entree = f"{BALISE_ENTREE_OUVRANTE}{_annonce(nom, arguments)}{BALISE_ENTREE_FERMANTE}"
         yield {"texte": f"{BALISE_OUTIL_OUVRANTE}{entree}{BALISE_SORTIE_OUVRANTE}"}
-        resultat = await executer(nom, arguments)
+        resultat = await executer(nom, arguments, contexte)
         etat = "résultat" if resultat.succes else "échec"
         yield {"texte": f"{resultat.texte}{BALISE_SORTIE_FERMANTE}{BALISE_OUTIL_FERMANTE}\n\n"}
         messages.append(MessageChat(role="assistant", content=f"[outil {resultat.nom} — {etat}]\n{resultat.texte}"))
@@ -173,6 +174,7 @@ async def _executer_appels(
 async def _resoudre_outils(
     messages: list[MessageChat],
     options: OptionsGeneration,
+    contexte: ContexteExecution,
 ) -> AsyncIterator[dict[str, Any]]:
     """Exécute les outils demandés, en annonçant chaque étape dans le flux au fur et à mesure.
 
@@ -206,7 +208,7 @@ async def _resoudre_outils(
         for appel in appels:
             nom, arguments = _texte_appel(appel)
             yield {"texte": f"{BALISE_OUTIL_OUVRANTE}{_annonce(nom, arguments)}\n"}
-            resultat = await executer(nom, arguments)
+            resultat = await executer(nom, arguments, contexte)
             etat = "résultat" if resultat.succes else "échec"
             yield {"texte": f"{resultat.texte}{BALISE_OUTIL_FERMANTE}\n\n"}
             enrichis.append(MessageChat(role="assistant", content=f"[outil {resultat.nom} — {etat}]\n{resultat.texte}"))
@@ -228,11 +230,25 @@ class MoteurChat:
         return self._flux(requete)
 
     async def _flux(self, requete: object) -> AsyncIterator[dict[str, Any]]:
+        from backend.fichiers.stockage import racine_conversations
         from backend.outils import format_moteur
+        from backend.outils.contrat import ContexteExecution
 
         messages = _messages_depuis(getattr(requete, "messages", None))
         options = _options_depuis(getattr(requete, "parametres", None))
         outils = format_moteur()
+
+        # L'identité de la conversation doit atteindre l'exécution d'un outil (plan d'exécution,
+        # section 2.5) : sans elle, un outil confiné écrirait dans le bac de n'importe qui. Elle est
+        # obligatoire sur `RequeteGeneration` ; son absence ici signalerait un appelant qui viole le
+        # contrat du port, pas un cas normal à dégrader silencieusement.
+        conversation_id = getattr(requete, "conversation_id", None)
+        if not conversation_id:
+            raise ValueError("RequeteGeneration sans conversation_id : contrat du port violé.")
+        contexte = ContexteExecution(
+            conversation_id=conversation_id,
+            racine_bac=racine_conversations() / conversation_id / "bac",
+        )
         debut = time.monotonic()
         tokens = 0
 
@@ -256,7 +272,7 @@ class MoteurChat:
             # travail, pas la réponse. On le signale au lieu de le laisser passer pour une réponse.
             yield {"texte": BALISE_FIN_ETAPE}
             messages = list(messages) + [MessageChat(role="assistant", content="".join(recu))]
-            async for etape in _executer_appels(appels, messages):
+            async for etape in _executer_appels(appels, messages, contexte):
                 texte = etape.get("texte")
                 if isinstance(texte, str):
                     yield {"texte": texte}

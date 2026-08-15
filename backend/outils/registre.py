@@ -16,7 +16,7 @@ from typing import Any
 
 from loguru import logger
 
-from backend.outils.contrat import DescriptionOutil, Outil, ResultatOutil
+from backend.outils.contrat import ContexteExecution, DescriptionOutil, Outil, ResultatOutil
 from backend.outils.recherche_web import OUTIL as OUTIL_RECHERCHE
 
 # Ordre significatif : c'est celui dans lequel les outils sont présentés au modèle, et le premier
@@ -56,8 +56,12 @@ def _arguments(brut: object) -> dict[str, Any]:
     return charge if isinstance(charge, dict) else {}
 
 
-async def executer(nom: str, arguments_bruts: object) -> ResultatOutil:
-    """Exécute l'outil demandé. Ne lève jamais : un échec est un résultat rendu au modèle."""
+async def executer(nom: str, arguments_bruts: object, contexte: ContexteExecution) -> ResultatOutil:
+    """Exécute l'outil demandé. Ne lève jamais : un échec est un résultat rendu au modèle.
+
+    `contexte` porte l'identité de la conversation appelante : le registre la REÇOIT en paramètre,
+    il ne la devine ni ne la lit sur un état partagé (plan d'exécution, section 2.5).
+    """
     arguments = _arguments(arguments_bruts)
     outil = _OUTILS.get(nom)
     if outil is None:
@@ -70,7 +74,7 @@ async def executer(nom: str, arguments_bruts: object) -> ResultatOutil:
             texte=f"L'outil « {nom} » n'existe pas. Outils disponibles : {connus}.",
         )
     try:
-        texte = await outil.executer(arguments)
+        texte = await outil.executer(arguments, contexte)
     except Exception as exc:  # noqa: BLE001 — un outil qui explose ne doit pas tuer la génération
         logger.exception("Outil {} a échoué", nom)
         return ResultatOutil(nom=nom, succes=False, arguments=arguments, texte=f"Échec de l'outil : {exc}").tronque()

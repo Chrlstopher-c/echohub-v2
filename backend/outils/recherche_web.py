@@ -15,7 +15,7 @@ from typing import Any
 
 from loguru import logger
 
-from backend.outils.contrat import DescriptionOutil, Outil
+from backend.outils.contrat import ContexteExecution, DescriptionOutil, Outil
 from backend.recherche import CategorieRecherche, ParametresRecherche, rechercher
 
 NOM = "recherche_web"
@@ -58,13 +58,17 @@ def _formater(titre: str, url: str, extrait: str | None, rang: int) -> str:
     return f"[{rang}] {titre.strip()}\n{url}\n{corps}" if corps else f"[{rang}] {titre.strip()}\n{url}"
 
 
-async def executer(arguments: dict[str, Any]) -> str:
+async def executer(arguments: dict[str, Any], contexte: ContexteExecution) -> str:
     """Exécute la recherche et rend un texte destiné au contexte du modèle.
 
     Toute erreur est rendue comme texte plutôt que levée : le modèle doit apprendre que la
     recherche a échoué pour le dire à l'utilisateur, au lieu de recevoir un silence qu'il
     comblerait en inventant.
+
+    `contexte` est ignoré : cet outil ne touche ni disque ni bac, il n'a besoin d'aucune identité
+    de conversation. Le paramètre existe pour respecter la signature commune `Execution`.
     """
+    del contexte
     requete = str(arguments.get("requete", "")).strip()
     if not requete:
         return "Échec : aucune requête fournie. Rappeler l'outil avec des mots-clés."
