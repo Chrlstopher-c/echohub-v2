@@ -42,6 +42,7 @@ from backend.chat.modeles import (
 from backend.chat.port_inference import (
     FragmentTexte,
     MessageInference,
+    PieceJointe,
     RequeteGeneration,
     StatistiquesGeneration,
 )
@@ -108,6 +109,7 @@ def preparer(conversation_id: str, demande: DemandeGeneration) -> PreparationGen
             contenu=demande.contenu,
             parent_id=depot.feuille_active(conversation_id),
         )
+        _lier_fichiers(conversation_id, demande.fichier_ids, message_utilisateur.id)
         if modele_id is not None and modele_id != conversation.modele_id:
             depot.definir_modele_conversation(conversation_id, modele_id)
         messages = _construire_contexte(conversation_id, reglages, message_utilisateur.id)
@@ -204,6 +206,20 @@ def _ancrer_branche(cible: MessageChat, contenu: str | None) -> tuple[str | None
     return nouveau.id, nouveau.id
 
 
+def _lier_fichiers(conversation_id: str, fichier_ids: list[str], message_id: str) -> None:
+    """Rattache au message qui vient d'être écrit les pièces jointes déjà déposées dans le magasin.
+
+    Import local : `backend.fichiers` dépend de `backend.chat` (il vérifie qu'une conversation
+    existe avant tout dépôt) — l'importer en tête de module créerait un cycle, comme le documente
+    déjà `backend.chat.depot._supprimer_dossier_fichiers`.
+    """
+    if not fichier_ids:
+        return
+    from backend.fichiers import lier_fichiers_au_message
+
+    lier_fichiers_au_message(conversation_id, fichier_ids, message_id)
+
+
 def _modele_charge() -> str | None:
     """Modèle RÉELLEMENT chargé dans le moteur à cet instant, ou `None` si rien n'est prêt.
 
@@ -287,8 +303,13 @@ def _construire_contexte(
         messages.append(MessageInference(role="system", contenu=entete))
     # Un message vide fait échouer la tokenisation de plusieurs gabarits de chat ; un message
     # `system` en historique doublonnerait le prompt système, qui est un réglage et non un tour.
+    pieces_par_message = _pieces_du_contexte(historique)
     messages.extend(
-        MessageInference(role=message.role, contenu=message.contenu)
+        MessageInference(
+            role=message.role,
+            contenu=message.contenu,
+            pieces=pieces_par_message.get(message.id, []),
+        )
         for message in historique
         if message.role != "system" and message.contenu.strip()
     )
@@ -314,6 +335,25 @@ def _historique_branche(
     if reglages.historique_max_messages is None:
         return historique
     return historique[-reglages.historique_max_messages :]
+
+
+def _pieces_du_contexte(historique: list[MessageChat]) -> dict[str, list[PieceJointe]]:
+    """Pièces jointes de chaque message de l'historique, converties à la forme attendue par le port.
+
+    Une seule requête groupée (`pieces_pour_messages`), jamais une par message : l'historique peut
+    compter des dizaines de messages, et le contexte se reconstruit à chaque tour de génération.
+    Import local pour la même raison de cycle que `_lier_fichiers`.
+    """
+    from backend.fichiers import chemin_disque, pieces_pour_messages
+
+    brutes = pieces_pour_messages([message.id for message in historique])
+    return {
+        message_id: [
+            PieceJointe(chemin=chemin_disque(fichier), type_mime=fichier.type_mime, nom_affiche=fichier.nom_affiche)
+            for fichier in fichiers
+        ]
+        for message_id, fichiers in brutes.items()
+    }
 
 
 async def diffuser(preparation: PreparationGeneration) -> AsyncIterator[EvenementFlux]:

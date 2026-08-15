@@ -8,6 +8,8 @@ ne fait qu'y lire et écrire, comme `backend/chat/depot.py` le fait pour ses pro
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from pydantic import BaseModel
 
 from backend.core import execute, fetch_all, fetch_one
@@ -74,3 +76,36 @@ def taille_cumulee(conversation_id: str) -> int:
         (conversation_id,),
     )
     return ligne.total if ligne is not None else 0
+
+
+def lier_message(fichier_id: str, message_id: str) -> None:
+    """Rattache un fichier déjà déposé au message qui vient de l'envoyer.
+
+    Le fichier est uploadé AVANT que le message n'existe (le composeur dépose la pièce dès qu'elle
+    est choisie) : cette écriture referme le lien une fois le message persisté.
+    """
+    execute("UPDATE fichiers_conversation SET message_id = ? WHERE id = ?", (message_id, fichier_id))
+
+
+def lister_par_messages(message_ids: Sequence[str]) -> dict[str, list[FichierConversation]]:
+    """Fichiers liés à ces messages, groupés par `message_id` — une seule requête, pas une par message.
+
+    Un dictionnaire absent d'une clé signifie « aucune pièce jointe », l'appelant ne doit pas le
+    distinguer d'une liste vide.
+    """
+    if not message_ids:
+        return {}
+    marqueurs = ", ".join("?" for _ in message_ids)
+    lignes = fetch_all(
+        FichierConversation,
+        f"{_SELECT_FICHIER} WHERE message_id IN ({marqueurs}) ORDER BY cree_le ASC",
+        tuple(message_ids),
+    )
+    groupes: dict[str, list[FichierConversation]] = {}
+    for fichier in lignes:
+        # `message_id` est garanti non nul ici : la clause `IN` ne peut matcher que des lignes liées.
+        # Gardé en `if` plutôt qu'en `assert` : jamais désactivé, quel que soit le mode d'exécution.
+        if fichier.message_id is None:
+            continue
+        groupes.setdefault(fichier.message_id, []).append(fichier)
+    return groupes

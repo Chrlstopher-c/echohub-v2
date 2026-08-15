@@ -27,6 +27,9 @@ from loguru import logger
 from backend.inference.engines_adapters import (
     MessageChat,
     OptionsGeneration,
+    PartieContenu,
+    PartieImageChemin,
+    PartieTexte,
     superviseur,
 )
 from backend.inference.planner import (
@@ -67,7 +70,13 @@ def _options_depuis(parametres: object) -> OptionsGeneration:
 
 
 def _messages_depuis(messages: object) -> list[MessageChat]:
-    """Convertit les messages de la conversation au format des moteurs (`content`, pas `contenu`)."""
+    """Convertit les messages de la conversation au format des moteurs (`content`, pas `contenu`).
+
+    Un message sans pièce jointe garde `content` en texte simple — forme inchangée depuis avant ce
+    lot. Un message AVEC pièces devient une liste de parties (texte, puis images). Aucune image
+    n'est encodée ici : `content` porte encore des CHEMINS disque (`PartieImageChemin`), jamais du
+    base64 — c'est l'adaptateur moteur qui encode, au tout dernier moment (plan d'exécution, 2.2.4).
+    """
     convertis: list[MessageChat] = []
     for message in messages or ():
         role = getattr(message, "role", None)
@@ -77,8 +86,26 @@ def _messages_depuis(messages: object) -> list[MessageChat]:
         if role is None or contenu is None:
             logger.warning("Message ignoré, forme inattendue : {}", type(message).__name__)
             continue
-        convertis.append(MessageChat(role=role, content=contenu))
+        pieces = getattr(message, "pieces", None) or ()
+        convertis.append(MessageChat(role=role, content=_contenu_moteur(contenu, pieces)))
     return convertis
+
+
+def _contenu_moteur(contenu: str, pieces: object) -> str | list[PartieContenu]:
+    """`content` du contrat moteur : texte simple sans pièce jointe, liste de parties sinon."""
+    if not pieces:
+        return contenu
+    parties: list[PartieContenu] = []
+    if contenu:
+        parties.append(PartieTexte(text=contenu))
+    for piece in pieces:
+        chemin = getattr(piece, "chemin", None)
+        type_mime = getattr(piece, "type_mime", None)
+        if chemin is None or type_mime is None:
+            logger.warning("Pièce jointe ignorée, forme inattendue : {}", type(piece).__name__)
+            continue
+        parties.append(PartieImageChemin(chemin=str(chemin), type_mime=type_mime))
+    return parties if parties else contenu
 
 
 # Tours d'outils avant de rendre la main au modèle pour de bon. Un modèle peut légitimement

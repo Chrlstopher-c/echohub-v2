@@ -19,13 +19,19 @@ from backend.inference.engines_adapters.contrat import (
     CauseEchec,
     EtatChargement,
     EtatMoteur,
+    ImageURL,
     MessageChat,
     MorceauGeneration,
     MoteurSupporte,
     OccupationContexte,
     OptionsGeneration,
+    PartieContenu,
+    PartieImage,
+    PartieImageChemin,
+    PartieTexte,
     PlanChargement,
     Sante,
+    texte_de,
 )
 from backend.inference.engines_adapters.diagnostic import Diagnostic, EchecChargement, qualifier
 from backend.inference.engines_adapters.experts_hote import SupportDeport, verifier_support
@@ -60,6 +66,13 @@ __all__ = [
     "OccupationContexte",
     "Sante",
     "CauseEchec",
+    # Contenu multimodal — voir `texte_de` pour l'unique fonction d'extraction du texte
+    "PartieContenu",
+    "PartieTexte",
+    "PartieImageChemin",
+    "PartieImage",
+    "ImageURL",
+    "texte_de",
     # Diagnostic et journal
     "Diagnostic",
     "EchecChargement",

@@ -23,6 +23,7 @@ annule proprement.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from loguru import logger
@@ -32,6 +33,22 @@ from backend.core import MoteurIndisponible
 from backend.chat.modeles import ParametresEchantillonnage, RoleMessage
 
 
+class PieceJointe(BaseModel):
+    """Référence à un fichier de conversation, telle qu'elle traverse le port `chat` → `inference`.
+
+    Transporte un CHEMIN, jamais des octets ni du base64 (plan d'exécution, section 2.2.2) : ce
+    port est traversé à chaque tour de génération, y faire voyager des mégaoctets encodés serait
+    payé à chaque tour. L'encodage en data URI n'a lieu qu'au tout dernier moment, dans l'adaptateur
+    moteur, juste avant l'appel réel au moteur.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    chemin: Path
+    type_mime: str
+    nom_affiche: str
+
+
 class MessageInference(BaseModel):
     """Message tel qu'il part au moteur : ni identifiant, ni horodatage, ni statistiques."""
 
@@ -39,6 +56,7 @@ class MessageInference(BaseModel):
 
     role: RoleMessage
     contenu: str
+    pieces: list[PieceJointe] = Field(default_factory=list)
 
 
 class RequeteGeneration(BaseModel):

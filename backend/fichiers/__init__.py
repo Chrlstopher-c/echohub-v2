@@ -26,7 +26,13 @@ from backend.fichiers.erreurs import (
 from backend.fichiers.modeles import FichierConversation, OrigineFichier
 from backend.fichiers.politique import TAILLE_MAX_CUMULEE_OCTETS, TAILLE_MAX_FICHIER_OCTETS
 from backend.fichiers.routes import routeur
-from backend.fichiers.service import chemin_disque, deposer_fichier, lire_fichier
+from backend.fichiers.service import (
+    chemin_disque,
+    deposer_fichier,
+    lier_fichiers_au_message,
+    lire_fichier,
+    pieces_pour_messages,
+)
 from backend.fichiers.stockage import supprimer_dossier_conversation
 
 __all__ = [
@@ -45,6 +51,8 @@ __all__ = [
     "deposer_fichier",
     "lire_fichier",
     "chemin_disque",
+    "lier_fichiers_au_message",
+    "pieces_pour_messages",
     "supprimer_dossier_conversation",
     # API HTTP
     "routeur",

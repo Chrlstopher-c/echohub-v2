@@ -110,13 +110,74 @@ class PlanChargement(BaseModel):
         return cls.model_validate(objet, from_attributes=True)
 
 
+class PartieTexte(BaseModel):
+    """Fragment de texte d'un message multimodal — c'est exactement ce que llama-cpp-python lit."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    type: Literal["text"] = "text"
+    text: str
+
+
+class PartieImageChemin(BaseModel):
+    """Fragment image AVANT encodage : porte un CHEMIN disque, jamais des octets ni du base64.
+
+    Forme intermédiaire, produite par `MoteurChat._messages_depuis` (`backend/inference/__init__.py`)
+    à partir des pièces jointes du port (`chat.port_inference.PieceJointe`). Elle n'est PAS valide à
+    envoyer au moteur : `adaptateur_llama_cpp` la convertit en `PartieImage` (avec un vrai data URI)
+    au tout dernier moment, juste avant `create_chat_completion` — plan d'exécution, section 2.2.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    type: Literal["image_chemin"] = "image_chemin"
+    chemin: str
+    type_mime: str
+
+
+class ImageURL(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    url: str
+
+
+class PartieImage(BaseModel):
+    """Forme FINALE d'une image : exactement ce que lit `MTMDChatHandler.get_image_urls`."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    type: Literal["image_url"] = "image_url"
+    image_url: ImageURL
+
+
+PartieContenu = PartieTexte | PartieImageChemin | PartieImage
+
+
 class MessageChat(BaseModel):
-    """Message d'une conversation, au format attendu par les deux moteurs."""
+    """Message d'une conversation, au format attendu par les deux moteurs.
+
+    `content` est soit un texte simple (l'écrasante majorité des messages, et tout l'existant avant
+    ce lot), soit une liste de parties — texte et image — pour un message multimodal. L'union garde
+    `str` valide : rien de ce qui existait n'a besoin d'être réécrit.
+    """
 
     model_config = ConfigDict(extra="ignore")
 
     role: Literal["system", "user", "assistant"]
-    content: str
+    content: str | list[PartieContenu]
+
+
+def texte_de(message: MessageChat) -> str:
+    """Texte d'un message, quelle que soit sa forme — SEULE fonction du contrat à inspecter `content`.
+
+    Concatène les parties `text` d'un contenu multimodal et ignore les parties image (chemin non
+    encodé ou data URI déjà résolu) : une image ne contribue aucun texte au décompte de contexte ni
+    au découpage par poste. Aucun autre endroit du code ne doit lire `message.content` à la main —
+    sinon la prochaine forme de contenu cassera cinq fichiers au lieu d'un (plan d'exécution, 2.2.5).
+    """
+    if isinstance(message.content, str):
+        return message.content
+    return "".join(partie.text for partie in message.content if isinstance(partie, PartieTexte))
 
 
 class OptionsGeneration(BaseModel):
@@ -312,13 +373,14 @@ def decouper_segments(prompt_systeme: str, messages: Sequence[MessageChat]) -> l
     if prompt_systeme:
         segments.append(SegmentContexte(poste=PosteContexte.SYSTEME, texte=prompt_systeme))
     for message in messages:
-        if not message.content:
+        texte = texte_de(message)
+        if not texte:
             continue
         if message.role != "assistant":
             poste = PosteContexte.SYSTEME if message.role == "system" else PosteContexte.UTILISATEUR
-            segments.append(SegmentContexte(poste=poste, texte=message.content))
+            segments.append(SegmentContexte(poste=poste, texte=texte))
             continue
-        visible, raisonnement = separer_raisonnement(message.content)
+        visible, raisonnement = separer_raisonnement(texte)
         if visible:
             segments.append(SegmentContexte(poste=PosteContexte.ASSISTANT, texte=visible))
         if raisonnement:
