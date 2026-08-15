@@ -282,6 +282,12 @@ class MoteurChat:
 
         # UN SEUL appel au moteur par tour, outils déclarés dedans. Le tour suivant n'a lieu que si
         # le modèle a réellement demandé un outil ; sinon la boucle s'arrête au premier passage.
+        #
+        # `outils` n'est transmis QU'AU PREMIER tour. Dès qu'un tour a produit des résultats
+        # (des appels exécutés), il est remis à `None` pour le tour suivant : sinon le modèle voit
+        # encore les mêmes outils déclarés après les avoir déjà reçus, et n'a aucune raison
+        # d'arrêter d'en redemander — c'est exactement le bouclage constaté en conditions réelles
+        # (plan d'exécution, L10-b) sur un modèle à qui on montrait une image.
         for tour in range(TOURS_OUTILS_MAX):
             recu: list[str] = []
             async for morceau in superviseur.generer(messages, options, outils):
@@ -304,6 +310,8 @@ class MoteurChat:
                 texte = etape.get("texte")
                 if isinstance(texte, str):
                     yield {"texte": texte}
+            # Résultats rendus : le tour suivant ne reverra plus les outils.
+            outils = None
         else:
             logger.warning("Borne de {} tours d'outils atteinte.", TOURS_OUTILS_MAX)
 
