@@ -54,7 +54,7 @@ from backend.inference.engines_adapters.experts_hote import (
 )
 from backend.inference.engines_adapters.flux import flux_depuis_bloquant
 from backend.inference.engines_adapters.journal import NiveauEntree, SessionChargement, journal_chargement
-from backend.inference.engines_adapters.vram import lire_vram
+from backend.inference.engines_adapters.vram import MesureVram, lire_vram
 from backend.models.storage import fichiers_projecteurs
 
 # Identifiants de types GGML acceptés pour le cache KV. Une valeur hors table est un plan invalide :
@@ -76,6 +76,16 @@ TOKENS_PROPOSITION_OUTILS = 192
 # 2 Go, plusieurs minutes de chargement). Elle n'est jamais posée ici ; si l'environnement la porte
 # sans que le plan l'ait demandée, on le signale plutôt que de charger en silence dans ce mode.
 VARIABLE_MEMOIRE_UNIFIEE = "GGML_CUDA_ENABLE_UNIFIED_MEMORY"
+
+# Marge de VRAM libre exigée après chargement pour tenter d'initialiser l'encodeur visuel
+# (`_init_mtmd_context`, appelé au premier comptage ou à la première image générée). MESURÉE, pas
+# raisonnée (2026-08-15, RTX 3060, Qwen3-VL-8B-Instruct Q4_K_M + mmproj F16 1,1 Gio) : poids du
+# projecteur alloués ~1105 Mio, tampon de calcul CUDA de l'encodeur ~4769 Mio — ~5,9 Gio au total
+# avant le moindre token d'image. En dessous, `cudaMalloc` échoue et `ggml-backend.cpp` répond par
+# un `abort()` natif (SIGABRT) qu'aucun `try/except` Python ne peut intercepter. 6 Gio couvre cette
+# mesure avec une marge de sécurité ; un projecteur nettement plus lourd que celui mesuré ici
+# resterait sous-couvert — voir `_detacher_vision_si_vram_insuffisante`.
+MARGE_VISION_OCTETS = 6 * 1024 * 1024 * 1024
 
 
 def _encoder_data_uri(chemin: str, type_mime: str) -> str | None:
@@ -256,9 +266,17 @@ class AdaptateurLlamaCpp(AdaptateurMoteur):
 
         parametres = self._parametres(plan, chemin, session)
         vram_avant = lire_vram()
+        # `model_path` est déjà dans `plan.nom_affiche` (bruyant, redondant) ; `chat_handler` est
+        # l'objet `MTMDChatHandler` construit par `_handler_vision` (ctypes, non sérialisable) —
+        # ni l'un ni l'autre n'a sa place dans un journal destiné à être rendu en JSON par la route
+        # `/inference/journal`. Sa présence est notée comme un fait booléen, pas comme l'objet.
+        parametres_serialisables = {
+            c: v for c, v in parametres.items() if c not in ("model_path", "chat_handler")
+        }
         journal_chargement.noter(
             session, "llama.cpp", f"Chargement de {plan.nom_affiche}",
-            details={"parametres": {c: v for c, v in parametres.items() if c != "model_path"},
+            details={"parametres": parametres_serialisables,
+                     "vision_chargee": "chat_handler" in parametres,
                      "experts_deportes": plan.experts_deportes,
                      "vram_libre_mo": vram_avant.libre_mo if vram_avant else None},
         )
@@ -278,7 +296,47 @@ class AdaptateurLlamaCpp(AdaptateurMoteur):
             session, "llama.cpp", f"Modèle prêt en {duree:.1f} s",
             details={"vram_utilisee_mo": vram_apres.utilisee_mo if vram_apres else None},
         )
+        self._detacher_vision_si_vram_insuffisante(vram_apres, session)
         return self._etat
+
+    def _detacher_vision_si_vram_insuffisante(
+        self, vram_apres: MesureVram | None, session: SessionChargement | None
+    ) -> None:
+        """Retire le `chat_handler` si la VRAM restante ne peut pas porter l'encodeur visuel.
+
+        Plantage natif réel, reproduit et diagnostiqué le 2026-08-15 : `_init_mtmd_context` (appelé
+        au premier comptage ou à la première génération avec image, JAMAIS au chargement — c'est
+        volontairement paresseux) alloue les poids du projecteur PUIS un tampon de calcul CUDA pour
+        l'encodeur visuel. Sur cette machine (RTX 3060, Qwen3-VL-8B-Instruct + son mmproj F16), ces
+        deux allocations pèsent ensemble ~5,9 Gio, MESURÉS (`alloc_tensor_range` sur ~1105 Mio de
+        poids, puis `reserve_compute_meta` sur ~4769 Mio de tampon). Un plan qui remplit la VRAM au
+        plus juste pour le modèle principal (cas courant : le planificateur maximise les couches GPU
+        et n'a aucune raison de connaître le coût d'un projecteur qu'il n'a pas choisi) ne laisse pas
+        cette marge. `cudaMalloc` échoue alors sur l'allocation des poids du projecteur, et
+        `ggml-backend.cpp` répond par `GGML_ASSERT(buffer)` — un `abort()` natif, SIGABRT, qui tue le
+        processus entier. Aucune exception Python ne peut l'intercepter : la seule protection possible
+        est de ne JAMAIS tenter cette allocation quand la marge n'y est pas.
+
+        Le modèle reste chargé et utilisable : seul le tour de vision est retiré, exactement comme si
+        aucun projecteur n'avait été trouvé (repli déjà éprouvé, section 2.4). Le chargement du modèle
+        principal, lui, n'est jamais remis en cause par cette vérification.
+        """
+        if self._llm is None or getattr(self._llm, "chat_handler", None) is None:
+            return
+        if vram_apres is None:
+            return  # pas de mesure : rien à comparer, on laisse la vision tentée (comportement antérieur)
+        if vram_apres.libre_octets >= MARGE_VISION_OCTETS:
+            return
+        self._llm.chat_handler = None
+        journal_chargement.noter(
+            session, "llama.cpp",
+            f"Projecteur de vision détaché : VRAM libre ({vram_apres.libre_mo} Mo) sous la marge "
+            f"mesurée pour l'encodeur visuel ({MARGE_VISION_OCTETS // (1024 * 1024)} Mo). Une "
+            "initialisation aurait planté le processus (SIGABRT natif, non rattrapable) au premier "
+            "comptage ou à la première image envoyée. Le modèle reste chargé, le repli sans vision "
+            "(2.4) s'applique désormais aux deux : mesure et génération.",
+            niveau=NiveauEntree.AVERTISSEMENT,
+        )
 
     async def _charger_instance(self, module: Any, parametres: dict[str, Any], plan: PlanChargement,
                                 session: SessionChargement | None) -> Any:
