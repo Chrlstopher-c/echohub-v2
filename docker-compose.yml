@@ -22,18 +22,18 @@ services:
     container_name: echohub-v2
     restart: unless-stopped
 
-    # --- GPU : forme Windows/WSL2, active --------------------------------------------------
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+    # --- GPU : forme Windows/WSL2, inactive sur cette machine (lot L7, mesure MoE) ----------
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
 
-    # --- GPU : forme Linux natif + CDI, documentée, inactive -------------------------------
-    # devices:
-    #   - nvidia.com/gpu=all
+    # --- GPU : forme Linux natif + CDI, ACTIVE — cette machine est Arch Linux natif --------
+    devices:
+      - nvidia.com/gpu=all
 
     # torch (vLLM) alloue en mémoire partagée. Le défaut Docker est de 64 Mo, insuffisant dès
     # qu'un worker démarre : l'échec se présente comme un plantage obscur, pas comme un manque
@@ -49,7 +49,14 @@ services:
     volumes:
       # Volumes nommés : MODELS_DIR et XDG_DATA_HOME pointent DEDANS (cf. Dockerfile). Tout ce
       # que le backend écrit ailleurs est perdu à la reconstruction de l'image.
-      - echohub_models:/data/models              # modèles téléchargés (des dizaines de Go)
+      # Lot L7 (MESURES-MOE.md) : le volume nommé `echohub_models` est vide et le stockage v2 n'a
+      # pas la place de recevoir une copie de 20 Go (78 Go libres). Le modèle vit dans
+      # /mnt/models/echohub (arborescence v1, déjà au format `<org>--<repo>/` attendu par
+      # `backend/models/storage.py::nom_dossier`) : monté en LECTURE SEULE, réversible en
+      # restaurant la ligne commentée ci-dessous (aucune écriture v2 dans /mnt/models, MODELS_DIR
+      # reste la seule variable lue par backend/core/config.py — aucun chemin en dur côté Python).
+      - /mnt/models/echohub:/data/models:ro
+      # - echohub_models:/data/models              # modèles téléchargés (des dizaines de Go)
       - echohub_userdata:/data/user              # base SQLite, configuration, journaux
 
       # --- Développement : code monté depuis l'hôte, inactif par défaut -------------------

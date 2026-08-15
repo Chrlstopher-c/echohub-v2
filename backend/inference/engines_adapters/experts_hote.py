@@ -202,10 +202,24 @@ class Surcharges:
 class CollecteurJournal(logging.Handler):
     """Capte le journal de chargement de llama.cpp pour VÉRIFIER le déport au lieu de le supposer.
 
-    On se branche sur `logging`, où llama-cpp-python route déjà le journal C, plutôt que de remplacer
-    le rappel C par `llama_log_set` : c'est réversible et sans effet de bord global. Le handler
-    n'échoue jamais — une exception levée depuis un `emit` pendant un chargement se perdrait sur une
-    sortie standard justement mise en sourdine par le moteur.
+    Deux voies de captation, pas une seule — **mesuré** sur `llama_cpp` 0.3.34, pas supposé (voir
+    `_installer_relais_c`) :
+
+    1. `brancher()` s'attache à `logging`, où la documentation du paquet affirme que le journal C est
+       routé. C'était vrai historiquement, ce n'est plus le fait mesuré : `llama_cpp/_logger.py`
+       installe au chargement du module un callback C qui fait `print(text, file=sys.stderr)` —
+       jamais `logger.log(...)`. `logger.level` n'y sert que de condition au `print`, aucun
+       `logging.Handler` ne reçoit donc jamais ces lignes. Un chargement avec déport échouait à
+       100 % sur cette machine avant ce correctif, alors que le journal brut (`docker logs`) portait
+       bien les lignes `buffer type overridden` : le déport avait réellement lieu, seule sa preuve
+       n'atteignait jamais ce collecteur.
+    2. `_installer_relais_c()` remplace donc, en plus, le callback C lui-même le temps du
+       chargement — la route que le commentaire d'origine évitait « pour rester réversible » : elle
+       l'est tout autant, restaurée dans `_retirer_relais_c()`, et c'est la seule qui reçoive
+       réellement le texte sur cette version du paquet.
+
+    Le handler n'échoue jamais — une exception levée depuis un `emit` pendant un chargement se
+    perdrait sur une sortie standard justement mise en sourdine par le moteur.
     """
 
     def __init__(self) -> None:
@@ -213,18 +227,35 @@ class CollecteurJournal(logging.Handler):
         self.blocs_surcharges: set[int] = set()
         self.lignes_tampons: list[str] = []
         self._niveaux: list[tuple[logging.Logger, int]] = []
+        # Callback C de relais et référence à l'original, gardés vivants tant qu'installés : le C ne
+        # garde que leurs adresses, un objet ctypes collecté ferait pointer `llama_log_set` dans le
+        # vide (même risque que `Surcharges.tableau`, documenté plus haut dans ce module).
+        self._callback_relais: Any = None
+        self._callback_original: Any = None
+        self._tampon_texte_c: str = ""
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
             message = record.getMessage()
         except Exception:  # noqa: BLE001 - un journal illisible ne doit pas interrompre un chargement
             return
+        self._analyser_ligne(message)
+
+    def _analyser_ligne(self, message: str) -> None:
         if MARQUEUR_SURCHARGE in message:
             trouve = MOTIF_BLOC.search(message)
             if trouve is not None:
                 self.blocs_surcharges.add(int(trouve.group(1)))
         elif MARQUEUR_TAMPON in message and len(self.lignes_tampons) < LIGNES_TAMPONS_MAX:
             self.lignes_tampons.append(message.strip())
+
+    def _capter_texte_c(self, texte: str) -> None:
+        """Reçoit un fragment brut du callback C, où une ligne peut arriver en plusieurs morceaux."""
+        self._tampon_texte_c += texte
+        *lignes, reste = self._tampon_texte_c.split("\n")
+        self._tampon_texte_c = reste
+        for ligne in lignes:
+            self._analyser_ligne(ligne)
 
     def brancher(self) -> None:
         """S'attache aux journaux candidats et abaisse leur seuil le temps du chargement."""
@@ -240,6 +271,48 @@ class CollecteurJournal(logging.Handler):
             journal.removeHandler(self)
             journal.setLevel(niveau)
         self._niveaux.clear()
+
+    def installer_relais_c(self, module: Any) -> None:
+        """Remplace le callback C tant que la voie `logging` n'est pas confirmée réceptrice.
+
+        Dégrade silencieusement si le binding n'expose pas ce qu'il faut : le collecteur reste
+        fonctionnel via `brancher()` seul, exactement comme avant ce correctif.
+        """
+        cible = getattr(module, "llama_cpp", None)
+        type_callback = getattr(cible, "llama_log_callback", None)
+        installateur = getattr(cible, "llama_log_set", None)
+        if cible is None or type_callback is None or not callable(installateur):
+            return
+        journal_module = getattr(module, "_logger", None)
+        original = getattr(journal_module, "llama_log_callback", None)
+
+        def _relais(niveau: int, texte: bytes, donnee_utilisateur: Any) -> None:  # noqa: ARG001
+            try:
+                self._capter_texte_c(texte.decode("utf-8", errors="replace"))
+            except Exception:  # noqa: BLE001 - un callback C qui lève termine le processus
+                return
+
+        try:
+            self._callback_relais = type_callback(_relais)
+            installateur(self._callback_relais, ctypes.c_void_p(0))
+            self._callback_original = original
+        except (AttributeError, TypeError, OSError) as exc:
+            logger.warning("Relais du journal C llama.cpp non installé : {}", exc)
+            self._callback_relais = None
+
+    def retirer_relais_c(self, module: Any) -> None:
+        """Restaure le callback C d'origine, sinon `llama_cpp._logger` reste muet après ce chargement."""
+        if self._callback_relais is None or self._callback_original is None:
+            self._callback_relais = None
+            return
+        cible = getattr(module, "llama_cpp", None)
+        installateur = getattr(cible, "llama_log_set", None) if cible is not None else None
+        if callable(installateur):
+            try:
+                installateur(self._callback_original, ctypes.c_void_p(0))
+            except (AttributeError, TypeError, OSError) as exc:
+                logger.warning("Restauration du journal C llama.cpp échouée : {}", exc)
+        self._callback_relais = None
 
 
 @contextmanager
@@ -264,8 +337,10 @@ def deport_actif(module: Any, indices: tuple[int, ...], buffer_type: int) -> Ite
     try:
         cible.llama_model_default_params = parametres_surcharges
         collecteur.brancher()
+        collecteur.installer_relais_c(module)
         yield collecteur
     finally:
+        collecteur.retirer_relais_c(module)
         collecteur.debrancher()
         cible.llama_model_default_params = originale
         # `surcharges` reste référencé jusqu'ici : le C a lu ses adresses pendant tout le bloc.
