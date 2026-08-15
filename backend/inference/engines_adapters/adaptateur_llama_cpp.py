@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import json
 import os
+import re
 import threading
 import time
 from pathlib import Path
@@ -379,8 +381,15 @@ class AdaptateurLlamaCpp(AdaptateurMoteur):
         options: OptionsGeneration,
         outils: Sequence[dict[str, Any]],
     ) -> list[dict[str, Any]]:
+        # Le verrou est celui des générations : sans cette prise, deux fils toucheraient le même
+        # objet C. Un moteur occupé n'est pas une erreur — la génération qui suit attendra son
+        # tour —, mais l'abandon doit rester visible, sinon le modèle génère sans outil et
+        # l'utilisateur ne voit qu'une réponse inventée sans savoir pourquoi.
         if not self._verrou_generation.acquire(timeout=DELAI_VERROU_GENERATION_S):
-            logger.warning("Proposition d'outils abandonnée : le moteur est occupé.")
+            logger.warning(
+                "Proposition d'outils abandonnée après {} s : le moteur est occupé par une autre génération.",
+                DELAI_VERROU_GENERATION_S,
+            )
             return []
         try:
             llm = self._llm
@@ -399,10 +408,23 @@ class AdaptateurLlamaCpp(AdaptateurMoteur):
         finally:
             self._verrou_generation.release()
         if not isinstance(reponse, dict):
+            logger.warning("Proposition d'outils : réponse de forme inattendue ({}).", type(reponse).__name__)
             return []
         choix = (reponse.get("choices") or [{}])[0]
-        appels = (choix.get("message") or {}).get("tool_calls") or []
-        return [appel for appel in appels if isinstance(appel, dict)]
+        message = choix.get("message") or {}
+        appels = [appel for appel in (message.get("tool_calls") or []) if isinstance(appel, dict)]
+        # Tracé dans les deux cas : « le modèle n'a demandé aucun outil » et « le harnais n'a pas
+        # tourné » produisent la même réponse à l'écran, et seuls les journaux peuvent les séparer.
+        if appels:
+            logger.info("Le modèle demande {} appel(s) d'outil.", len(appels))
+            return appels
+        texte = str(message.get("content") or "")
+        textuels = _appels_dans_le_texte(texte)
+        if textuels:
+            logger.info("Le modèle demande {} appel(s) d'outil, en texte.", len(textuels))
+            return textuels
+        logger.info("Le modèle n'a demandé aucun outil (début de réponse : {!r}).", texte[:160])
+        return []
 
     def generer(
         self,
@@ -451,6 +473,45 @@ class AdaptateurLlamaCpp(AdaptateurMoteur):
             yield MorceauGeneration(type="fin", raison_arret=raison)
         finally:
             self._verrou_generation.release()
+
+
+"""Appels d'outils émis EN TEXTE, dans `content`, au lieu du champ `tool_calls`.
+
+Mesuré le 2026-08-15 : les gabarits Qwen produisent la balise `<tool_call>` autour d'un objet JSON,
+et llama-cpp-python ne remplit `tool_calls` que pour les formats qu'il sait analyser lui-même
+(functionary, chatml-function-calling). Avec le gabarit natif du GGUF — celui qu'on veut garder,
+puisque c'est lui qui connaît le modèle — l'appel arrive donc en texte brut et se retrouve affiché
+à l'utilisateur au lieu d'être exécuté.
+
+Le JSON relevé porte des accolades doublées (`{{"name": …}}`), artefact du gabarit lui-même. On
+retente donc une fois après les avoir réduites : refuser un appel pour une accolade en trop
+reviendrait à casser l'outil sur un détail de mise en forme que le modèle ne contrôle pas.
+"""
+_MOTIF_APPEL_TEXTE = re.compile(r"<tool_call>\s*(?P<charge>.+?)\s*</tool_call>", re.DOTALL | re.IGNORECASE)
+
+
+def _charger_json_tolerant(charge: str) -> dict[str, Any] | None:
+    for candidat in (charge, charge.replace("{{", "{").replace("}}", "}")):
+        try:
+            valeur = json.loads(candidat)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(valeur, dict):
+            return valeur
+    logger.warning("Appel d'outil en texte illisible : {!r}", charge[:200])
+    return None
+
+
+def _appels_dans_le_texte(texte: str) -> list[dict[str, Any]]:
+    """Appels trouvés dans le texte, ramenés à la forme `tool_calls` du reste de la chaîne."""
+    appels: list[dict[str, Any]] = []
+    for trouve in _MOTIF_APPEL_TEXTE.finditer(texte):
+        charge = _charger_json_tolerant(trouve.group("charge"))
+        nom = str(charge.get("name", "")) if charge else ""
+        if not nom:
+            continue
+        appels.append({"type": "function", "function": {"name": nom, "arguments": charge.get("arguments", {})}})
+    return appels
 
 
 async def _fermer(instance: Any) -> None:

@@ -52,6 +52,7 @@ from backend.models.download_selection import (
     motifs_ignores,
     octets_recus,
     octets_totaux,
+    parts_du_meme_modele,
     resoudre_cible,
 )
 from backend.models.download_worker import executer_telechargement, remediation, supprimer

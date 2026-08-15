@@ -40,7 +40,7 @@ def test_envoi_normal_prolonge_la_branche_courante(conversation: ResumeConversat
     utilisateur = depot.lire_message(conversation.id, preparation.message_utilisateur_id)
     assert utilisateur is not None and utilisateur.parent_id == reponse
     assert preparation.parent_id == utilisateur.id
-    assert [m.contenu for m in preparation.requete.messages] == ["bonjour", "salut", "suite"]
+    assert [m.contenu for m in preparation.requete.messages if m.role != "system"] == ["bonjour", "salut", "suite"]
 
 
 def test_rejeu_d_une_reponse_repart_de_son_parent(conversation: ResumeConversation) -> None:
@@ -50,7 +50,7 @@ def test_rejeu_d_une_reponse_repart_de_son_parent(conversation: ResumeConversati
     assert preparation.parent_id == question
     assert preparation.message_utilisateur_id is None
     # L'ancienne réponse n'est plus dans le contexte : on rejoue le tour, on ne l'enchaîne pas.
-    assert [m.contenu for m in preparation.requete.messages] == ["bonjour"]
+    assert [m.contenu for m in preparation.requete.messages if m.role != "system"] == ["bonjour"]
 
     # Tant que rien n'est généré, la vue reste sur la branche complète existante : une génération
     # qui échoue ne doit pas laisser l'utilisateur sur une question sans réponse.
@@ -81,7 +81,7 @@ def test_edition_cree_une_branche_et_garde_l_original(conversation: ResumeConver
         conversation.id, question, DemandeEdition(contenu="bonjour")
     )
 
-    assert [m.contenu for m in preparation.requete.messages] == ["bonjour"]
+    assert [m.contenu for m in preparation.requete.messages if m.role != "system"] == ["bonjour"]
     conserves = {m.id for m in depot.lire_arbre(conversation.id).messages}
     assert {question, reponse} <= conserves
 
@@ -128,8 +128,11 @@ def test_les_reglages_partent_tels_quels_au_moteur(conversation: ResumeConversat
     preparation = generation.preparer(conversation.id, DemandeGeneration(contenu="bonjour"))
 
     assert preparation.requete.parametres == reglages.parametres
+    # Le prompt de la conversation est CONSERVÉ, mais il n'est plus seul : le socle du harnais le
+    # précède dans le même message système, pour que le modèle sache quels outils existent avant
+    # d'obéir à sa consigne de style. L'un ne remplace jamais l'autre.
     assert preparation.requete.messages[0].role == "system"
-    assert preparation.requete.messages[0].contenu == "Tu es bref."
+    assert preparation.requete.messages[0].contenu.endswith("Tu es bref.")
 
 
 def test_parametres_du_tour_surchargent_ceux_de_la_conversation(conversation: ResumeConversation) -> None:
