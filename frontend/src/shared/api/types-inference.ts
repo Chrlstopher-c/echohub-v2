@@ -101,7 +101,7 @@ export interface SessionChargement {
  * Postes de la fenêtre de contexte. `libre` est un poste à part entière, pas un reste implicite :
  * l'espace restant se lit et se chiffre comme les autres.
  */
-export type PosteContexte = 'systeme' | 'utilisateur' | 'assistant' | 'raisonnement' | 'libre';
+export type PosteContexte = 'systeme' | 'utilisateur' | 'images' | 'assistant' | 'raisonnement' | 'libre';
 
 /** Un poste chiffré par le tokenizer du modèle chargé. */
 export interface PartContexte {

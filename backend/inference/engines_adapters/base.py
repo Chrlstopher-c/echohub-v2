@@ -16,12 +16,14 @@ from typing import AsyncIterator, ClassVar, Sequence
 
 from backend.inference.engines_adapters.contrat import (
     CauseEchec,
+    ComptageImages,
     ComptageTokens,
     EtatMoteur,
     MessageChat,
     MorceauGeneration,
     MoteurSupporte,
     OptionsGeneration,
+    PartieImageChemin,
     PlanChargement,
     Sante,
 )
@@ -74,6 +76,20 @@ class AdaptateurMoteur(ABC):
         return ComptageTokens(
             possible=False,
             raison=f"Le moteur {self.moteur.value} n'expose pas son tokenizer dans ce processus.",
+        )
+
+    async def compter_multimodal(self, images: Sequence[PartieImageChemin]) -> ComptageImages:
+        """Coût en tokens des images, mesuré par le même découpage qui les placera dans le prompt.
+
+        Non abstraite, défaut « impossible » — comme `compter_tokens` : seul llama.cpp expose ce
+        mécanisme (`mtmd_tokenize`) dans ce processus. vLLM en sous-processus hérite du refus nommé
+        plutôt que d'une obligation qu'il ne pourrait tenir. Jamais un zéro : un décompte nul se
+        confondrait avec une conversation sans image.
+        """
+        del images
+        return ComptageImages(
+            possible=False,
+            raison=f"Le moteur {self.moteur.value} n'expose pas de mesure multimodale dans ce processus.",
         )
 
     async def proposer_outils(

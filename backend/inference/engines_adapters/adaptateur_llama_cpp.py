@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import ctypes
 import gc
 import json
 import os
@@ -29,6 +30,7 @@ from loguru import logger
 from backend.inference.engines_adapters.base import AdaptateurMoteur, exiger_moteur, exiger_source_lisible
 from backend.inference.engines_adapters.contrat import (
     CauseEchec,
+    ComptageImages,
     ComptageTokens,
     EtatMoteur,
     ImageURL,
@@ -39,6 +41,7 @@ from backend.inference.engines_adapters.contrat import (
     PartieContenu,
     PartieImage,
     PartieImageChemin,
+    PartieTexte,
     PlanChargement,
     Sante,
 )
@@ -110,9 +113,122 @@ def _message_pour_moteur(message: MessageChat) -> dict[str, Any]:
     return {"role": message.role, "content": [partie.model_dump() for partie in parties if partie is not None]}
 
 
-def _messages_pour_moteur(messages: Sequence[MessageChat]) -> list[dict[str, Any]]:
-    """Sérialise les messages pour le moteur — SEUL endroit qui encode une image en data URI."""
-    return [_message_pour_moteur(message) for message in messages]
+# Bornes des marqueurs JPEG SOFn (« Start Of Frame ») porteurs des dimensions. Les autres marqueurs
+# de la famille SOF (progressive, arithmétique...) partagent le même agencement de segment ; ceux
+# listés ici couvrent l'écrasante majorité des JPEG produits par un navigateur ou un appareil photo.
+_MARQUEURS_JPEG_SOF = frozenset({0xC0, 0xC1, 0xC2, 0xC3})
+_MARQUEURS_JPEG_SANS_LONGUEUR = frozenset({0x01, 0xD8}) | frozenset(range(0xD0, 0xD8))
+
+
+def _dimensions_jpeg(octets: bytes) -> tuple[int, int] | None:
+    """Largeur/hauteur JPEG lues dans le segment SOF — jamais devinées, `None` si introuvables."""
+    indice = 2
+    borne = len(octets)
+    # Borne explicite : un JPEG valide ne peut pas contenir plus de segments que d'octets / 4.
+    for _ in range(borne // 4 + 1):
+        if indice + 4 > borne or octets[indice] != 0xFF:
+            return None
+        marqueur = octets[indice + 1]
+        if marqueur in _MARQUEURS_JPEG_SOF:
+            hauteur = int.from_bytes(octets[indice + 5 : indice + 7], "big")
+            largeur = int.from_bytes(octets[indice + 7 : indice + 9], "big")
+            return largeur, hauteur
+        if marqueur in _MARQUEURS_JPEG_SANS_LONGUEUR:
+            indice += 2
+            continue
+        taille_segment = int.from_bytes(octets[indice + 2 : indice + 4], "big")
+        indice += 2 + taille_segment
+    return None
+
+
+def _dimensions_image(octets: bytes) -> tuple[int, int] | None:
+    """Largeur/hauteur lues dans l'en-tête du fichier — PNG et JPEG seulement.
+
+    Aucune formule, aucune estimation : soit l'en-tête connu est présent et on le lit, soit `None`
+    et la ligne factuelle du repli (2.4) omet les dimensions plutôt que d'en inventer. GIF, WebP et
+    SVG (formats acceptés par le magasin de fichiers, `backend/fichiers/politique.py`) ne sont pas
+    couverts ici : le poids et le nom suffisent à la donnée factuelle transmise au modèle.
+    """
+    if octets[:8] == b"\x89PNG\r\n\x1a\n" and len(octets) >= 24:
+        largeur = int.from_bytes(octets[16:20], "big")
+        hauteur = int.from_bytes(octets[20:24], "big")
+        return largeur, hauteur
+    if octets[:2] == b"\xff\xd8":
+        return _dimensions_jpeg(octets)
+    return None
+
+
+def _ligne_image_repliee(partie: PartieImageChemin) -> str:
+    """Ligne factuelle qui remplace une image dans le texte, quand le moteur n'a pas de vision.
+
+    Seul repli autorisé par le plan (2.4) : une DONNÉE transmise au modèle DANS le message
+    utilisateur, jamais un refus rendu à l'utilisateur. Le modèle sait qu'une image existe, avec
+    son nom, ses dimensions si lisibles, son poids — et répond ce qu'il veut de cette information.
+    """
+    nom = partie.nom_affiche or Path(partie.chemin).name
+    try:
+        octets = Path(partie.chemin).read_bytes()
+    except OSError as exc:
+        logger.warning("Image jointe illisible pour le repli sans vision : {} ({})", partie.chemin, exc)
+        return f"[image jointe : {nom}]"
+    taille_ko = len(octets) // 1024
+    dimensions = _dimensions_image(octets)
+    if dimensions is None:
+        return f"[image jointe : {nom}, {taille_ko} Ko]"
+    largeur, hauteur = dimensions
+    return f"[image jointe : {nom}, {largeur}×{hauteur}, {taille_ko} Ko]"
+
+
+def _message_pour_moteur_sans_vision(message: MessageChat) -> dict[str, Any]:
+    """Repli du plan (2.4) : les parties image deviennent une ligne factuelle DANS le texte.
+
+    Le moteur chargé n'a pas de gestionnaire multimodal ; `content` doit donc rester une chaîne
+    simple, celle que son gabarit sait lire. Aucune image n'est perdue silencieusement : chaque
+    partie devient une ligne, journalisée, et le texte original reste intact autour d'elle.
+    """
+    if isinstance(message.content, str):
+        return message.model_dump()
+    morceaux: list[str] = []
+    images_repliees = 0
+    for partie in message.content:
+        if isinstance(partie, PartieTexte):
+            morceaux.append(partie.text)
+        elif isinstance(partie, PartieImageChemin):
+            morceaux.append(_ligne_image_repliee(partie))
+            images_repliees += 1
+        # `PartieImage` (déjà encodée en data URI) n'a rien à faire ici : l'encodage n'a lieu que
+        # dans le chemin AVEC vision (`_message_pour_moteur`), jamais avant ce repli.
+    if images_repliees:
+        logger.info(
+            "Repli sans vision : {} image(s) remplacée(s) par une ligne factuelle dans le message "
+            "(aucun projecteur multimodal chargé).",
+            images_repliees,
+        )
+    return {"role": message.role, "content": "\n".join(morceaux)}
+
+
+def _vision_disponible(llm: Any) -> bool:
+    """Le moteur chargé a-t-il un gestionnaire multimodal ? — seul juge du chemin à emprunter.
+
+    `Llama` stocke le `chat_handler` reçu au chargement (`_parametres`, `chat_handler=`) tel quel :
+    sa seule présence dit que `_handler_vision` a trouvé et construit un projecteur. Rien n'est
+    déduit du nom du modèle ni de sa capacité déclarée — l'objet réellement chargé fait foi.
+    """
+    return getattr(llm, "chat_handler", None) is not None
+
+
+def _messages_pour_moteur(messages: Sequence[MessageChat], vision_disponible: bool = True) -> list[dict[str, Any]]:
+    """Sérialise les messages pour le moteur — SEUL endroit qui encode une image en data URI.
+
+    `vision_disponible` bascule entre les deux chemins du plan (2.2 et 2.4) : avec un gestionnaire
+    multimodal, chaque image devient une partie `image_url`. Sans lui, c'est le repli — l'image
+    devient une ligne de texte factuelle DANS le message. Défaut à `True` pour ne pas changer le
+    comportement des appelants qui ignorent délibérément la question (aucun en dehors des tests) ;
+    les deux appels réels du moteur (génération, proposition d'outils) passent la valeur mesurée.
+    """
+    if vision_disponible:
+        return [_message_pour_moteur(message) for message in messages]
+    return [_message_pour_moteur_sans_vision(message) for message in messages]
 
 
 class AdaptateurLlamaCpp(AdaptateurMoteur):
@@ -438,6 +554,68 @@ class AdaptateurLlamaCpp(AdaptateurMoteur):
         finally:
             self._verrou_generation.release()
 
+    async def compter_multimodal(self, images: Sequence[PartieImageChemin]) -> ComptageImages:
+        """Coût en tokens de chaque image, mesuré par le même découpage qui la placera dans le prompt.
+
+        Sans projecteur chargé, aucun contexte mtmd n'existe : la mesure est impossible, nommée —
+        jamais un zéro (plan d'exécution, 2.3). Le travail part dans un fil comme le reste de
+        l'adaptateur : `mtmd_tokenize` décode l'image (`stb_image`) et l'encode au travers du clip,
+        un appel bloquant vers le C.
+        """
+        if self._llm is None:
+            return ComptageImages(
+                possible=False,
+                raison="Aucun modèle chargé dans llama.cpp : pas de contexte multimodal, donc pas de comptage.",
+            )
+        handler = getattr(self._llm, "chat_handler", None)
+        if handler is None or not hasattr(handler, "_mtmd_cpp"):
+            return ComptageImages(
+                possible=False,
+                raison="Aucun projecteur de vision chargé avec ce modèle : le coût d'une image n'est pas mesurable.",
+            )
+        try:
+            return await asyncio.to_thread(self._compter_multimodal_sous_verrou, handler, list(images))
+        except Exception as exc:
+            logger.error("Comptage multimodal llama.cpp en échec : {}", exc)
+            return ComptageImages(possible=False, raison=f"Le découpage multimodal a refusé l'image : {exc}")
+
+    def _compter_multimodal_sous_verrou(self, handler: Any, images: list[PartieImageChemin]) -> ComptageImages:
+        """Tokenise chaque image séparément, sous UNE prise du verrou de génération.
+
+        Une image à la fois plutôt qu'un lot dans un seul `mtmd_tokenize` : c'est ce qui rend
+        `tokens_par_image` directement comparable au découpage par segment du texte — le coût
+        PROPRE de chacune, pas un total mélangé à celui de ses voisines.
+        """
+        if not self._verrou_generation.acquire(timeout=DELAI_VERROU_COMPTAGE_S):
+            return ComptageImages(
+                possible=False,
+                raison="Une génération occupe le moteur : le comptage reprendra à la fin du flux.",
+            )
+        try:
+            llm = self._llm
+            if llm is None:  # déchargé pendant l'attente du verrou
+                return ComptageImages(possible=False, raison="Modèle déchargé pendant l'attente du verrou.")
+            try:
+                handler._init_mtmd_context(llm)  # idempotent : déjà fait dès la première génération
+            except Exception as exc:
+                return ComptageImages(possible=False, raison=f"Contexte multimodal indisponible : {exc}")
+            mtmd_cpp = handler._mtmd_cpp
+            tokens_par_image: list[int] = []
+            for image in images:
+                # Même remise à zéro que `MTMDChatHandler.__call__` juste avant son propre
+                # `mtmd_tokenize` (`llama_chat_format.py`, autour de la ligne 3511) : la mesure
+                # emprunte le même état de départ que la génération, jamais un contexte KV hérité
+                # d'un appel précédent.
+                llm.reset()
+                llm._ctx.kv_cache_clear()
+                resultat = _tokeniser_une_image(mtmd_cpp, handler, image)
+                if isinstance(resultat, str):  # raison d'échec
+                    return ComptageImages(possible=False, raison=resultat)
+                tokens_par_image.append(resultat)
+            return ComptageImages(possible=True, tokens_par_image=tokens_par_image)
+        finally:
+            self._verrou_generation.release()
+
     async def proposer_outils(
         self,
         messages: Sequence[MessageChat],
@@ -495,7 +673,7 @@ class AdaptateurLlamaCpp(AdaptateurMoteur):
             arguments = _arguments_echantillonnage(options)
             arguments["max_tokens"] = TOKENS_PROPOSITION_OUTILS
             reponse = llm.create_chat_completion(
-                messages=_messages_pour_moteur(messages),
+                messages=_messages_pour_moteur(messages, _vision_disponible(llm)),
                 tools=list(outils),
                 tool_choice="auto",
                 stream=False,
@@ -567,7 +745,7 @@ class AdaptateurLlamaCpp(AdaptateurMoteur):
             extra: dict[str, Any] = {"tools": list(outils), "tool_choice": "auto"} if outils else {}
             flux = self._llm.create_chat_completion(  # type: ignore[union-attr]
                 **extra,
-                messages=_messages_pour_moteur(messages),
+                messages=_messages_pour_moteur(messages, _vision_disponible(self._llm)),
                 stream=True,
                 **_arguments_echantillonnage(options),
             )
@@ -668,6 +846,50 @@ async def _fermer(instance: Any) -> None:
     finally:
         del instance
         gc.collect()
+
+
+def _tokeniser_une_image(mtmd_cpp: Any, handler: Any, image: PartieImageChemin) -> int | str:
+    """Coût réel d'UNE image en tokens — ou une raison d'échec (`str`), jamais un zéro deviné.
+
+    Reproduit exactement l'entrée que `MTMDChatHandler.__call__` construit avant de générer
+    (`llama_chat_format.py`, section `MTMDChatHandler`) : le marqueur média par défaut comme seul
+    texte, la même image en bitmap, la même fonction `mtmd_tokenize` qui la découpera au moment de
+    répondre. `mtmd_input_chunk_get_n_tokens` est sommé sur CHAQUE chunk rendu — texte du marqueur
+    compris, pour ne rien soustraire à la main — plutôt que déduit d'une formule sur la résolution
+    (plan d'exécution, 2.3 : c'est exactement l'interdiction que cette fonction respecte).
+
+    Rend un `int` (0 admis : c'est une mesure, pas une absence) sur succès, une `str` (la raison)
+    sur échec — le type de retour porte la distinction plutôt qu'une exception pour un cas attendu.
+    """
+    try:
+        octets = Path(image.chemin).read_bytes()
+    except OSError as exc:
+        return f"Image illisible ({image.chemin}) : {exc}"
+    try:
+        bitmap = handler._create_bitmap_from_bytes(octets)
+    except Exception as exc:
+        return f"Le moteur n'a pas pu décoder l'image ({image.chemin}) : {exc}"
+    chunks = mtmd_cpp.mtmd_input_chunks_init()
+    try:
+        if chunks is None:
+            return "Le moteur n'a pas pu allouer de découpage pour l'image."
+        entree = mtmd_cpp.mtmd_input_text()
+        entree.text = mtmd_cpp.mtmd_default_marker()
+        entree.add_special = False
+        entree.parse_special = True
+        tableau_bitmaps = (mtmd_cpp.mtmd_bitmap_p_ctypes * 1)(bitmap)
+        resultat = mtmd_cpp.mtmd_tokenize(handler.mtmd_ctx, chunks, ctypes.byref(entree), tableau_bitmaps, 1)
+        if resultat != 0:
+            return f"La tokenisation de l'image a échoué (code {resultat})."
+        total = 0
+        for indice in range(mtmd_cpp.mtmd_input_chunks_size(chunks)):
+            chunk = mtmd_cpp.mtmd_input_chunks_get(chunks, indice)
+            if chunk is not None:
+                total += mtmd_cpp.mtmd_input_chunk_get_n_tokens(chunk)
+        return total
+    finally:
+        mtmd_cpp.mtmd_input_chunks_free(chunks)
+        mtmd_cpp.mtmd_bitmap_free(bitmap)
 
 
 def _compter_un(llm: Any, texte: str) -> int:

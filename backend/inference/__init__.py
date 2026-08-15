@@ -104,7 +104,8 @@ def _contenu_moteur(contenu: str, pieces: object) -> str | list[PartieContenu]:
         if chemin is None or type_mime is None:
             logger.warning("Pièce jointe ignorée, forme inattendue : {}", type(piece).__name__)
             continue
-        parties.append(PartieImageChemin(chemin=str(chemin), type_mime=type_mime))
+        nom_affiche = getattr(piece, "nom_affiche", None) or ""
+        parties.append(PartieImageChemin(chemin=str(chemin), type_mime=type_mime, nom_affiche=nom_affiche))
     return parties if parties else contenu
 
 

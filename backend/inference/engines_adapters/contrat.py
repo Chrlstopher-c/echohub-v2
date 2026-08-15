@@ -126,6 +126,10 @@ class PartieImageChemin(BaseModel):
     à partir des pièces jointes du port (`chat.port_inference.PieceJointe`). Elle n'est PAS valide à
     envoyer au moteur : `adaptateur_llama_cpp` la convertit en `PartieImage` (avec un vrai data URI)
     au tout dernier moment, juste avant `create_chat_completion` — plan d'exécution, section 2.2.
+
+    `nom_affiche` existe pour le repli sans vision (2.4) : la ligne factuelle qui remplace une
+    image quand le moteur n'a pas de projecteur a besoin d'un nom lisible, pas de l'identifiant de
+    fichier sur disque. Vide par défaut — le repli retombe alors sur le nom du fichier.
     """
 
     model_config = ConfigDict(extra="ignore")
@@ -133,6 +137,7 @@ class PartieImageChemin(BaseModel):
     type: Literal["image_chemin"] = "image_chemin"
     chemin: str
     type_mime: str
+    nom_affiche: str = ""
 
 
 class ImageURL(BaseModel):
@@ -242,17 +247,20 @@ class PosteContexte(str, Enum):
 
     SYSTEME = "systeme"
     UTILISATEUR = "utilisateur"
+    IMAGES = "images"
     ASSISTANT = "assistant"
     RAISONNEMENT = "raisonnement"
     LIBRE = "libre"
 
 
 # Ordre d'affichage : de ce que l'utilisateur subit (le système, qu'il ne voit pas) vers ce qu'il
-# produit, puis l'espace restant. Le raisonnement précède la réponse visible parce que c'est lui
-# que l'utilisateur découvre comme dévoreur de budget.
+# produit, puis l'espace restant. Les images suivent immédiatement le texte utilisateur — même
+# famille de coût, la pièce jointe plutôt que la frappe. Le raisonnement précède la réponse visible
+# parce que c'est lui que l'utilisateur découvre comme dévoreur de budget.
 ORDRE_POSTES: tuple[PosteContexte, ...] = (
     PosteContexte.SYSTEME,
     PosteContexte.UTILISATEUR,
+    PosteContexte.IMAGES,
     PosteContexte.RAISONNEMENT,
     PosteContexte.ASSISTANT,
     PosteContexte.LIBRE,
@@ -332,6 +340,20 @@ class ComptageTokens(BaseModel):
     )
 
 
+class ComptageImages(BaseModel):
+    """Décompte en tokens d'images — ou son impossibilité, nommée (plan d'exécution, 2.3).
+
+    Même discipline que `ComptageTokens`, appliquée à un contenu qui n'est pas du texte : une
+    mesure absente se déclare absente avec sa raison, elle ne se dégrade JAMAIS en zéro. Le champ
+    `tokens_par_image` vient du même découpage que celui qui placera l'image dans la fenêtre
+    (`mtmd_tokenize` + `mtmd_input_chunk_get_n_tokens`) — jamais d'une formule sur la résolution.
+    """
+
+    possible: bool
+    raison: str = ""
+    tokens_par_image: list[int] = Field(default_factory=list)
+
+
 def separer_raisonnement(contenu: str) -> tuple[str, str]:
     """Sépare un message assistant en (visible, raisonnement) sans perdre un seul caractère.
 
@@ -388,6 +410,22 @@ def decouper_segments(prompt_systeme: str, messages: Sequence[MessageChat]) -> l
     return segments
 
 
+def decouper_images(messages: Sequence[MessageChat]) -> list[PartieImageChemin]:
+    """Pièces image d'une conversation, dans l'ordre des messages — ce que le poste `IMAGES` chiffre.
+
+    Symétrique de `decouper_segments` pour le texte. Seules les parties encore sous forme CHEMIN
+    sont retenues : c'est la forme qui traverse le port `chat` → `inference`, avant tout encodage.
+    Une `PartieImage` déjà résolue (data URI) ne devrait jamais atteindre ce point — l'encodage n'a
+    lieu que dans l'adaptateur, au moment de générer, jamais au moment de mesurer.
+    """
+    images: list[PartieImageChemin] = []
+    for message in messages:
+        if isinstance(message.content, str):
+            continue
+        images.extend(partie for partie in message.content if isinstance(partie, PartieImageChemin))
+    return images
+
+
 def _cumuler_par_poste(
     segments: Sequence[SegmentContexte],
     tokens_par_segment: Sequence[int],
@@ -435,9 +473,18 @@ def assembler_occupation(
     contexte_plan: int | None = None,
     moteur: MoteurSupporte | None = None,
     modele: str | None = None,
+    tokens_images: int | None = None,
+    nombre_images: int = 0,
 ) -> OccupationContexte:
-    """Compose la vue chiffrée. Les pourcentages sont calculés ici, une seule fois, jamais côté client."""
+    """Compose la vue chiffrée. Les pourcentages sont calculés ici, une seule fois, jamais côté client.
+
+    `tokens_images` est `None` tant qu'aucune image n'a été mesurée — le poste `IMAGES` n'apparaît
+    alors pas du tout, plutôt que d'afficher un zéro qui se confondrait avec « mesuré à zéro ».
+    """
     tokens, nombres = _cumuler_par_poste(segments, tokens_par_segment)
+    if tokens_images is not None:
+        tokens[PosteContexte.IMAGES] = tokens_images
+        nombres[PosteContexte.IMAGES] = nombre_images
     mesures = sum(tokens.values())
     tokens[PosteContexte.LIBRE] = max(0, contexte_total - mesures)
     postes = _construire_postes(tokens, nombres, contexte_total)
