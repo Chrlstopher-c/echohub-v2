@@ -75,6 +75,26 @@ CREATE TABLE IF NOT EXISTS chat_migrations (
     nom       TEXT PRIMARY KEY,
     passee_le TEXT NOT NULL
 );
+
+-- Domaine `fichiers` (lot L0 du plan d'exécution) : magasin unique des fichiers de conversation,
+-- pièces jointes ET artefacts produits par le modèle, distingués par `origine`. Les octets ne
+-- vivent jamais ici : `chemin_relatif` est une référence vers le disque
+-- (`backend/fichiers/stockage.py`), jamais un contenu. Ajout PUREMENT additif : nouvelle table,
+-- aucune ligne existante d'aucune autre table n'est touchée par sa création.
+CREATE TABLE IF NOT EXISTS fichiers_conversation (
+    id               TEXT PRIMARY KEY,
+    conversation_id  TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    message_id       TEXT REFERENCES messages(id) ON DELETE SET NULL,
+    origine          TEXT NOT NULL CHECK (origine IN ('utilisateur', 'modele')),
+    nom_affiche      TEXT NOT NULL,
+    chemin_relatif   TEXT NOT NULL,
+    type_mime        TEXT NOT NULL,
+    taille_octets    INTEGER NOT NULL,
+    empreinte_sha256 TEXT NOT NULL,
+    cree_le          TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_fichiers_conversation_id ON fichiers_conversation(conversation_id);
 """
 
 # Retrait de l'ancien défaut inventé de `max_tokens`. Il valait 1024 et était figé À LA CRÉATION de
@@ -242,10 +262,31 @@ def definir_modele_conversation(conversation_id: str, modele_id: str) -> None:
 
 
 def supprimer_conversation(conversation_id: str) -> None:
-    """Supprime la conversation. Messages et réglages suivent par cascade (`PRAGMA foreign_keys=ON`)."""
+    """Supprime la conversation. Messages, réglages et fichiers suivent (cascade SQL, puis disque)."""
     exiger_conversation(conversation_id)
     execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
+    _supprimer_dossier_fichiers(conversation_id)
     logger.debug("Conversation supprimée : {}", conversation_id)
+
+
+def _supprimer_dossier_fichiers(conversation_id: str) -> None:
+    """Branche la suppression du dossier disque du magasin de fichiers (lot L0).
+
+    Import différé, pas au niveau du module : `backend.fichiers` dépend de `backend.chat`
+    (vérification qu'une conversation existe avant tout dépôt) ; importer `backend.fichiers` ici
+    au chargement du module créerait un cycle entre les deux domaines.
+
+    La ligne SQL est déjà partie (cascade `ON DELETE CASCADE` sur `fichiers_conversation`) : un
+    échec de suppression du dossier est journalisé, pas remonté — la conversation reste supprimée
+    en base, seul le nettoyage disque a pu manquer, et il ne doit pas annuler une suppression déjà
+    actée.
+    """
+    from backend.fichiers import supprimer_dossier_conversation
+
+    try:
+        supprimer_dossier_conversation(conversation_id)
+    except ErreurPersistance as exc:
+        logger.error("Suppression du dossier de fichiers de {} échouée : {}", conversation_id, exc)
 
 
 def lire_reglages(conversation_id: str) -> ReglagesConversation:
