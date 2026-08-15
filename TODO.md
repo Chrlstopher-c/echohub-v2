@@ -54,7 +54,39 @@ espace libre             837 Go
   branchés nulle part : les périmètres cloisonnés évitent les conflits, mais personne ne monte le
   résultat.
 
-### 2. Charger un MoE en conditions réelles
+### 2. Captures d'écran et fichiers dans les conversations
+
+- [ ] Joindre une image (capture collée, glissée, ou choisie) à un message
+- [ ] Joindre un fichier
+- [ ] Transmettre au modèle chargé dès qu'il sait les lire, quel que soit le modèle
+
+**La règle demandée, et elle est structurante** : l'application **ne bloque pas** et **n'affiche
+aucun message générique** du type « ce modèle ne prend pas en charge les images ». Elle transmet.
+Si le modèle chargé n'a pas de tour de vision, c'est **lui** qui répond qu'il ne voit rien, avec
+ses mots. On laisse l'agent faire — une interface qui refuse à sa place se trompera tôt ou tard
+sur ce dont le modèle est capable, et retirera à l'utilisateur une réponse qui aurait pu venir.
+
+**Ce qui existe déjà, à ne pas réécrire :**
+
+- `backend/models/storage.py` → `fichiers_projecteurs()` détecte les `mmproj*.gguf`, seule trace
+  lisible d'une tour de vision sans ouvrir un octet.
+- `backend/models/capacites.py` → capacité `VISION` déjà déduite des annonces du Hub (étiquettes
+  `vision`, `multimodal`, `vlm`, `image-text-to-text`), avec sa provenance tracée.
+- Les filtres de capacités de l'écran Modèles savent déjà la présenter.
+
+**Le vrai chantier est le contrat de message.** `MessageChat.content` est aujourd'hui un `str`
+(`backend/inference/engines_adapters/contrat.py`). Le rendre multimodal touche toute la chaîne :
+contrat moteur, persistance du domaine `chat`, comptage du contexte (une image coûte des tokens
+qu'il faudra mesurer et non estimer), et l'affichage dans le fil. Côté llama.cpp, la vision passe
+par un gestionnaire de conversation dédié et le projecteur `mmproj` chargé à côté des poids —
+vérifier ce que `llama-cpp-python` 0.3.34 expose réellement AVANT de concevoir, comme pour les
+outils.
+
+**À croiser avec le bac à sable** : un fichier joint par l'utilisateur et un fichier produit par le
+modèle veulent tous deux vivre quelque part et s'afficher en artefact. Les deux sujets partagent le
+stockage et la présentation — les traiter d'affilée évite de bâtir deux mécanismes concurrents.
+
+### 3. Charger un MoE en conditions réelles
 
 - [ ] Charger le 35B-A3B et mesurer : VRAM occupée, RAM, débit
 - [ ] Comparer au plan calculé — le déport des experts récupère-t-il les 6 Go inutilisés ?
@@ -62,7 +94,7 @@ espace libre             837 Go
 Il est planifiable depuis le 2026-08-15 (`largeur_ffn_active` sérialisée), mais **jamais chargé**.
 Tout le code de déport existe et est couvert par des tests unitaires ; aucune mesure ne l'a validé.
 
-### 3. Vérifications restées en suspens
+### 4. Vérifications restées en suspens
 
 - [ ] GGUF en plusieurs parts : correctif écrit et poussé, **jamais éprouvé** sur un vrai
       téléchargement découpé
