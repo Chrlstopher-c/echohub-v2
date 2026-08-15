@@ -115,6 +115,20 @@ BALISE_ENTREE_FERMANTE = "</entree>"
 BALISE_SORTIE_OUVRANTE = "<sortie>"
 BALISE_SORTIE_FERMANTE = "</sortie>"
 
+# Marqueur de fin d'étape, posé quand le tour qui vient de s'achever a demandé un outil.
+#
+# Un modèle commente son travail avant d'appeler : « je vais chercher », « j'ai obtenu 6 résultats,
+# je synthétise ». Ce commentaire n'est pas la réponse, et le laisser dans le flux le fait passer
+# pour telle — parfois affiché en clair, parfois avalé dans un bloc de raisonnement selon que le
+# modèle a balisé ou non. Le même contenu changeait donc de traitement d'un tour à l'autre.
+#
+# Le marqueur est posé APRÈS coup plutôt qu'une balise ouverte à l'avance : au début d'un tour, rien
+# ne dit encore s'il produira un appel d'outil ou la réponse finale. Ouvrir une balise « au cas où »
+# replierait la réponse quand aucun outil n'est demandé — c'est-à-dire la plupart du temps.
+# Le streaming reste donc intact : l'utilisateur voit le texte arriver, et il est reclassé une fois
+# l'appel connu.
+BALISE_FIN_ETAPE = "<etape-fin/>"
+
 
 def _annonce(nom: str, arguments: object) -> str:
     """Ligne lisible d'un appel, montrée telle quelle dans le bloc replié."""
@@ -238,6 +252,9 @@ class MoteurChat:
             appels = _appels_demandes("".join(recu))
             if not appels or not outils:
                 break
+            # Ce tour appelait un outil : ce qui vient d'être écrit était donc du commentaire de
+            # travail, pas la réponse. On le signale au lieu de le laisser passer pour une réponse.
+            yield {"texte": BALISE_FIN_ETAPE}
             messages = list(messages) + [MessageChat(role="assistant", content="".join(recu))]
             async for etape in _executer_appels(appels, messages):
                 texte = etape.get("texte")

@@ -86,7 +86,48 @@ function fermetureOrpheline(source: string, depuis: number): Ouverture | null {
   return meilleure;
 }
 
+/*
+ * Marqueur posé par le backend à la fin d'un tour ayant demandé un outil. Ce qui le précède est le
+ * commentaire de travail du modèle — « je vais chercher », « j'ai 6 résultats, je synthétise » —
+ * et non sa réponse. Le laisser dans le texte visible le faisait passer pour la réponse, et la
+ * vraie réponse arrivait ensuite comme si elle en était la suite.
+ *
+ * Il est retiré du texte rendu : c'est du balisage, pas du contenu.
+ */
+const MARQUEUR_FIN_ETAPE = '<etape-fin/>';
+
+/**
+ * Découpe la source sur les marqueurs d'étape, et rend les commentaires de travail comme des
+ * segments repliables — au même titre qu'un raisonnement, puisque c'est la même nature : du
+ * cheminement, pas la réponse.
+ *
+ * Seul le DERNIER fragment est la réponse. Tout ce qui précède un marqueur appartient à un tour
+ * qui s'est conclu par un appel d'outil.
+ */
 export function segmenterReponse(source: string): ReponseSegmentee {
+  if (!source.includes(MARQUEUR_FIN_ETAPE)) {
+    return _segmenter(source);
+  }
+  const parts = source.split(MARQUEUR_FIN_ETAPE);
+  // `pop` ne peut pas rendre `undefined` : `split` rend toujours au moins un élément.
+  const finale = parts.pop() ?? '';
+  const etapes: SegmentRaisonnement[] = [];
+  for (const part of parts) {
+    const morceau = _segmenter(part);
+    etapes.push(...morceau.raisonnements);
+    if (morceau.visible.trim() !== '') {
+      etapes.push({ convention: 'etape', texte: morceau.visible.trim(), complet: true });
+    }
+  }
+  const derniere = _segmenter(finale);
+  return {
+    visible: derniere.visible,
+    raisonnements: [...etapes, ...derniere.raisonnements],
+    enCours: derniere.enCours,
+  };
+}
+
+function _segmenter(source: string): ReponseSegmentee {
   const visible: string[] = [];
   const raisonnements: SegmentRaisonnement[] = [];
   let curseur = 0;

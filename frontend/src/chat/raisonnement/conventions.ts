@@ -45,5 +45,6 @@ export const LIBELLE_CONVENTION: Readonly<Record<string, string>> = {
   think: 'Raisonnement',
   process: 'Raisonnement',
   outil: 'Outil',
+  etape: 'Étape',
   appel: 'Appel d’outil',
 };
