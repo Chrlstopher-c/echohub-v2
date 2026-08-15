@@ -46,6 +46,9 @@ class RequeteGeneration(BaseModel):
 
     `modele_id` est indicatif : le chargement des modèles appartient à `inference`. `chat` dit sur
     quel modèle la conversation travaille, il ne décide pas comment le charger.
+
+    `conversation_id` est obligatoire : c'est l'identité qui doit atteindre l'exécution d'un outil
+    (plan d'exécution, section 2.5). Sans elle, un outil confiné ne saurait dans quel bac écrire.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -53,6 +56,7 @@ class RequeteGeneration(BaseModel):
     messages: list[MessageInference] = Field(min_length=1)
     parametres: ParametresEchantillonnage
     modele_id: str | None = None
+    conversation_id: str = Field(min_length=1)
 
 
 class FragmentTexte(BaseModel):
