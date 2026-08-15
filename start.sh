@@ -92,7 +92,9 @@ attendre_api() {
 }
 
 demarrer_natif() {
-    local port_api="${ECHOHUB_PORT_API:-37821}" port_front="${ECHOHUB_PORT_FRONT_DEV:-37822}"
+    # Distincts des défauts v1 (37821/37822) : les deux versions peuvent tourner en même temps
+    # sur le même hôte sans se disputer un port (mesuré : bind KO côté v2, servi par la v1).
+    local port_api="${ECHOHUB_PORT_API:-37921}" port_front="${ECHOHUB_PORT_FRONT_DEV:-37922}"
     verifier_libre backend
     verifier_libre frontend
     preparer_backend
@@ -101,12 +103,23 @@ demarrer_natif() {
     local py
     py="$(python_venv)"
     journal "backend sur 127.0.0.1:$port_api"
-    (cd "$RACINE" && PYTHONPATH="$RACINE" "$py" -m uvicorn backend.main:app \
+    # `set -m` (job control) fait de chaque commande lancée en arrière-plan le MENEUR de son
+    # propre groupe de processus — $! capture alors ce meneur, PGID compris, et stop.sh peut
+    # cibler le groupe entier (kill sur -PID). Testé et écarté : `setsid CMD &` sans job control
+    # ne suffit pas — util-linux fait forker setsid(1) en interne quand l'appelant est déjà
+    # meneur de groupe, et $! capture alors le PARENT de ce fork (qui attend l'enfant), jamais
+    # le vrai meneur du nouveau groupe ; le `kill -PID` qui suit ne trouve personne à tuer, et
+    # le reloader continue d'écouter. Sans job control : $! ne désigne que le reloader d'uvicorn ;
+    # son worker enfant (--reload en lance un second) survit à un arrêt normal, port toujours en
+    # écoute — mesuré.
+    (set -m; cd "$RACINE" && PYTHONPATH="$RACINE" "$py" -m uvicorn backend.main:app \
         --host 127.0.0.1 --port "$port_api" --reload >>"$LOGS/backend.log" 2>&1 &
         echo $! > "$LOGS/backend.pid")
 
     journal "frontend sur 127.0.0.1:$port_front"
-    (cd "$RACINE/frontend" && bun run dev --port "$port_front" >>"$LOGS/frontend.log" 2>&1 &
+    # Même raison côté frontend : `bun run dev` spawn node/vite/esbuild comme processus enfants,
+    # que $! seul ne capture jamais sans job control.
+    (set -m; cd "$RACINE/frontend" && bun run dev --port "$port_front" >>"$LOGS/frontend.log" 2>&1 &
         echo $! > "$LOGS/frontend.pid")
 
     attendre_api "$port_api"

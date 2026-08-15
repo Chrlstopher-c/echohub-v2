@@ -9,7 +9,7 @@ calculé, on discute avec, le modèle appelle réellement des outils (recherche 
 local), et l'interface montre son raisonnement, ses appels d'outils et l'occupation du contexte.
 
 Six domaines backend montés, **53 opérations HTTP**, **196 tests Python verts**, typage TypeScript
-strict sans `any`. Accès local et LAN (`http://192.168.1.67:37820`).
+strict sans `any`. Accès local et LAN (`http://192.168.1.67:37920`).
 
 Le socle est solide ; ce qui manque est fonctionnel, pas structurel. Le prochain gros chantier est
 le bac à sable d'exécution de code et les artefacts (voir TODO.md, en tête).
@@ -83,7 +83,7 @@ propriété simple n'atteint jamais le navigateur. C'est ce qui bloquait tous le
 FFN active existait et était juste, mais invisible. `computed_field` est obligatoire dès qu'une
 dérivée doit voyager.
 
-**Aucune authentification.** Le port 37820 est ouvert sur le LAN : n'importe qui sur le réseau peut
+**Aucune authentification.** Le port 37920 est ouvert sur le LAN : n'importe qui sur le réseau peut
 charger, éjecter et interroger un modèle. Acceptable en usage domestique, à traiter avant toute
 exposition.
 

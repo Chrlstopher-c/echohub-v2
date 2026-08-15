@@ -7,7 +7,9 @@ set -euo pipefail
 
 RACINE_STATIQUE="/app/frontend/dist"
 MODULE_APP="${ECHOHUB_APP_MODULE:-backend.main:app}"
-PORT_API="${ECHOHUB_PORT_API:-37821}"
+# 37921, distinct du défaut v1 (37821) : cf. backend/core/config.py et docker/nginx.conf, qui
+# doit pointer sur le même port en amont.
+PORT_API="${ECHOHUB_PORT_API:-37921}"
 
 journal() { echo "[entrypoint] $*"; }
 

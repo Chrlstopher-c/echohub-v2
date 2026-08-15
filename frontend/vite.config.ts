@@ -7,8 +7,10 @@ import checker from 'vite-plugin-checker';
  * Ports lus dans l'environnement, jamais codés en dur : ce sont les mêmes variables que
  * `.env.example` à la racine, pour qu'un seul fichier décide des ports du projet.
  */
-const PORT_FRONT_DEV = Number(process.env['ECHOHUB_PORT_FRONT_DEV'] ?? 37822);
-const PORT_API = Number(process.env['ECHOHUB_PORT_API'] ?? 37821);
+// Distincts de la v1 (37822/37821) : les deux versions peuvent tourner en même temps sur le
+// même hôte sans se disputer un port.
+const PORT_FRONT_DEV = Number(process.env['ECHOHUB_PORT_FRONT_DEV'] ?? 37922);
+const PORT_API = Number(process.env['ECHOHUB_PORT_API'] ?? 37921);
 
 /*
  * Le proxy retire `/api` avant de transmettre, exactement comme nginx en production

@@ -41,8 +41,10 @@ services:
     shm_size: "2gb"
 
     ports:
-      - "${ECHOHUB_PORT_WEB:-37820}:80"          # interface web (nginx)
-      - "${ECHOHUB_PORT_API:-37821}:37821"       # API FastAPI directe, pour le débogage
+      # Distincts de la v1 (37820/37821) : les deux versions peuvent tourner en même temps sur
+      # le même hôte sans se disputer un port (mesuré : bind KO côté v2, servi par la v1).
+      - "${ECHOHUB_PORT_WEB:-37920}:80"          # interface web (nginx)
+      - "${ECHOHUB_PORT_API:-37921}:37921"       # API FastAPI directe, pour le débogage
 
     volumes:
       # Volumes nommés : MODELS_DIR et XDG_DATA_HOME pointent DEDANS (cf. Dockerfile). Tout ce

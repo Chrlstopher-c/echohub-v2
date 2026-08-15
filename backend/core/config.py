@@ -24,7 +24,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from backend.core.errors import ConfigurationInvalide
 
-NOM_APPLICATION = "echohub"
+# Distinct de la v1 ("echohub") : les deux versions peuvent tourner sur la même machine sans
+# partager XDG_DATA_HOME/echohub — la v1 y écrit un schéma anglais (`created_at`), incompatible
+# avec le schéma v2 (`cree_le`). Mesuré : un backend v2 lisant ce répertoire plante ou corrompt.
+NOM_APPLICATION = "echohub-v2"
 
 # Sous-dossier attribué à chaque chemin dérivé quand la variable d'environnement est absente.
 _SOUS_DOSSIERS: dict[str, str] = {"models_dir": "models", "engines_dir": "engines"}
@@ -63,7 +66,10 @@ class Settings(BaseSettings):
     engines_dir: Path = Field(default=None, validation_alias="ENGINES_DIR")
 
     host: str = Field(default="127.0.0.1", validation_alias="ECHOHUB_HOST")
-    port: int = Field(default=37821, ge=1, le=65535, validation_alias="ECHOHUB_PORT")
+    # Distinct du port par défaut de la v1 (37821), qui peut tourner simultanément sur la même
+    # machine. Mesuré : sur ce port-là, le bind de la v2 échouait avec "Address already in use"
+    # pendant qu'un curl répondait 200 — servi par la v1, pas par elle.
+    port: int = Field(default=37921, ge=1, le=65535, validation_alias="ECHOHUB_PORT")
 
     log_level: str = Field(default="INFO", validation_alias="ECHOHUB_LOG_LEVEL")
     log_to_file: bool = Field(default=True, validation_alias="ECHOHUB_LOG_TO_FILE")
