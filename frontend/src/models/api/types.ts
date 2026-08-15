@@ -142,10 +142,51 @@ export interface ModeleEnregistre {
   nb_couches: number | null;
   contexte_max: number | null;
   ajoute_le: string;
+  /** Marque posée par l'utilisateur, persistée en base — la même depuis le poste et le téléphone. */
+  favori: boolean;
+}
+
+/** Dossier présent sur le disque mais non inscriptible, avec la cause et quoi en faire. */
+export interface DossierIgnore {
+  dossier: string;
+  raison: string;
+  remediation: string;
 }
 
 export interface ResumeSynchronisation {
   entrees_supprimees: string[];
   entrees_ajoutees: string[];
-  dossiers_ignores: string[];
+  dossiers_ignores: DossierIgnore[];
+}
+
+/**
+ * Un dossier de la racine des modèles, inscrit au registre ou non.
+ *
+ * Miroir de `backend/models/disque.py`. Le registre n'expose que le CHARGEABLE ; ceci expose
+ * l'OCCUPÉ, avec la raison du refus quand il y en a une.
+ */
+export interface DossierDisque {
+  dossier: string;
+  depot: string;
+  taille_octets: number;
+  nb_fichiers_poids: number;
+  inscrit: boolean;
+  raison: string;
+  remediation: string;
+}
+
+export type NiveauIncoherence = 'avertissement' | 'bloquant';
+
+export interface Incoherence {
+  code: string;
+  niveau: NiveauIncoherence;
+  message: string;
+  remediation: string;
+}
+
+/** Confrontation du déclaré au présent. `bloquant` = le chargement échouera, inutile d'essayer. */
+export interface RapportCoherence {
+  chemin: string;
+  format: FormatModele | null;
+  incoherences: Incoherence[];
 }

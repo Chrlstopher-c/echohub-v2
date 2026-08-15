@@ -45,9 +45,17 @@ export interface RefusCible {
 
 export type ResultatCible = { readonly cible: CibleChargement } | { readonly refus: RefusCible };
 
+/*
+ * La remédiation doit désigner une action qui EXISTE. La version précédente renvoyait à un bouton
+ * « Vérifier » qui n'a jamais été posé dans l'interface : un conseil impossible à suivre est pire
+ * qu'aucun conseil, il fait chercher une issue là où il n'y en a pas.
+ *
+ * Ce qui est dit ici est vrai de tous les cas rencontrés : l'en-tête ne porte pas la clé, ce n'est
+ * ni un téléchargement raté ni un fichier abîmé, et aucune manipulation locale n'y changera rien.
+ */
 const REMEDIATION_METADONNEES =
-  "Lancer « Vérifier » sur ce modèle depuis l'écran Modèles : le rapport de cohérence nomme " +
-  'précisément ce que son en-tête ne déclare pas.';
+  "Cette architecture ne déclare pas cette valeur dans son en-tête — le fichier n'est pas en cause. " +
+  'Le clic droit sur le modèle donne son rapport de cohérence, qui détaille ce qui manque.';
 
 /** Plateformes que le planificateur sait traiter. macOS et « inconnue » n'en font pas partie. */
 const PLATEFORMES_PLANIFIABLES: readonly PlateformePlan[] = ['linux_natif', 'wsl2', 'windows'];
@@ -155,7 +163,10 @@ export function versMetadonneesPlan(
   const requis: Record<keyof ChampsRequis, number | RefusCible> = {
     nombre_couches: exiger(gguf.block_count, 'nombre de couches'),
     dimension_embedding: exiger(gguf.longueur_embedding, "dimension d'embedding"),
-    dimension_ffn: exiger(gguf.longueur_feed_forward, 'dimension FFN'),
+    // `largeur_ffn_active`, pas `longueur_feed_forward` : cette dernière n'existe pas sur les
+    // architectures MoE, qui déclarent la largeur d'UN expert. Le backend fait la somme réelle
+    // (experts routés + branche partagée) et la sérialise ; l'exiger ici bloquait tout MoE.
+    dimension_ffn: exiger(gguf.largeur_ffn_active, 'dimension FFN'),
     nombre_tetes_attention: exiger(gguf.attention.nb_tetes, "nombre de têtes d'attention"),
     contexte_entrainement_max: exiger(gguf.contexte_natif, "contexte d'entraînement"),
     taille_vocabulaire: exiger(gguf.taille_vocabulaire, 'taille du vocabulaire'),

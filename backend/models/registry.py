@@ -60,12 +60,26 @@ ON CONFLICT(id) DO UPDATE SET
 """
 
 
+class DossierIgnore(BaseModel):
+    """Un dossier présent sur le disque mais non inscriptible, et POURQUOI.
+
+    La raison ne vivait que dans les journaux : l'écran annonçait sept modèles sans jamais dire que
+    trois dossiers avaient été écartés, ni quoi en faire. Or un fichier auxiliaire pris pour un
+    modèle et un téléchargement inachevé ne se corrigent pas de la même façon — l'utilisateur ne
+    peut trancher que s'il lit la cause.
+    """
+
+    dossier: str
+    raison: str
+    remediation: str = ""
+
+
 class ResumeSynchronisation(BaseModel):
     """Ce qu'une synchronisation a corrigé entre la base et le disque."""
 
     entrees_supprimees: list[str] = Field(default_factory=list)
     entrees_ajoutees: list[str] = Field(default_factory=list)
-    dossiers_ignores: list[str] = Field(default_factory=list)
+    dossiers_ignores: list[DossierIgnore] = Field(default_factory=list)
 
 
 @lru_cache(maxsize=LIMITE_CACHE_METADONNEES)
@@ -216,6 +230,14 @@ def lister() -> list[ModeleEnregistre]:
     return fetch_all(ModeleEnregistre, "SELECT * FROM modeles ORDER BY ajoute_le DESC")
 
 
+def marquer_favori(identifiant_modele: str, favori: bool) -> ModeleEnregistre:
+    """Pose ou retire la marque de favori. L'entrée doit exister — on ne marque pas un inconnu."""
+    obtenir(identifiant_modele)  # lève ModeleIntrouvable si l'entrée n'existe pas
+    execute("UPDATE modeles SET favori = ? WHERE id = ?", (1 if favori else 0, identifiant_modele))
+    logger.info("Modèle {} {} des favoris", identifiant_modele, "ajouté aux" if favori else "retiré")
+    return obtenir(identifiant_modele)
+
+
 def obtenir(identifiant_modele: str) -> ModeleEnregistre:
     """Une entrée du registre, ou `ModeleIntrouvable`."""
     trouve = fetch_one(ModeleEnregistre, "SELECT * FROM modeles WHERE id = ?", (identifiant_modele,))
@@ -288,7 +310,13 @@ def synchroniser() -> ResumeSynchronisation:
             resume.entrees_ajoutees.extend(entree.id for entree in enregistrer(depot))
         except (ModeleIntrouvable, MetadonneesIllisibles) as exc:
             logger.warning("Dossier {} non inscriptible au registre : {}", dossier.name, exc)
-            resume.dossiers_ignores.append(dossier.name)
+            resume.dossiers_ignores.append(
+                DossierIgnore(
+                    dossier=dossier.name,
+                    raison=str(exc),
+                    remediation=getattr(exc, "remediation", "") or "",
+                )
+            )
 
     logger.info(
         "Registre synchronisé : {} retirée(s), {} ajoutée(s), {} ignorée(s)",

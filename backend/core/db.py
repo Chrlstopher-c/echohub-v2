@@ -92,6 +92,10 @@ _COLONNES_ADDITIVES: tuple[tuple[str, str, str], ...] = (
         "parent_id",
         "ALTER TABLE messages ADD COLUMN parent_id TEXT REFERENCES messages(id) ON DELETE SET NULL",
     ),
+    # Favori : marque posée par l'utilisateur, jamais déduite d'un usage. Elle vit en base et non
+    # dans le navigateur parce que la bibliothèque est la même depuis le poste et depuis le
+    # téléphone — un favori enregistré localement ne serait vrai que sur un seul écran.
+    ("modeles", "favori", "ALTER TABLE modeles ADD COLUMN favori INTEGER NOT NULL DEFAULT 0"),
 )
 
 # Créé après les ALTER : sur une base existante, l'index porterait sur une colonne qui n'existe
@@ -156,6 +160,8 @@ class ModeleEnregistre(BaseModel):
     nb_couches: int | None = None
     contexte_max: int | None = None
     ajoute_le: datetime
+    # Stocké en INTEGER par SQLite, qui n'a pas de booléen : pydantic convertit 0/1 en bool.
+    favori: bool = False
 
 
 def maintenant() -> str:

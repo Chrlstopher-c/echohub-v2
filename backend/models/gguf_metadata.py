@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Literal
 
 from loguru import logger
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, computed_field, model_validator
 
 from backend.core.errors import MetadonneesIllisibles
 from backend.models.gguf_reader import EnTeteGGUF, InfoTenseur, TableauResume, ValeurGGUF, lire_entete
@@ -199,11 +199,17 @@ class MetadonneesGGUF(BaseModel):
     taille_vocabulaire: int | None = None
     mesures: MesuresTenseurs | None = None
 
+    # `computed_field` et non `@property` nue : une propriété simple n'est PAS sérialisée par
+    # pydantic, donc invisible du frontend. C'est ce qui faisait refuser TOUT MoE à la construction
+    # d'une cible de chargement — « dimension FFN absent de l'en-tête GGUF » alors que le backend
+    # savait parfaitement la calculer. Le calcul reste ici, en source unique ; l'interface le lit.
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def est_moe(self) -> bool:
         """Mélange d'experts dès qu'au moins deux experts sont déclarés."""
         return bool(self.nb_experts and self.nb_experts > 1)
 
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def largeur_ffn_active(self) -> int | None:
         """Largeur FFN réellement vive pour un token — la grandeur qu'un budget doit dimensionner.

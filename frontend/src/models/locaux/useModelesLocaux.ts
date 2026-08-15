@@ -8,7 +8,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { journal, messageErreur } from '../api/client';
-import { listerModelesLocaux, oublierModele, synchroniserRegistre } from '../api/registre';
+import { listerModelesLocaux, marquerFavori, oublierModele, synchroniserRegistre } from '../api/registre';
 import type { ModeleEnregistre } from '../api/types';
 
 export interface EtatModelesLocaux {
@@ -20,6 +20,7 @@ export interface EtatModelesLocaux {
   /** Réaligne le registre sur le disque — c'est le disque qui a raison, jamais l'index. */
   synchroniser: () => void;
   oublier: (identifiant: string) => void;
+  basculerFavori: (modele: ModeleEnregistre) => void;
 }
 
 interface Registre {
@@ -83,5 +84,16 @@ export function useModelesLocaux(): EtatModelesLocaux {
     [rafraichir],
   );
 
-  return { ...registre, synchronisation, synchroniser, oublier };
+  /* La liste est relue après coup : ce qui s'affiche vient de la base, jamais d'un état local
+     qu'un échec d'écriture laisserait faux. */
+  const basculerFavori = useCallback(
+    (modele: ModeleEnregistre): void => {
+      marquerFavori(modele.id, !modele.favori)
+        .catch((cause: unknown) => journal.erreur(`favori de ${modele.id}`, cause))
+        .finally(rafraichir);
+    },
+    [rafraichir],
+  );
+
+  return { ...registre, synchronisation, synchroniser, oublier, basculerFavori };
 }

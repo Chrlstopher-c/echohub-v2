@@ -91,6 +91,16 @@ export function poster<T>(chemin: string, corps?: unknown, signal?: AbortSignal)
   });
 }
 
+/** PUT — remplacement d'une valeur, par opposition au POST qui déclenche une action. */
+export function envoyer<T>(chemin: string, corps: unknown, signal?: AbortSignal): Promise<T> {
+  return appeler<T>(chemin, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(corps),
+    signal,
+  });
+}
+
 export function supprimer<T>(chemin: string, signal?: AbortSignal): Promise<T> {
   return appeler<T>(chemin, { method: 'DELETE', signal });
 }

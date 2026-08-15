@@ -42,6 +42,7 @@ from backend.models import (
     details,
     gestionnaire,
     lister_modeles,
+    marquer_favori,
     metadonnees_modele,
     obtenir_modele,
     oublier_modele,
@@ -53,6 +54,9 @@ from backend.models import (
 # Import direct du sous-module, comme pour `download` ci-dessous : `capacites` appartient au même
 # domaine que ce routeur, la frontière publique de `models` ne concerne que les autres domaines.
 from backend.models.capacites import Capacite, CapaciteDeduite, DefinitionCapacite, definitions
+from backend.models.disque import DossierDisque
+from backend.models.disque import inventaire as inventaire_disque
+from backend.models.disque import supprimer_dossier
 from backend.models.download import ETATS_TERMINAUX, INTERVALLE_DIFFUSION_S, MAX_ITERATIONS_DIFFUSION
 from backend.models.registry import capacites as capacites_modele
 
@@ -145,6 +149,26 @@ def lister_registre() -> list[ModeleEnregistre]:
     return lister_modeles()
 
 
+@router.get("/disque", response_model=list[DossierDisque])
+def lister_disque() -> list[DossierDisque]:
+    """TOUT ce que la racine des modèles contient, inscrit au registre ou non.
+
+    Le registre n'expose que le chargeable ; cette route expose l'occupé. Sans elle, un dossier
+    refusé était invisible et sa place indestructible depuis l'interface.
+    """
+    return inventaire_disque()
+
+
+@router.delete("/disque/{dossier:path}")
+def supprimer_du_disque(dossier: str) -> dict[str, object]:
+    """Efface un dossier de modèles. Irréversible : les octets partent réellement."""
+    try:
+        liberes = supprimer_dossier(dossier)
+    except EchoHubError as exc:
+        raise _en_http(exc) from exc
+    return {"dossier": dossier, "octets_liberes": liberes}
+
+
 @router.post("/registre/synchronisation", response_model=ResumeSynchronisation)
 def synchroniser() -> ResumeSynchronisation:
     """Réaligne le registre sur le contenu réel du disque — le disque fait autorité."""
@@ -164,6 +188,21 @@ def synchroniser() -> ResumeSynchronisation:
 #
 # `{identifiant:path}` est glouton : déclaré avant, il avalerait `/metadonnees` et `/coherence`
 # dans l'identifiant lui-même. L'ordre ci-dessous n'est donc pas cosmétique.
+class MajFavori(BaseModel):
+    """Marque posée par l'utilisateur — jamais déduite d'un usage ni d'une fréquence."""
+
+    favori: bool
+
+
+@router.put("/registre/{identifiant:path}/favori", response_model=ModeleEnregistre)
+def basculer_favori(identifiant: str, maj: MajFavori) -> ModeleEnregistre:
+    """Range ou retire un modèle des favoris. L'entrée mise à jour est rendue telle quelle."""
+    try:
+        return marquer_favori(identifiant, maj.favori)
+    except EchoHubError as exc:
+        raise _en_http(exc) from exc
+
+
 @router.get("/registre/{identifiant:path}/metadonnees", response_model=MetadonneesGGUF | None)
 def lire_metadonnees(identifiant: str) -> MetadonneesGGUF | None:
     """Métadonnées LUES dans l'en-tête GGUF — seule entrée valable du planificateur.

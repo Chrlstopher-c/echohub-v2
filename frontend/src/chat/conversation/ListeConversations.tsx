@@ -20,7 +20,16 @@ interface EntreeProps {
   onRenommer: (titre: string) => void;
 }
 
-/* Renommage en place : le titre devient son propre champ, sans modale ni changement d'écran. */
+/*
+ * Renommage en place. Le champ prend EXACTEMENT la place du titre : mêmes marges, même taille de
+ * texte, et la ligne « n messages » reste dessous. Un champ de formulaire ordinaire romprait la
+ * colonne — l'utilisateur doit voir le titre devenir modifiable, pas voir la ligne être remplacée
+ * par autre chose.
+ *
+ * L'état de saisie se marque par la surface active de la ligne et une bordure de la même famille
+ * que le reste, jamais par un anneau de focus épais : la ligne fait 3 mm de haut, un anneau de 2 px
+ * y devient la forme dominante.
+ */
 function ChampTitre({ valeur, onValider, onAnnuler }: {
   valeur: string;
   onValider: (titre: string) => void;
@@ -45,8 +54,8 @@ function ChampTitre({ valeur, onValider, onAnnuler }: {
         if (e.key === 'Escape') onAnnuler();
       }}
       className={cn(
-        'w-full rounded-sm bg-surface-3 px-2 py-1.5 text-xs text-text',
-        'focus:outline-none focus:shadow-[inset_0_0_0_2px_var(--ring)]',
+        'w-full rounded-[3px] border border-accent bg-bg px-1 py-0 text-xs text-text',
+        'focus:outline-none',
       )}
       aria-label="Renommer la conversation"
     />
@@ -64,8 +73,10 @@ function Entree({ conversation, active, onOuvrir, onSupprimer, onRenommer }: Ent
   ];
 
   if (renomme) {
+    // Même enveloppe que la ligne normale — surface active, marges et interligne identiques — pour
+    // que seule la nature du titre change, pas la géométrie de la colonne.
     return (
-      <li className="relative">
+      <li className="relative list-none rounded-sm bg-surface-2 px-2 py-1.5">
         <ChampTitre
           valeur={conversation.titre}
           onValider={(titre) => {
@@ -74,6 +85,9 @@ function Entree({ conversation, active, onOuvrir, onSupprimer, onRenommer }: Ent
           }}
           onAnnuler={() => setRenomme(false)}
         />
+        <span className="block font-mono text-2xs tabular-nums text-text-3">
+          {conversation.nb_messages} messages
+        </span>
       </li>
     );
   }

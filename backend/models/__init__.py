@@ -71,9 +71,10 @@ from backend.models.gguf_metadata import (
 )
 from backend.models.gguf_reader import EnTeteGGUF, InfoTenseur, lire_entete
 from backend.models.gguf_types import TraitsGGML, nom_ftype, traits_ggml
-from backend.models.registry import ResumeSynchronisation
+from backend.models.registry import DossierIgnore, ResumeSynchronisation
 from backend.models.registry import enregistrer as enregistrer_modele
 from backend.models.registry import lister as lister_modeles
+from backend.models.registry import marquer_favori
 from backend.models.registry import metadonnees as metadonnees_modele
 from backend.models.registry import metadonnees_gguf
 from backend.models.registry import obtenir as obtenir_modele
@@ -132,9 +133,11 @@ __all__ = [
     "resoudre_cible",
     # Registre local
     "ModeleEnregistre",
+    "DossierIgnore",
     "ResumeSynchronisation",
     "enregistrer_modele",
     "lister_modeles",
+    "marquer_favori",
     "metadonnees_modele",
     "metadonnees_gguf",
     "obtenir_modele",

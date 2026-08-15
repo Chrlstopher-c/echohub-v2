@@ -167,4 +167,14 @@ export interface MetadonneesGGUF {
   readonly nb_tenseurs: number;
   readonly taille_vocabulaire: number | null;
   readonly mesures: MesuresTenseurs | null;
+  /**
+   * Dérivés, calculés par le backend et sérialisés — ne jamais les recalculer ici.
+   *
+   * `largeur_ffn_active` est la largeur FFN réellement vive pour un token : `longueur_feed_forward`
+   * sur un modèle dense, et sur un MoE la largeur d'un expert multipliée par le nombre d'experts
+   * routés, plus la branche partagée. C'est CETTE grandeur qui dimensionne un budget mémoire ;
+   * `longueur_feed_forward` vaut `null` sur les architectures MoE, qui ne déclarent pas cette clé.
+   */
+  readonly est_moe: boolean;
+  readonly largeur_ffn_active: number | null;
 }
