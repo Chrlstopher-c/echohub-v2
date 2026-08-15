@@ -114,9 +114,17 @@ export function segmenterReponse(source: string): ReponseSegmentee {
   const etapes: SegmentRaisonnement[] = [];
   for (const part of parts) {
     const morceau = _segmenter(part);
+    const commentaire = morceau.visible.trim();
+    // Le commentaire précède presque toujours les balises du tour : le modèle annonce ce qu'il
+    // va faire, PUIS appelle. On le place donc en tête quand la part commence par du texte libre,
+    // ce qui restitue l'ordre réel — commentaire, appel, résultat — au lieu de le rejeter après.
+    const commenceParDuTexte = _premiereBalise(part) !== 0;
+    if (commentaire !== '' && commenceParDuTexte) {
+      etapes.push({ convention: 'etape', texte: commentaire, complet: true });
+    }
     etapes.push(...morceau.raisonnements);
-    if (morceau.visible.trim() !== '') {
-      etapes.push({ convention: 'etape', texte: morceau.visible.trim(), complet: true });
+    if (commentaire !== '' && !commenceParDuTexte) {
+      etapes.push({ convention: 'etape', texte: commentaire, complet: true });
     }
   }
   const derniere = _segmenter(finale);
@@ -127,21 +135,40 @@ export function segmenterReponse(source: string): ReponseSegmentee {
   };
 }
 
+/** Position de la première balise ouvrante, ou la longueur du texte s'il n'y en a aucune. */
+function _premiereBalise(source: string): number {
+  const debut = source.trimStart();
+  const decalage = source.length - debut.length;
+  const ouverture = prochaineOuverture(debut, 0);
+  return ouverture === null ? source.length : ouverture.index + decalage;
+}
+
 function _segmenter(source: string): ReponseSegmentee {
   const visible: string[] = [];
   const raisonnements: SegmentRaisonnement[] = [];
   let curseur = 0;
   for (let tour = 0; tour < toursMax(source); tour += 1) {
-    // Une fermeture sans ouvrante se traite AVANT le cas normal : tout ce qui la précède est du
-    // raisonnement, l'ouvrante ayant été posée par le gabarit dans le prompt et non émise ici.
+    /*
+     * Deux cas concourent, et c'est LE PLUS PROCHE du curseur qui l'emporte — pas l'un des deux
+     * systématiquement.
+     *
+     * Traiter la fermeture orpheline d'abord, sans comparer, faisait avaler tout ce qui la
+     * précédait : un bloc d'outil complet se retrouvait absorbé dans un segment de raisonnement,
+     * étiqueté « Raisonnement » alors qu'il contenait l'entrée et la sortie d'une recherche.
+     * Observé le 2026-08-15 sur une réponse où le modèle refermait son `</think>` APRÈS le
+     * résultat de l'outil.
+     *
+     * En comparant les positions, les blocs ressortent dans leur ordre d'apparition réel :
+     * raisonnement, appel, résultat, réponse.
+     */
     const orpheline = fermetureOrpheline(source, curseur);
-    if (orpheline !== null) {
+    const ouverture = prochaineOuverture(source, curseur);
+    if (orpheline !== null && (ouverture === null || orpheline.index < ouverture.index)) {
       const texte = source.slice(curseur, orpheline.index);
       raisonnements.push({ convention: orpheline.convention.nom, texte, complet: true });
       curseur = orpheline.index + orpheline.convention.fermante.length;
       continue;
     }
-    const ouverture = prochaineOuverture(source, curseur);
     if (ouverture === null) {
       break;
     }
