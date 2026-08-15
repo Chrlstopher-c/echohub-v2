@@ -64,6 +64,8 @@ export interface PreferencesUtilisateur {
   flash_attention?: boolean;
   autoriser_memoire_unifiee?: boolean;
   ratio_fragmentation?: number;
+  /** Actifs par défaut dans ggml (llama.cpp) : seule leur désactivation s'exprime. */
+  desactiver_cuda_graphs?: boolean;
 }
 
 export interface DemandeDeChargement {

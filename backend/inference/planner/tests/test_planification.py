@@ -10,6 +10,7 @@ import pytest
 
 from backend.core import PlanificationImpossible
 from backend.inference.planner import (
+    NOM_CUDA_GRAPHS_DESACTIVES,
     NOM_MEMOIRE_UNIFIEE,
     MetadonneesModele,
     ModeleCharge,
@@ -120,6 +121,21 @@ def test_linux_natif_pose_la_memoire_unifiee_si_elle_est_demandee(modele_grand: 
     assert natif.environnement.get(NOM_MEMOIRE_UNIFIEE) == "1"
     assert NOM_MEMOIRE_UNIFIEE not in wsl.environnement
     assert natif.couches_gpu.valeur == wsl.couches_gpu.valeur, "seul l'environnement doit changer"
+
+
+def test_cuda_graphs_actifs_par_defaut_rien_nest_pose(modele_petit: MetadonneesModele) -> None:
+    """Sans demande explicite, aucune variable n'est posée : ggml garde son comportement natif."""
+    plan = planifier(demande(modele_petit, preferences=PreferencesUtilisateur(contexte=8192)))
+
+    assert NOM_CUDA_GRAPHS_DESACTIVES not in plan.environnement
+
+
+def test_cuda_graphs_desactives_sur_demande(modele_petit: MetadonneesModele) -> None:
+    """L10-a : la préférence pose `GGML_CUDA_DISABLE_GRAPHS=1`, seule variable qui existe côté ggml."""
+    preferences = PreferencesUtilisateur(contexte=8192, desactiver_cuda_graphs=True)
+    plan = planifier(demande(modele_petit, preferences=preferences))
+
+    assert plan.environnement.get(NOM_CUDA_GRAPHS_DESACTIVES) == "1"
 
 
 def test_gpu_exclusif_exige_lejection_des_modeles_charges(modele_grand: MetadonneesModele) -> None:

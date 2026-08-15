@@ -249,6 +249,12 @@ class PreferencesUtilisateur(BaseModel):
     # plan, et devra être resserrée dès qu'une mesure existera.
     ratio_fragmentation: float = Field(default=0.05, ge=0.0, le=0.5)
 
+    # Les CUDA graphs de ggml sont ACTIFS PAR DÉFAUT dans la bibliothèque compilée ; seule leur
+    # désactivation s'exprime (`GGML_CUDA_DISABLE_GRAPHS=1`), il n'existe aucune variable pour les
+    # réactiver explicitement. La préférence suit donc la même forme : demander `True` pose la
+    # variable, `False` (défaut) ne pose rien et laisse le comportement natif de la bibliothèque.
+    desactiver_cuda_graphs: bool = False
+
 
 class DemandeDeChargement(BaseModel):
     """Les trois entrées réunies : c'est l'unique argument de `planifier`."""

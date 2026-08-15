@@ -17,6 +17,10 @@ from backend.inference.planner.plan import VariableEnvironnement, VariableRefuse
 
 NOM_MEMOIRE_UNIFIEE = "GGML_CUDA_ENABLE_UNIFIED_MEMORY"
 NOM_GPU_VISIBLE = "CUDA_VISIBLE_DEVICES"
+# Actifs par défaut dans ggml : seule la désactivation existe côté bibliothèque, il n'y a pas de
+# variable symétrique pour les réactiver — poser `0` ou l'omettre reviennent au même. La préférence
+# ne pose donc cette variable QUE lorsqu'elle vaut `1` (lot L10-a du plan d'exécution).
+NOM_CUDA_GRAPHS_DESACTIVES = "GGML_CUDA_DISABLE_GRAPHS"
 
 RAISON_WSL2 = (
     "WSL2 ne supporte pas la sur-souscription de mémoire managée : mesuré à 20 Go de RAM occupés "
@@ -42,7 +46,31 @@ def construire_environnement(
     ]
     refusees: list[VariableRefusee] = []
     _regler_memoire_unifiee(profil, preferences, moteur, couches_cpu, variables, refusees)
+    _regler_cuda_graphs(preferences, moteur, variables)
     return tuple(variables), tuple(refusees)
+
+
+def _regler_cuda_graphs(
+    preferences: PreferencesUtilisateur,
+    moteur: Moteur,
+    variables: list[VariableEnvironnement],
+) -> None:
+    """Pose la désactivation des CUDA graphs quand elle est demandée, pour llama.cpp uniquement.
+
+    vLLM ne lit pas cette variable (ses propres graphes CUDA passent par `enforce_eager`, déjà
+    couvert par `PlanChargement.mode_eager`) : la poser sans effet laisserait croire à un réglage
+    appliqué qui ne l'est pas.
+    """
+    if moteur is not Moteur.LLAMA_CPP or not preferences.desactiver_cuda_graphs:
+        return
+    variables.append(
+        VariableEnvironnement(
+            nom=NOM_CUDA_GRAPHS_DESACTIVES,
+            valeur="1",
+            justification="Désactivation des CUDA graphs demandée : actifs par défaut dans ggml, "
+            "seule leur désactivation s'exprime par une variable d'environnement.",
+        )
+    )
 
 
 def _regler_memoire_unifiee(
