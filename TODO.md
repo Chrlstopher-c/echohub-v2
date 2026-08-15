@@ -13,8 +13,15 @@ Rien. Session close sur un état stable, arbre git propre, application en ligne.
 Workflow préparé et **arrêté avant exécution** le 2026-08-15, à relancer tel quel :
 `.claude/projects/…/workflows/scripts/echohub-bac-artefacts-wf_0f08b6c0-b5a.js`
 
-- [ ] Interpréteur Python accessible au modèle depuis la conversation, avec exécution réelle
-- [ ] Un bac à sable par conversation : fichiers et dossiers, taille max par fichier ET par bac
+- [x] Interpréteur Python accessible au modèle depuis la conversation, avec exécution réelle — L2,
+      2026-08-15 : outil `executer_python` (`backend/outils/`), lanceur confiné (`bac_a_sable.py`,
+      rlimits → setgid → setuid), balayage du bac (`balayage_bac.py`). Réseau NON coupé — mesuré
+      EPERM (`CAP_SYS_ADMIN` absent du conteneur par défaut), documenté dans
+      `bac_a_sable.LIMITES_REELLES_TEXTE`. Cinq preuves passées en conteneur
+      (`docker/preuves_bac_a_sable.py`) + génération réelle (Qwen3.5-9B) ayant produit un fichier
+      retrouvé dans le magasin.
+- [x] Un bac à sable par conversation : fichiers et dossiers, taille max par fichier ET par bac — le
+      bac lui-même est créé par L2 ; les quotas par fichier/bac viennent de L0 (`fichiers/politique.py`)
 - [ ] Outil de présentation : le modèle désigne un fichier, l'utilisateur le voit
 - [ ] Artefact au clic — modale **agrandissable**, en-tête avec interrupteur à **deux icônes**
       (code source / aperçu)
