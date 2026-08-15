@@ -26,6 +26,11 @@ export function lireConversation(id: string, signal?: AbortSignal): Promise<Conv
   return getJson<ConversationDetaillee>(`${RACINE}/${id}`, signal);
 }
 
+/** Renomme une conversation. Le titre est la seule chose que l'utilisateur y écrit lui-même. */
+export function renommerConversation(id: string, titre: string): Promise<ResumeConversation> {
+  return patchJson<ResumeConversation>(`${RACINE}/${id}`, { titre });
+}
+
 export function supprimerConversation(id: string): Promise<{ supprimee: boolean }> {
   return deleteJson<{ supprimee: boolean }>(`${RACINE}/${id}`);
 }

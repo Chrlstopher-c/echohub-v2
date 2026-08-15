@@ -12,6 +12,7 @@ export { Progress, type ProgressProps } from './Progress';
 export { Tooltip, type TooltipProps } from './Tooltip';
 export { Modal, type ModalProps, type ModalSize } from './Modal';
 
+export { MenuContextuel, type EntreeMenu, type MenuContextuelProps } from './MenuContextuel';
 export { TONE_SOFT_VAR, TONE_VAR, type Tone } from './tones';
 export {
   DUR,

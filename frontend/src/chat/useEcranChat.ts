@@ -24,6 +24,7 @@ export interface EtatEcranChat {
   ouvrirReglages: (ouvert: boolean) => void;
   creerConversation: () => void;
   supprimerConversation: (id: string) => void;
+  renommerConversation: (id: string, titre: string) => void;
 }
 
 export function useEcranChat(cible: CibleChargement | null): EtatEcranChat {
@@ -71,5 +72,6 @@ export function useEcranChat(cible: CibleChargement | null): EtatEcranChat {
     ouvrirReglages: setReglagesOuverts,
     creerConversation,
     supprimerConversation,
+    renommerConversation: (id: string, titre: string): void => void liste.renommer(id, titre),
   };
 }

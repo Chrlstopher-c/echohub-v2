@@ -98,7 +98,7 @@ def preparer(conversation_id: str, demande: DemandeGeneration) -> PreparationGen
     """
     conversation = depot.exiger_conversation(conversation_id)
     reglages = depot.lire_reglages(conversation_id)
-    modele_id = demande.modele_id or conversation.modele_id
+    modele_id = demande.modele_id or _modele_charge() or conversation.modele_id
     message_assistant = _identifiant_provisoire()
     generation = annulation.reserver(conversation_id, message_assistant)
     try:
@@ -148,7 +148,7 @@ def _preparer_branche(
     cible = depot.exiger_message(conversation_id, message_id)
     _verifier_branchable(cible, contenu)
     reglages = depot.lire_reglages(conversation_id)
-    modele_id = demande.modele_id or conversation.modele_id
+    modele_id = demande.modele_id or _modele_charge() or conversation.modele_id
     message_assistant = _identifiant_provisoire()
     generation = annulation.reserver(conversation_id, message_assistant)
     try:
@@ -202,6 +202,28 @@ def _ancrer_branche(cible: MessageChat, contenu: str | None) -> tuple[str | None
         parent_id=cible.parent_id,
     )
     return nouveau.id, nouveau.id
+
+
+def _modele_charge() -> str | None:
+    """Modèle RÉELLEMENT chargé dans le moteur à cet instant, ou `None` si rien n'est prêt.
+
+    C'est lui qui doit être attribué à la réponse, pas celui mémorisé sur la conversation : ce
+    dernier est fixé à la création et ne bouge plus. Changer de modèle en cours de conversation
+    faisait donc attribuer les nouvelles réponses à l'ancien modèle — l'attribution mentait sur ce
+    qui avait réellement produit les tokens, alors qu'elle sert justement à qualifier les mesures
+    affichées à côté (débit, nombre de tokens).
+
+    Import local et échec silencieux : `chat` reste utilisable sans le domaine `inference`, comme
+    partout ailleurs dans ce fichier.
+    """
+    try:
+        from backend.inference import superviseur
+
+        statut = superviseur.statut()
+        return statut.modele if statut.etat.value == "pret" else None
+    except Exception as exc:  # noqa: BLE001 — l'attribution est un confort, jamais une condition
+        logger.debug("Modèle chargé indéterminable ({}) : repli sur celui de la conversation.", exc)
+        return None
 
 
 def _preparation(

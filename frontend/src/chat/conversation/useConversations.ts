@@ -6,7 +6,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { messageErreur } from '../api/client';
 import type { ResumeConversation } from '../api/contrats';
-import { creerConversation, listerConversations, supprimerConversation } from '../api/conversations-api';
+import {
+  creerConversation,
+  listerConversations,
+  renommerConversation,
+  supprimerConversation,
+} from '../api/conversations-api';
 import { journal } from '../api/journal';
 
 const TITRE_PAR_DEFAUT = 'Nouvelle conversation';
@@ -17,6 +22,7 @@ export interface EtatConversations {
   rafraichir: () => Promise<void>;
   creer: (modeleId: string | null) => Promise<ResumeConversation | null>;
   supprimer: (id: string) => Promise<void>;
+  renommer: (id: string, titre: string) => Promise<void>;
 }
 
 export function useConversations(): EtatConversations {
@@ -62,5 +68,17 @@ export function useConversations(): EtatConversations {
     }
   }, []);
 
-  return { conversations, erreur, rafraichir, creer, supprimer };
+  /* Le titre confirmé par le backend remplace l'ancien : on n'affiche jamais un renommage que
+     la persistance aurait refusé. */
+  const renommer = useCallback(async (id: string, titre: string): Promise<void> => {
+    try {
+      const maj = await renommerConversation(id, titre);
+      setConversations((actuelles) => actuelles.map((c) => (c.id === id ? maj : c)));
+    } catch (cause) {
+      journal.erreur('renommage de conversation refusé', cause);
+      setErreur(messageErreur(cause));
+    }
+  }, []);
+
+  return { conversations, erreur, rafraichir, creer, supprimer, renommer };
 }

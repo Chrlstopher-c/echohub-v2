@@ -211,6 +211,7 @@ export function ChatEcran({ cible }: ChatEcranProps): ReactElement {
         onOuvrir={etat.choisirConversation}
         onCreer={etat.creerConversation}
         onSupprimer={etat.supprimerConversation}
+        onRenommer={etat.renommerConversation}
       />
       <ColonneEchange etat={etat} cible={cible} fil={fil} />
       <ColonnePlan etat={etat} cible={cible} />
