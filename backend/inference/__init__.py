@@ -106,6 +106,15 @@ de vérifier une réponse plus tard."""
 BALISE_OUTIL_OUVRANTE = "<outil>"
 BALISE_OUTIL_FERMANTE = "</outil>"
 
+# Le bloc porte deux parties distinctes : ce que le modèle a DEMANDÉ, puis ce que l'outil a RENDU.
+# Les séparer n'est pas cosmétique — juger une réponse suppose de voir la requête qui l'a produite,
+# et une recherche mal formulée explique souvent un résultat hors sujet. L'entrée part avant
+# l'exécution, la sortie après : l'utilisateur voit donc la demande pendant que l'outil travaille.
+BALISE_ENTREE_OUVRANTE = "<entree>"
+BALISE_ENTREE_FERMANTE = "</entree>"
+BALISE_SORTIE_OUVRANTE = "<sortie>"
+BALISE_SORTIE_FERMANTE = "</sortie>"
+
 
 def _annonce(nom: str, arguments: object) -> str:
     """Ligne lisible d'un appel, montrée telle quelle dans le bloc replié."""
@@ -138,10 +147,12 @@ async def _executer_appels(
 
     for appel in appels:
         nom, arguments = _texte_appel(appel)
-        yield {"texte": f"{BALISE_OUTIL_OUVRANTE}{_annonce(nom, arguments)}\n"}
+        # L'entrée part AVANT l'exécution : c'est ce qui rend l'attente lisible plutôt que muette.
+        entree = f"{BALISE_ENTREE_OUVRANTE}{_annonce(nom, arguments)}{BALISE_ENTREE_FERMANTE}"
+        yield {"texte": f"{BALISE_OUTIL_OUVRANTE}{entree}{BALISE_SORTIE_OUVRANTE}"}
         resultat = await executer(nom, arguments)
         etat = "résultat" if resultat.succes else "échec"
-        yield {"texte": f"{resultat.texte}{BALISE_OUTIL_FERMANTE}\n\n"}
+        yield {"texte": f"{resultat.texte}{BALISE_SORTIE_FERMANTE}{BALISE_OUTIL_FERMANTE}\n\n"}
         messages.append(MessageChat(role="assistant", content=f"[outil {resultat.nom} — {etat}]\n{resultat.texte}"))
 
 

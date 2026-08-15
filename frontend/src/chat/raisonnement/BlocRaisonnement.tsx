@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { useId, useState } from 'react';
 import type { ReactElement } from 'react';
 import { Badge, cn, DUR, fadeUp } from '../../shared/design';
+import { decouperAppel, type AppelOutil } from './appel-outil';
 import { LIBELLE_CONVENTION } from './conventions';
 import type { SegmentRaisonnement } from './extraction';
 
@@ -90,6 +91,47 @@ function Entete({ segment, rang, actif, ouvert, cible, onBasculer }: EnteteProps
   );
 }
 
+/*
+ * Un appel d'outil se lit en deux temps : la demande, puis ce qu'elle a rapporté. Les afficher
+ * séparément n'est pas décoratif — une recherche hors sujet s'explique presque toujours par une
+ * requête mal formulée, et on ne peut le voir qu'en lisant les deux côte à côte.
+ *
+ * La sortie manque tant que l'outil travaille : on l'annonce plutôt que de laisser un vide, sinon
+ * l'attente ressemble à une panne.
+ */
+function CorpsAppel({ appel }: { appel: AppelOutil }): ReactElement {
+  return (
+    <div className="flex flex-col gap-2">
+      <div>
+        <span className="font-mono text-2xs uppercase tracking-wide text-text-3">entrée</span>
+        <p className="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-text-2">{appel.entree}</p>
+      </div>
+      <div className="border-t border-border pt-2">
+        <span className="font-mono text-2xs uppercase tracking-wide text-text-3">sortie</span>
+        {appel.sortie === '' ? (
+          <p className="text-xs italic text-text-3">
+            {appel.termine ? "L'outil n'a rien rendu." : 'Exécution en cours…'}
+          </p>
+        ) : (
+          <p className="whitespace-pre-wrap break-words text-xs leading-relaxed text-text-2">{appel.sortie}</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CorpsBloc({ segment, vide }: { segment: SegmentRaisonnement; vide: boolean }): ReactElement {
+  const appel = decouperAppel(segment.texte);
+  if (appel !== null) {
+    return <CorpsAppel appel={appel} />;
+  }
+  return (
+    <p className={cn('whitespace-pre-wrap text-xs leading-relaxed', vide ? 'text-text-3' : 'text-text-2')}>
+      {vide ? 'Bloc vide : le modèle a ouvert puis refermé son raisonnement.' : segment.texte}
+    </p>
+  );
+}
+
 export interface BlocRaisonnementProps {
   segment: SegmentRaisonnement;
   /** Rang affiché quand la réponse contient plusieurs blocs ; `null` s'il est seul. */
@@ -116,9 +158,7 @@ export function BlocRaisonnement({ segment, rang, actif }: BlocRaisonnementProps
         {ouvert && (
           <motion.div id={cible} variants={fadeUp} initial="hidden" animate="visible" exit="exit">
             <div className={cn('border-t border-border px-2.5 py-2', CLASSE_DEFILEMENT)}>
-              <p className={cn('whitespace-pre-wrap text-xs leading-relaxed', vide ? 'text-text-3' : 'text-text-2')}>
-                {vide ? 'Bloc vide : le modèle a ouvert puis refermé son raisonnement.' : segment.texte}
-              </p>
+              <CorpsBloc segment={segment} vide={vide} />
             </div>
           </motion.div>
         )}
