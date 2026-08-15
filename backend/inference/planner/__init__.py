@@ -49,7 +49,11 @@ from backend.inference.planner.entrees import (
     ProfilMachine,
     TypeCacheKV,
 )
-from backend.inference.planner.environnement import NOM_GPU_VISIBLE, NOM_MEMOIRE_UNIFIEE
+from backend.inference.planner.environnement import (
+    NOM_CUDA_GRAPHS_DESACTIVES,
+    NOM_GPU_VISIBLE,
+    NOM_MEMOIRE_UNIFIEE,
+)
 from backend.inference.planner.paliers import NIVEAU_MINIMAL, PALIERS
 from backend.inference.planner.plan import (
     OCTETS_PAR_ELEMENT_KV,
@@ -102,4 +106,5 @@ __all__ = [
     "CONTEXTE_PLANCHER",
     "NOM_GPU_VISIBLE",
     "NOM_MEMOIRE_UNIFIEE",
+    "NOM_CUDA_GRAPHS_DESACTIVES",
 ]

@@ -73,6 +73,8 @@ export interface PreferencesUtilisateur {
   /** Nuisible sous WSL2 (VRAM figée à 2 Go, mesuré) : la plateforme tranche, pas cette préférence. */
   readonly autoriser_memoire_unifiee?: boolean;
   readonly ratio_fragmentation?: number;
+  /** Actifs par défaut dans ggml (llama.cpp) : seule leur désactivation s'exprime. */
+  readonly desactiver_cuda_graphs?: boolean;
 }
 
 export interface DemandeDeChargement {
