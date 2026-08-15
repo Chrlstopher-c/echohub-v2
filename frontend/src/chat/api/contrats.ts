@@ -314,6 +314,26 @@ export interface DemandeGeneration {
   contenu: string;
   modele_id?: string | null;
   parametres?: ParametresEchantillonnage;
+  /** Fichiers déjà déposés dans le magasin (voir `FichierConversation`), à lier à ce message. */
+  fichier_ids?: string[];
+}
+
+/* --------------------------------------------------------------------- domaine fichiers */
+
+export type OrigineFichier = 'utilisateur' | 'modele';
+
+/** Référence à un fichier de conversation — les octets vivent sur le disque, jamais ici. */
+export interface FichierConversation {
+  id: string;
+  conversation_id: string;
+  message_id: string | null;
+  origine: OrigineFichier;
+  nom_affiche: string;
+  chemin_relatif: string;
+  type_mime: string;
+  taille_octets: number;
+  empreinte_sha256: string;
+  cree_le: string;
 }
 
 /* ------------------------------------------------------------------ événements de génération */

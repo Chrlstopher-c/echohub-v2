@@ -26,7 +26,7 @@ export interface EtatConversation {
   erreur: string | null;
   /** Débit mesuré de la dernière réponse complète — une mesure, pas une prévision. */
   debitObserve: number | null;
-  envoyer: (contenu: string) => Promise<void>;
+  envoyer: (contenu: string, fichierIds?: string[]) => Promise<void>;
   annuler: () => Promise<void>;
   enregistrerReglages: (patch: MajReglages) => Promise<void>;
 }
@@ -146,12 +146,12 @@ export function useConversation(conversationId: string | null): EtatConversation
   // une génération, et toute mise en dépendance ultérieure boucle.
   const { envoyer: lancerGeneration } = generation;
   const envoyer = useCallback(
-    async (contenu: string): Promise<void> => {
+    async (contenu: string, fichierIds?: string[]): Promise<void> => {
       if (conversationId === null) {
         return;
       }
       setMessages([...socle.messages, messageLocal(conversationId, contenu)]);
-      await lancerGeneration(contenu);
+      await lancerGeneration(contenu, fichierIds);
     },
     [conversationId, socle.messages, setMessages, lancerGeneration],
   );
