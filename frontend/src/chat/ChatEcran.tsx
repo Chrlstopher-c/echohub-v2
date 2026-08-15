@@ -102,7 +102,8 @@ function ColonneEchange({ etat, cible, fil }: ColonneEchangeProps): ReactElement
         genere={genere}
         desactive={conversationActive === null || !moteurPret}
         empechement={empechementSaisie(conversationActive !== null, moteurPret)}
-        onEnvoyer={(contenu) => envoyer(courante, fil, contenu)}
+        conversationId={conversationActive}
+        onEnvoyer={(contenu, fichierIds) => envoyer(courante, fil, contenu, fichierIds)}
         onAnnuler={() => interrompre(courante, fil)}
       />
     </section>
@@ -121,9 +122,14 @@ function LigneErreur({ texte }: { texte: string | null }): ReactElement | null {
  * ignore l'optimisme local de `useConversation`, et sans ce signal le message parti resterait
  * invisible jusqu'à la fin de la génération.
  */
-function envoyer(courante: EtatEcranChat['courante'], fil: EtatActionsFil, contenu: string): void {
+function envoyer(
+  courante: EtatEcranChat['courante'],
+  fil: EtatActionsFil,
+  contenu: string,
+  fichierIds: string[],
+): void {
   fil.noterEnvoi(contenu);
-  void courante.envoyer(contenu);
+  void courante.envoyer(contenu, fichierIds);
 }
 
 /* L'arrêt vise le tour réellement en cours ; chaque flux ignore la demande s'il n'a rien à couper. */

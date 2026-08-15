@@ -120,6 +120,14 @@ export function deleteJson<T>(chemin: string, signal?: AbortSignal): Promise<T> 
   return requete<T>(chemin, { method: 'DELETE', signal });
 }
 
+/**
+ * Envoi multipart — le dépôt d'un fichier de conversation. Pas de `Content-Type` explicite : le
+ * navigateur pose la borne multipart lui-même, l'écraser casserait le découpage des parties.
+ */
+export function postFormData<T>(chemin: string, corps: FormData, signal?: AbortSignal): Promise<T> {
+  return requete<T>(chemin, { method: 'POST', body: corps, signal });
+}
+
 /** Message affichable d'une erreur quelconque — évite un `instanceof` répété dans chaque hook. */
 export function messageErreur(cause: unknown): string {
   if (cause instanceof ErreurApi) {

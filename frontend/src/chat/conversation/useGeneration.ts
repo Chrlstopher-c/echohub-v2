@@ -41,7 +41,7 @@ export interface EtatGeneration {
   brouillon: string | null;
   genere: boolean;
   erreur: string | null;
-  envoyer: (contenu: string) => Promise<void>;
+  envoyer: (contenu: string, fichierIds?: string[]) => Promise<void>;
   annuler: () => Promise<void>;
 }
 
@@ -147,9 +147,9 @@ function useEnvoi(
   setFlux: Dispatch<SetStateAction<FluxCourant | null>>,
   majFlux: MajFlux,
   terminer: Fin,
-): (contenu: string) => Promise<void> {
+): (contenu: string, fichierIds?: string[]) => Promise<void> {
   return useCallback(
-    async (contenu: string): Promise<void> => {
+    async (contenu: string, fichierIds?: string[]): Promise<void> => {
       // Le verrou porte sur le flux réellement ouvert, pas sur un booléen partagé par l'écran :
       // c'est ce qui permet d'écrire dans B pendant que la génération de A se termine.
       if (conversationId === null || enVol.current !== null) {
@@ -161,7 +161,7 @@ function useEnvoi(
       setFlux({ proprietaire: id, brouillon: '', actif: true, erreur: null });
       const rappels: RappelsFlux = { onEvenement: (evenement): void => appliquer(majFlux, id, evenement) };
       try {
-        await ouvrirFluxGeneration(id, { contenu }, rappels, controle.signal);
+        await ouvrirFluxGeneration(id, { contenu, fichier_ids: fichierIds }, rappels, controle.signal);
       } catch (cause) {
         if (!controle.signal.aborted) {
           journal.erreur('génération interrompue', cause);
