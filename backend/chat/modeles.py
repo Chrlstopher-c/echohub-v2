@@ -190,13 +190,19 @@ class MajReglages(BaseModel):
 
 
 class DemandeGeneration(BaseModel):
-    """Tour de génération. `parametres` et `modele_id` surchargent les réglages sans les écraser."""
+    """Tour de génération. `parametres` et `modele_id` surchargent les réglages sans les écraser.
+
+    `fichier_ids` désigne des fichiers déjà déposés dans le magasin (`backend.fichiers`), AVANT ce
+    message : le composeur envoie chaque pièce jointe dès qu'elle est choisie, puis n'en transmet que
+    l'identifiant ici. Aucun octet ne traverse cette route.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     contenu: str = Field(min_length=1)
     modele_id: str | None = None
     parametres: ParametresEchantillonnage | None = None
+    fichier_ids: list[str] = Field(default_factory=list)
 
 
 class DemandeRejeu(BaseModel):

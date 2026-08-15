@@ -33,6 +33,7 @@ from backend.inference.engines_adapters import (
     SessionChargement,
     StatutInference,
     superviseur,
+    texte_de,
 )
 from backend.inference.engines_adapters.contrat import OccupationContexte
 from backend.inference.engines_adapters.traduction_plan import vers_cause_planificateur, vers_plan_moteur
@@ -120,7 +121,7 @@ class RequeteOccupationContexte(BaseModel):
 
     @model_validator(mode="after")
     def _borner_volume(self) -> RequeteOccupationContexte:
-        total = len(self.prompt_systeme) + sum(len(message.content) for message in self.messages)
+        total = len(self.prompt_systeme) + sum(len(texte_de(message)) for message in self.messages)
         if total > MAX_CARACTERES_COMPTAGE:
             raise ValueError(
                 f"Volume à mesurer trop grand : {total} caractères pour un plafond de "

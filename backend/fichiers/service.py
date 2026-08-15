@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import uuid
+from collections.abc import Sequence
 from pathlib import Path
 
 from loguru import logger
@@ -84,3 +85,27 @@ def lire_fichier(fichier_id: str) -> FichierConversation:
 def chemin_disque(fichier: FichierConversation) -> Path:
     """Chemin absolu résolu et borné au magasin — c'est ce que la route de service ouvre."""
     return stockage.chemin_absolu(fichier.chemin_relatif)
+
+
+def lier_fichiers_au_message(conversation_id: str, fichier_ids: Sequence[str], message_id: str) -> None:
+    """Rattache les pièces déjà déposées (`origine='utilisateur'`) au message qui vient de les envoyer.
+
+    Chaque identifiant est vérifié appartenir à CETTE conversation avant toute écriture : sans ce
+    contrôle, un identifiant forgé lierait au message d'un utilisateur le fichier d'une autre
+    conversation. Un identifiant inconnu ou étranger est ignoré, journalisé — jamais fatal à l'envoi
+    du message, dont le texte reste la partie essentielle.
+    """
+    for fichier_id in fichier_ids:
+        fichier = depot.lire_fichier(fichier_id)
+        if fichier is None or fichier.conversation_id != conversation_id:
+            logger.warning(
+                "Pièce jointe ignorée pour le message {} : {} n'appartient pas à {}.",
+                message_id, fichier_id, conversation_id,
+            )
+            continue
+        depot.lier_message(fichier_id, message_id)
+
+
+def pieces_pour_messages(message_ids: Sequence[str]) -> dict[str, list[FichierConversation]]:
+    """Pièces jointes de ces messages, groupées par `message_id` — une requête, pas une par message."""
+    return depot.lister_par_messages(message_ids)

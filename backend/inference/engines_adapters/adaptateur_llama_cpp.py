@@ -14,6 +14,7 @@ générations concurrentes.
 from __future__ import annotations
 
 import asyncio
+import base64
 import gc
 import json
 import os
@@ -30,10 +31,14 @@ from backend.inference.engines_adapters.contrat import (
     CauseEchec,
     ComptageTokens,
     EtatMoteur,
+    ImageURL,
     MessageChat,
     MorceauGeneration,
     MoteurSupporte,
     OptionsGeneration,
+    PartieContenu,
+    PartieImage,
+    PartieImageChemin,
     PlanChargement,
     Sante,
 )
@@ -47,6 +52,7 @@ from backend.inference.engines_adapters.experts_hote import (
 from backend.inference.engines_adapters.flux import flux_depuis_bloquant
 from backend.inference.engines_adapters.journal import NiveauEntree, SessionChargement, journal_chargement
 from backend.inference.engines_adapters.vram import lire_vram
+from backend.models.storage import fichiers_projecteurs
 
 # Identifiants de types GGML acceptés pour le cache KV. Une valeur hors table est un plan invalide :
 # la deviner produirait un cache différent de celui que le planificateur a dimensionné.
@@ -67,6 +73,46 @@ TOKENS_PROPOSITION_OUTILS = 192
 # 2 Go, plusieurs minutes de chargement). Elle n'est jamais posée ici ; si l'environnement la porte
 # sans que le plan l'ait demandée, on le signale plutôt que de charger en silence dans ce mode.
 VARIABLE_MEMOIRE_UNIFIEE = "GGML_CUDA_ENABLE_UNIFIED_MEMORY"
+
+
+def _encoder_data_uri(chemin: str, type_mime: str) -> str | None:
+    """Lit le fichier et produit son data URI — l'encodage a lieu ICI, au tout dernier moment, juste
+    avant l'appel au moteur (plan d'exécution, section 2.2.4). Aucun octet ni base64 n'a traversé le
+    port ni le domaine `chat` avant ce point.
+
+    Une pièce illisible ne fait pas échouer tout le message : elle est journalisée et écartée, le
+    reste du prompt part quand même — c'est la même discipline que le reste de l'adaptateur, où une
+    frontière disque a toujours son try/catch.
+    """
+    try:
+        octets = Path(chemin).read_bytes()
+    except OSError as exc:
+        logger.error("Pièce jointe illisible, écartée du prompt : {} ({})", chemin, exc)
+        return None
+    return f"data:{type_mime};base64,{base64.b64encode(octets).decode('ascii')}"
+
+
+def _partie_moteur(partie: PartieContenu) -> PartieContenu | None:
+    """Convertit une partie image-chemin en image-data-uri ; les autres parties sont inchangées."""
+    if not isinstance(partie, PartieImageChemin):
+        return partie
+    uri = _encoder_data_uri(partie.chemin, partie.type_mime)
+    if uri is None:
+        return None
+    return PartieImage(image_url=ImageURL(url=uri))
+
+
+def _message_pour_moteur(message: MessageChat) -> dict[str, Any]:
+    """Un message prêt pour `create_chat_completion` : images encodées, jamais avant."""
+    if isinstance(message.content, str):
+        return message.model_dump()
+    parties = [_partie_moteur(partie) for partie in message.content]
+    return {"role": message.role, "content": [partie.model_dump() for partie in parties if partie is not None]}
+
+
+def _messages_pour_moteur(messages: Sequence[MessageChat]) -> list[dict[str, Any]]:
+    """Sérialise les messages pour le moteur — SEUL endroit qui encode une image en data URI."""
+    return [_message_pour_moteur(message) for message in messages]
 
 
 class AdaptateurLlamaCpp(AdaptateurMoteur):
@@ -92,7 +138,7 @@ class AdaptateurLlamaCpp(AdaptateurMoteur):
         self._verifier_offload_gpu(module, plan, session)
         self._appliquer_environnement(plan, session)
 
-        parametres = self._parametres(plan, chemin)
+        parametres = self._parametres(plan, chemin, session)
         vram_avant = lire_vram()
         journal_chargement.noter(
             session, "llama.cpp", f"Chargement de {plan.nom_affiche}",
@@ -258,7 +304,9 @@ class AdaptateurLlamaCpp(AdaptateurMoteur):
                 niveau=NiveauEntree.AVERTISSEMENT,
             )
 
-    def _parametres(self, plan: PlanChargement, chemin: Path) -> dict[str, Any]:
+    def _parametres(
+        self, plan: PlanChargement, chemin: Path, session: SessionChargement | None = None
+    ) -> dict[str, Any]:
         """Traduit le plan en arguments `Llama`. Aucune valeur n'est inventée ici.
 
         Le déport d'experts ne passe par AUCUN argument : il n'en existe pas, et `**kwargs` avalerait
@@ -287,7 +335,42 @@ class AdaptateurLlamaCpp(AdaptateurMoteur):
                 )
             parametres["type_k"] = identifiant
             parametres["type_v"] = identifiant
+        handler = self._handler_vision(chemin, session)
+        if handler is not None:
+            parametres["chat_handler"] = handler
         return parametres
+
+    def _handler_vision(self, chemin: Path, session: SessionChargement | None) -> Any | None:
+        """Gestionnaire multimodal si un projecteur existe dans le dossier du modèle, sinon `None`.
+
+        Un projecteur absent n'empêche JAMAIS le chargement du modèle — on charge sans, et on
+        continue (plan d'exécution, sections 2.2 et 2.4) : la détection ne fait que CHOISIR quoi
+        charger, elle n'autorise ni ne refuse jamais l'envoi d'une image. Toute erreur de détection
+        ou de construction est journalisée et dégradée de la même façon, jamais remontée en échec de
+        chargement.
+        """
+        try:
+            projecteurs = fichiers_projecteurs(chemin.parent)
+        except Exception as exc:  # noqa: BLE001 — la détection est un plus, jamais une condition
+            logger.warning("Détection du projecteur de vision impossible ({}) : chargement sans vision.", exc)
+            return None
+        if not projecteurs:
+            return None
+        projecteur = projecteurs[0]
+        try:
+            from llama_cpp.llama_chat_format import MTMDChatHandler
+
+            handler = MTMDChatHandler(clip_model_path=str(projecteur))
+        except Exception as exc:  # noqa: BLE001 — même règle : jamais bloquant pour le chargement
+            logger.warning("Projecteur de vision {} non chargé ({}) : chargement sans vision.", projecteur, exc)
+            journal_chargement.noter(
+                session, "llama.cpp", f"Projecteur de vision non chargé : {exc}",
+                niveau=NiveauEntree.AVERTISSEMENT,
+            )
+            return None
+        logger.info("Projecteur de vision chargé : {}", projecteur)
+        journal_chargement.noter(session, "llama.cpp", f"Projecteur de vision chargé : {projecteur.name}")
+        return handler
 
     async def decharger(self) -> None:
         """Libère l'instance et force un cycle GC : la VRAM part avec l'objet C, pas avant."""
@@ -412,7 +495,7 @@ class AdaptateurLlamaCpp(AdaptateurMoteur):
             arguments = _arguments_echantillonnage(options)
             arguments["max_tokens"] = TOKENS_PROPOSITION_OUTILS
             reponse = llm.create_chat_completion(
-                messages=[message.model_dump() for message in messages],
+                messages=_messages_pour_moteur(messages),
                 tools=list(outils),
                 tool_choice="auto",
                 stream=False,
@@ -484,7 +567,7 @@ class AdaptateurLlamaCpp(AdaptateurMoteur):
             extra: dict[str, Any] = {"tools": list(outils), "tool_choice": "auto"} if outils else {}
             flux = self._llm.create_chat_completion(  # type: ignore[union-attr]
                 **extra,
-                messages=[message.model_dump() for message in messages],
+                messages=_messages_pour_moteur(messages),
                 stream=True,
                 **_arguments_echantillonnage(options),
             )
