@@ -108,7 +108,7 @@ Tout le code de déport existe et est couvert par des tests unitaires ; aucune m
 - [ ] Le modèle ré-émet parfois un appel d'outil après avoir reçu les résultats. Piste : retirer
       les outils du prompt au second tour, il n'a plus de raison d'en redemander.
 - [ ] Le socle est en français mais les modèles répondent parfois en anglais. Imposer la langue.
-- [ ] **Aucune authentification** : le port 37820 est ouvert sur le LAN. À traiter avant toute
+- [ ] **Aucune authentification** : le port 37920 est ouvert sur le LAN. À traiter avant toute
       exposition hors du réseau domestique.
 - [ ] ccremote (`../ccremote`, branche `local-models`) : l'orchestrateur exige des identifiants
       Claude. Trois voies proposées, aucune tranchée.

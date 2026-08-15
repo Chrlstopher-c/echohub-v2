@@ -92,7 +92,8 @@ ENV MODELS_DIR=/data/models \
     XDG_DATA_HOME=/data/user
 
 # 80    : interface web servie par nginx (frontend statique + proxy /api)
-# 37821 : API FastAPI exposée directement, pour le débogage sans passer par le proxy
-EXPOSE 80 37821
+# 37921 : API FastAPI exposée directement, pour le débogage sans passer par le proxy — distinct
+#         du port par défaut de la v1 (37821), qui peut tourner sur le même hôte.
+EXPOSE 80 37921
 
 ENTRYPOINT ["/entrypoint.sh"]

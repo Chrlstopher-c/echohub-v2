@@ -38,6 +38,35 @@ Le `Dockerfile` — il compile `llama-cpp-python` avec le support CUDA pour Blac
 et embarque le contournement d'un segfault de nvcc sur les kernels MMQ. C'est l'actif le plus
 coûteux à reconstruire de la v1.
 
+## Lancement
+
+```
+./start.sh            # mode natif : uvicorn + serveur Vite, rechargement à chaud
+./start.sh --docker   # mode conteneur : image GPU complète
+./stop.sh [--docker]
+```
+
+### Ports (par défaut)
+
+| Service | Port | Variable |
+|---|---|---|
+| Interface web (nginx, mode conteneur) | 37920 | `ECHOHUB_PORT_WEB` |
+| API FastAPI | 37921 | `ECHOHUB_PORT_API` |
+| Serveur de dev Vite (mode natif uniquement) | 37922 | `ECHOHUB_PORT_FRONT_DEV` |
+
+Volontairement distincts de ceux de la v1 (37820/37821/37822) : les deux versions peuvent
+tourner en même temps sur la même machine sans se disputer un port. Voir `.env.example`.
+
+### Coexistence avec la v1
+
+La v1 (`/mnt/projects/echohub`) et la v2 peuvent tourner simultanément sur le même poste :
+
+- **Ports** distincts par défaut (ci-dessus) — pas de collision de bind.
+- **Répertoire de données** distinct par défaut : sans `XDG_DATA_HOME` explicite, la v2 range
+  ses données sous `<racine>/echohub-v2/` (la v1 utilise `<racine>/echohub/`). Les deux versions
+  peuvent donc partager le même `XDG_DATA_HOME` hôte sans lire ni écrire la même base SQLite —
+  leurs schémas sont incompatibles (`created_at` en v1, `cree_le` en v2).
+
 ## État
 
 Démarrage du projet — rien d'implémenté à ce stade.
