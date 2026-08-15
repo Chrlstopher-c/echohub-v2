@@ -58,3 +58,51 @@ Conteneur vérifié vivant après l'appel : `docker ps` → `Up About a minute` 
 aucun SIGABRT). Au contexte de production, la requête réelle de comptage ne plante plus le
 conteneur : la vision est détachée proprement au chargement et la mesure répond une absence
 nommée, jamais un crash.
+
+## Preuve 2 — les trois chiffres de la mesure, contexte réduit
+
+**Obtenue.**
+
+Rechargement de Qwen3-VL-8B-Instruct + mmproj avec `preferences.contexte = 4096` et
+`preferences.couches_gpu = 16` (contexte réduit passé directement à la requête de
+planification, pas via le curseur de l'interface) : budget retenu 3,16 Gio sur 11,62 Gio
+libres, soit ~7,9 Gio de marge restante — largement au-dessus des 6 Gio requis. VRAM
+effectivement utilisée après chargement : 4 102 684 672 - 1 263 140 864 ≈ 2,64 Gio. Journal de
+chargement : aucun avertissement de détachement (« Projecteur de vision chargé »
+uniquement) — la vision reste attachée, contrairement à la preuve 1.
+
+Deux images de test générées (motif pseudo-aléatoire par blocs de 8×8, pour éviter qu'un
+encodeur optimise un aplat de couleur uniforme) : `petite.png` (128×128) et `grande.png`
+(896×896).
+
+**Chiffre 1 et 2 — la même image mesurée deux fois rend exactement le même nombre :**
+
+```
+$ curl -X POST /inference/contexte  (petite.png, 1er appel)  → postes.images.tokens = 18
+$ curl -X POST /inference/contexte  (petite.png, 2e appel)   → postes.images.tokens = 18
+```
+
+**Chiffre 3 — une image sensiblement plus grande rend un nombre différent et supérieur :**
+
+```
+$ curl -X POST /inference/contexte  (grande.png, 896×896)    → postes.images.tokens = 786
+```
+
+18 → 18 → 786 : identique sur la répétition, strictement supérieur sur l'image agrandie.
+
+**Sans projecteur chargé, mesure impossible — jamais zéro :**
+
+Modèle `unsloth/Qwen3-VL-2B-Instruct-GGUF` (Q4_K_M) chargé à la place — son dossier ne contient
+AUCUN fichier `mmproj*.gguf` (vérifié : 14 quantifications présentes, 0 projecteur), donc
+`chat_handler` n'existe jamais pour cette instance, sans intervention du garde-fou :
+
+```
+$ curl -X POST /inference/contexte  (petite.png, sans projecteur)
+{"mesurable":false,
+ "raison":"Aucun projecteur de vision chargé avec ce modèle : le coût d'une image n'est pas mesurable.",
+ ...}
+```
+
+Aucun champ `tokens_mesures` chiffré : l'absence de mesure est nommée, jamais rendue par un 0.
+
+**Les trois valeurs mesurées : 18, 18, 786.**
