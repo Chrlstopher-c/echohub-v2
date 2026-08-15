@@ -27,7 +27,7 @@ function BudgetMachine({ budget }: { budget: BudgetMemoire }): ReactElement {
     return <Badge tone="caution">mémoire non mesurée — aucune faisabilité affichable</Badge>;
   }
   return (
-    <div className="flex items-center gap-3 font-mono text-xs tabular-nums">
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-xs tabular-nums">
       <span className="text-mem-vram">{enGoUnite(budget.vramLibreOctets)} VRAM libre</span>
       <span className="text-text-3">·</span>
       <span className="text-mem-ram">{enGoUnite(budget.ramDisponibleOctets)} RAM disponible</span>
@@ -37,8 +37,8 @@ function BudgetMachine({ budget }: { budget: BudgetMemoire }): ReactElement {
 
 function EnTete({ budget }: { budget: BudgetMemoire }): ReactElement {
   return (
-    <header className="mb-6 flex flex-wrap items-end justify-between gap-3">
-      <div>
+    <header className="mb-4 flex flex-wrap items-end justify-between gap-2 lg:mb-6 lg:gap-3">
+      <div className="min-w-0">
         <h1 className="text-xl font-semibold text-text">Modèles</h1>
         <p className="mt-1 text-xs text-text-2">
           Ce que le Hub annonce, confronté à ce que cette machine peut réellement tenir.
@@ -64,8 +64,10 @@ function Onglets({
   entrees: readonly EntreeOnglet[];
   onChoisir: (onglet: Onglet) => void;
 }): ReactElement {
+  // Trois onglets tiennent à 390 px, mais un libellé plus long ne doit jamais pousser la page :
+  // le ruban défile dans son propre conteneur plutôt que d'élargir le corps.
   return (
-    <div role="tablist" className="flex items-center gap-1">
+    <div role="tablist" className="flex max-w-full items-center gap-1 overflow-x-auto">
       {entrees.map((entree) => (
         <button
           key={entree.cle}
@@ -74,7 +76,8 @@ function Onglets({
           aria-selected={actif === entree.cle}
           onClick={(): void => onChoisir(entree.cle)}
           className={cn(
-            'h-8 rounded-sm px-3 text-sm font-medium transition-colors duration-fast ease-out',
+            'shrink-0 rounded-sm px-3 text-sm font-medium transition-colors duration-fast ease-out',
+            'min-h-[44px] min-w-[44px] lg:min-h-0 lg:min-w-0 lg:h-8',
             actif === entree.cle ? 'bg-surface-2 text-text' : 'text-text-2 hover:text-text',
           )}
         >
@@ -122,7 +125,12 @@ function BarreOnglets({ onglet, locaux, actifs, onChoisir }: BarreProps): ReactE
         ]}
       />
       {onglet === 'locaux' && (
-        <Button size="sm" loading={locaux.synchronisation} onClick={locaux.synchroniser}>
+        <Button
+          size="sm"
+          className="w-full lg:w-auto"
+          loading={locaux.synchronisation}
+          onClick={locaux.synchroniser}
+        >
           Synchroniser avec le disque
         </Button>
       )}
@@ -185,7 +193,7 @@ export function EcranModeles({ onCharger }: EcranModelesProps): ReactElement {
   };
 
   return (
-    <div className="mx-auto max-w-5xl px-6 py-8">
+    <div className="mx-auto max-w-5xl px-4 py-5 lg:px-6 lg:py-8">
       <EnTete budget={budget} />
       <BarreOnglets onglet={onglet} locaux={locaux} actifs={transferts.actifs} onChoisir={setOnglet} />
       <Panneau

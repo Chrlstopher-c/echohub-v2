@@ -12,7 +12,8 @@ export interface InterrupteurVueProps {
 }
 
 const CLASSE_BASE =
-  'flex h-6 w-6 items-center justify-center rounded-xs transition-colors duration-fast';
+  'flex min-h-[44px] min-w-[44px] items-center justify-center rounded-xs transition-colors ' +
+  'duration-fast lg:h-6 lg:w-6 lg:min-h-0 lg:min-w-0';
 
 function classeBouton(actif: boolean): string {
   return cn(CLASSE_BASE, actif ? 'bg-surface-2 text-text' : 'text-text-3 hover:text-text-2');

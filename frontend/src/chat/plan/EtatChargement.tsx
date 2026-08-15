@@ -89,7 +89,7 @@ function JournalSession({ entrees }: { entrees: EntreeJournal[] }): ReactElement
         <li key={`${entree.horodatage}-${index}`} className="flex gap-2 font-mono text-2xs">
           <span className="shrink-0 tabular-nums text-text-3">{formaterHeure(entree.horodatage)}</span>
           <span className="shrink-0 text-text-3">{entree.phase}</span>
-          <span className={`flex-1 ${TONE_NIVEAU[entree.niveau]}`}>{entree.message}</span>
+          <span className={`min-w-0 flex-1 break-words ${TONE_NIVEAU[entree.niveau]}`}>{entree.message}</span>
         </li>
       ))}
     </ol>
@@ -98,7 +98,7 @@ function JournalSession({ entrees }: { entrees: EntreeJournal[] }): ReactElement
 
 function ResumePlanDegrade({ plan }: { plan: PlanDeChargement }): ReactElement {
   return (
-    <ul className="space-y-0.5 font-mono text-2xs tabular-nums text-text-2">
+    <ul className="min-w-0 space-y-0.5 break-words font-mono text-2xs tabular-nums text-text-2">
       <li>couches GPU : {plan.couches_gpu.valeur} / {plan.couches_totales}</li>
       <li>contexte : {formaterTokens(plan.contexte.valeur)} tokens</li>
       <li>cache KV : {plan.type_cache_kv.valeur}</li>
@@ -162,8 +162,8 @@ export function EtatChargement({
   const etat = statut?.etat ?? 'inactif';
   const ecoule = useChrono(etat === 'en_cours', debutMs);
   return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between gap-2">
+    <div className="min-w-0 space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <Badge tone={TONE_ETAT[etat]} dot pulse={etat === 'en_cours'}>
           {LIBELLE_ETAT[etat]}
         </Badge>

@@ -28,9 +28,12 @@ const LIBELLE_SOURCE: Record<SourceMesureGpu, string> = {
 
 function Ligne({ libelle, children }: { libelle: string; children: ReactNode }): ReactElement {
   return (
-    <div className="flex items-baseline justify-between gap-3 py-1">
+    <div className="flex flex-wrap items-baseline justify-between gap-x-3 py-1">
       <span className="shrink-0 text-xs text-text-2">{libelle}</span>
-      <span className="min-w-0 truncate text-right font-mono text-xs tabular-nums text-text">{children}</span>
+      {/* Sous `lg` la valeur se replie au lieu d'être coupée : rien n'est lisible au survol au doigt. */}
+      <span className="min-w-0 break-all text-right font-mono text-xs tabular-nums text-text lg:truncate">
+        {children}
+      </span>
     </div>
   );
 }
@@ -38,8 +41,8 @@ function Ligne({ libelle, children }: { libelle: string; children: ReactNode }):
 function DetailGpu({ gpu, source }: { gpu: Gpu; source: SourceMesureGpu }): ReactElement {
   return (
     <div>
-      <div className="mb-2 flex items-baseline justify-between gap-3">
-        <h3 className="truncate text-md font-semibold text-text">{gpu.nom}</h3>
+      <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <h3 className="min-w-0 break-words text-md font-semibold text-text lg:truncate">{gpu.nom}</h3>
         {gpu.architecture_sm !== null && <Badge tone="vram">{gpu.architecture_sm}</Badge>}
       </div>
       <Ligne libelle="Capacité de calcul">
@@ -71,7 +74,8 @@ function CartePlateforme({ profil }: { profil: ProfilMachine }): ReactElement {
       <Ligne libelle="Détectée">{LIBELLE_PLATEFORME[profil.plateforme]}</Ligne>
       <Ligne libelle="Pilote NVIDIA">{profil.pilote?.version ?? 'non lisible'}</Ligne>
       <Ligne libelle="Mesure">{heure(profil.mesure_le)}</Ligne>
-      <p className="mt-2 truncate text-2xs text-text-3" title={profil.version_noyau}>
+      {/* Le `title` ne s'ouvre pas au doigt : sous `lg` la version du noyau est rendue en entier. */}
+      <p className="mt-2 break-all text-2xs text-text-3 lg:truncate" title={profil.version_noyau}>
         {profil.version_noyau}
       </p>
       <AvertissementPilote gpu={profil.gpu_principal} pilote={profil.pilote} />

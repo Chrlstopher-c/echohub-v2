@@ -49,9 +49,13 @@ function Details({ details }: { details: Record<string, string> }): ReactElement
   return (
     <dl className="mt-3 space-y-1 border-t border-border pt-3">
       {entrees.map(([cle, valeur]) => (
-        <div key={cle} className="flex items-baseline justify-between gap-3">
+        <div key={cle} className="flex flex-wrap items-baseline justify-between gap-x-3">
           <dt className="shrink-0 text-2xs text-text-3">{cle}</dt>
-          <dd className="min-w-0 truncate text-right font-mono text-2xs tabular-nums text-text-2" title={valeur}>
+          {/* Le `title` est inaccessible au doigt : la valeur est rendue entière sous `lg`. */}
+          <dd
+            className="min-w-0 break-all text-right font-mono text-2xs tabular-nums text-text-2 lg:truncate"
+            title={valeur}
+          >
             {valeur}
           </dd>
         </div>
@@ -74,7 +78,7 @@ export function CarteMoteur({ titre, sante, onSonder, sondage = false, children 
     <Card
       title={titre}
       actions={
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
           <Badge tone={TON_STATUT[sante.statut]} dot>
             {LIBELLE_STATUT[sante.statut]}
           </Badge>

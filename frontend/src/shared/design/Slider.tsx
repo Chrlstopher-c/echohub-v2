@@ -112,7 +112,9 @@ export function Slider({
   return (
     <div className={cn(disabled && 'opacity-45')}>
       <SliderHeader label={label} format={format} value={value} tone={tone} id={id} />
-      <div className="relative flex h-3.5 items-center">
+      {/* Le rail garde son épaisseur ; c'est la zone d'appui de l'input, en surimpression, qui
+          monte à 44 px au doigt — épaissir le rail lui-même déformerait la lecture des zones. */}
+      <div className="relative flex h-11 items-center lg:h-3.5">
         <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-surface-2">
           <ZoneSegments zones={zones} min={min} max={max} />
           <span

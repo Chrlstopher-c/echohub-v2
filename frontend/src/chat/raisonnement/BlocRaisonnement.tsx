@@ -26,7 +26,7 @@ import type { SegmentRaisonnement } from './extraction';
 const CARACTERES = new Intl.NumberFormat('fr-FR');
 /* Un raisonnement peut faire plusieurs milliers de caractères : déplié, il défile chez lui plutôt
  * que de pousser la réponse hors de l'écran. */
-const CLASSE_DEFILEMENT = 'max-h-72 overflow-y-auto';
+const CLASSE_DEFILEMENT = 'max-h-72 overflow-y-auto overflow-x-auto overscroll-contain';
 
 function Chevron({ ouvert }: { ouvert: boolean }): ReactElement {
   return (
@@ -71,7 +71,10 @@ function Entete({ segment, rang, actif, ouvert, cible, onBasculer }: EnteteProps
       aria-expanded={ouvert}
       aria-controls={cible}
       className={cn(
-        'flex w-full items-center gap-2 rounded-sm px-2.5 py-1.5 text-left text-xs text-text-3',
+        // `flex-wrap` sans point de rupture : à 390 px le libellé, le décompte et le badge ne
+        // tiennent pas sur une ligne ; ils passent dessous plutôt que d'être rognés.
+        'flex w-full min-h-[44px] flex-wrap items-center gap-x-2 gap-y-1 rounded-sm px-2.5 py-2',
+        'text-left text-xs text-text-3 lg:min-h-0 lg:flex-nowrap lg:py-1.5',
         'transition-colors duration-fast ease-out hover:text-text-2',
         'focus-visible:outline-none focus-visible:shadow-[0_0_0_3px_var(--ring)]',
       )}
@@ -145,7 +148,7 @@ export function BlocRaisonnement({ segment, rang, actif }: BlocRaisonnementProps
   const cible = useId();
   const vide = segment.texte.trim() === '';
   return (
-    <section className="rounded-sm border border-border bg-surface">
+    <section className="max-w-full rounded-sm border border-border bg-surface">
       <Entete
         segment={segment}
         rang={rang}

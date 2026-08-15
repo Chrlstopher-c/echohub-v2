@@ -6,7 +6,16 @@ import { ChatEcran } from './chat';
 import { useCible } from './cible';
 import { EcranModeles } from './models';
 import { EcranSysteme } from './system';
-import { Button, cn, fadeUp, TONE_VAR, transitionBase, type Tone } from './shared/design';
+import {
+  Button,
+  cn,
+  fadeUp,
+  TONE_VAR,
+  transitionBase,
+  useEstGrandEcran,
+  useHauteurVisuelle,
+  type Tone,
+} from './shared/design';
 import { dechargerModele, lireEtatInference, type EtatChargement, type StatutInference } from './shared/api';
 
 /*
@@ -25,6 +34,12 @@ import { dechargerModele, lireEtatInference, type EtatChargement, type StatutInf
  * l'application : le GPU est une ressource exclusive, un seul modèle est chargé à la fois. Le
  * savoir depuis n'importe quel écran évite de retourner sur Système pour comprendre pourquoi une
  * génération refuse de démarrer.
+ *
+ * Sous 1024 px, les onglets quittent l'entête pour une barre basse : le haut d'un téléphone tenu à
+ * une main n'est pas atteignable au pouce, et l'entête doit de toute façon céder la place à l'état
+ * d'inférence et à l'éjection, qui restent visibles partout parce que le GPU est exclusif. La barre
+ * n'est rendue QU'À UN SEUL ENDROIT à la fois (le seuil est lu en JS) : deux instances
+ * simultanées feraient courir le trait `layoutId="onglet-actif"` entre deux parents.
  */
 
 type Ecran = 'modeles' | 'chat' | 'systeme';
@@ -116,7 +131,7 @@ function useEtatInference(): readonly [StatutInference | null, () => void] {
 
 function Marque(): ReactElement {
   return (
-    <div className="flex items-center gap-2 pr-2">
+    <div className="flex shrink-0 items-center gap-2 pr-2">
       <span className="text-md font-semibold tracking-tight">EchoHub</span>
       <span className="font-mono text-2xs text-text-3">v2</span>
     </div>
@@ -126,10 +141,12 @@ function Marque(): ReactElement {
 interface OngletProps {
   readonly libelle: string;
   readonly actif: boolean;
+  /** Barre basse : le trait se place du côté du bord partagé avec le contenu, donc en haut. */
+  readonly indicateurEnHaut: boolean;
   readonly onClick: () => void;
 }
 
-function Onglet({ libelle, actif, onClick }: OngletProps): ReactElement {
+function Onglet({ libelle, actif, indicateurEnHaut, onClick }: OngletProps): ReactElement {
   return (
     <button
       type="button"
@@ -137,7 +154,8 @@ function Onglet({ libelle, actif, onClick }: OngletProps): ReactElement {
       aria-selected={actif}
       onClick={onClick}
       className={cn(
-        'relative h-12 px-3 text-sm font-medium transition-colors duration-fast ease-out',
+        'relative flex min-h-[44px] flex-1 items-center justify-center px-3 text-sm font-medium',
+        'transition-colors duration-fast ease-out lg:h-12 lg:flex-none',
         'focus-visible:outline-none focus-visible:shadow-[inset_0_0_0_2px_var(--ring)]',
         actif ? 'text-text' : 'text-text-2 hover:text-text',
       )}
@@ -148,10 +166,39 @@ function Onglet({ libelle, actif, onClick }: OngletProps): ReactElement {
         <motion.span
           layoutId="onglet-actif"
           transition={transitionBase}
-          className="absolute inset-x-2 bottom-0 h-px bg-accent"
+          className={cn('absolute inset-x-2 h-px bg-accent', indicateurEnHaut ? 'top-0' : 'bottom-0')}
         />
       )}
     </button>
+  );
+}
+
+interface BarreOngletsProps {
+  readonly ecran: Ecran;
+  readonly enBas: boolean;
+  readonly onChoisir: (ecran: Ecran) => void;
+}
+
+function BarreOnglets({ ecran, enBas, onChoisir }: BarreOngletsProps): ReactElement {
+  return (
+    <nav
+      role="tablist"
+      aria-label="Écrans"
+      className={cn(
+        'flex items-stretch',
+        enBas && 'eh-marge-sure-bas shrink-0 border-t border-border bg-bg px-1 pt-1',
+      )}
+    >
+      {ONGLETS.map((onglet) => (
+        <Onglet
+          key={onglet.cle}
+          libelle={onglet.libelle}
+          actif={onglet.cle === ecran}
+          indicateurEnHaut={enBas}
+          onClick={() => onChoisir(onglet.cle)}
+        />
+      ))}
+    </nav>
   );
 }
 
@@ -182,14 +229,20 @@ function EtatInference({ statut, onEjecter }: EtatInferenceProps): ReactElement 
   }, [onEjecter]);
 
   return (
-    <div className="flex items-center gap-2" title={statut?.message ?? undefined}>
+    <div className="flex min-w-0 items-center gap-2" title={statut?.message ?? undefined}>
       <span
         aria-hidden="true"
-        className={cn('h-1.5 w-1.5 rounded-full', etat === 'en_cours' && 'animate-eh-pulse')}
+        className={cn('h-1.5 w-1.5 shrink-0 rounded-full', etat === 'en_cours' && 'animate-eh-pulse')}
         style={{ background: inconnu ? TONE_VAR.neutral : TONE_VAR[TONE_ETAT[etat]] }}
       />
-      <span className="text-xs text-text-2">{inconnu ? 'backend injoignable' : LIBELLE_ETAT[etat]}</span>
-      {modele !== null && <span className="max-w-[14rem] truncate font-mono text-xs text-text-3">{modele}</span>}
+      <span className="min-w-0 truncate text-xs text-text-2">
+        {inconnu ? 'backend injoignable' : LIBELLE_ETAT[etat]}
+      </span>
+      {/* Le nom du modèle est un détail : sur téléphone il mangerait la place de l'éjection, qui
+          elle doit rester atteignable partout. L'état, lui, ne disparaît jamais. */}
+      {modele !== null && (
+        <span className="hidden min-w-0 max-w-[14rem] truncate font-mono text-xs text-text-3 lg:inline">{modele}</span>
+      )}
       {etat === 'pret' && (
         <Button variant="ghost" size="sm" onClick={ejecter} disabled={ejection} title="Libérer la VRAM">
           {ejection ? 'éjection…' : 'Éjecter'}
@@ -224,7 +277,7 @@ function IconeTheme({ theme }: { readonly theme: Theme }): ReactElement {
 /** Refus d'assemblage : une métadonnée manque. Affiché tel quel — l'utilisateur peut agir dessus. */
 function BandeauRefus({ refus }: { readonly refus: string }): ReactElement {
   return (
-    <div className="border-b border-border px-4 py-2 text-xs" style={{ color: TONE_VAR.caution }}>
+    <div className="eh-marge-sure-x border-b border-border py-2 text-xs" style={{ color: TONE_VAR.caution }}>
       {refus}
     </div>
   );
@@ -289,11 +342,49 @@ class FrontiereErreur extends Component<FrontiereProps, EtatFrontiere> {
   }
 }
 
+interface EnteteAppProps {
+  readonly ecran: Ecran;
+  readonly grandEcran: boolean;
+  readonly statut: StatutInference | null;
+  readonly theme: Theme;
+  readonly onEjecter: () => void;
+  readonly onBasculerTheme: () => void;
+  readonly onChoisirEcran: (ecran: Ecran) => void;
+}
+
+function EnteteApp(props: EnteteAppProps): ReactElement {
+  const { ecran, grandEcran, statut, theme, onEjecter, onBasculerTheme, onChoisirEcran } = props;
+  return (
+    <header
+      className={cn(
+        'eh-marge-sure-x flex min-h-[52px] shrink-0 items-center gap-1',
+        'border-b border-border lg:h-12 lg:min-h-0',
+      )}
+    >
+      <Marque />
+      {grandEcran && <BarreOnglets ecran={ecran} enBas={false} onChoisir={onChoisirEcran} />}
+      <div className="flex min-w-0 flex-1 items-center justify-end gap-2 lg:gap-3">
+        <EtatInference statut={statut} onEjecter={onEjecter} />
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onBasculerTheme}
+          aria-label={theme === 'dark' ? 'Passer au thème clair' : 'Passer au thème sombre'}
+        >
+          <IconeTheme theme={theme} />
+        </Button>
+      </div>
+    </header>
+  );
+}
+
 export function App(): ReactElement {
   const [ecran, setEcran] = useState<Ecran>('modeles');
   const [theme, basculerTheme] = useTheme();
   const [statut, resonderEtat] = useEtatInference();
   const { cible, refus, erreur, choisir } = useCible();
+  const grandEcran = useEstGrandEcran();
+  useHauteurVisuelle();
 
   // Sélectionner un modèle amène sur le chat : c'est là que le plan est montré avant d'être appliqué.
   const surChoixModele = useCallback(
@@ -318,31 +409,16 @@ export function App(): ReactElement {
   const alerte = refus === null ? erreur : `${refus.manquant} — ${refus.remediation}`;
 
   return (
-    <div className="flex h-screen flex-col bg-bg text-text">
-      <header className="flex h-12 shrink-0 items-center gap-1 border-b border-border px-4">
-        <Marque />
-        <nav role="tablist" aria-label="Écrans" className="flex items-center">
-          {ONGLETS.map((onglet) => (
-            <Onglet
-              key={onglet.cle}
-              libelle={onglet.libelle}
-              actif={onglet.cle === ecran}
-              onClick={() => setEcran(onglet.cle)}
-            />
-          ))}
-        </nav>
-        <div className="flex flex-1 items-center justify-end gap-3">
-          <EtatInference statut={statut} onEjecter={resonderEtat} />
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={basculerTheme}
-            aria-label={theme === 'dark' ? 'Passer au thème clair' : 'Passer au thème sombre'}
-          >
-            <IconeTheme theme={theme} />
-          </Button>
-        </div>
-      </header>
+    <div className="eh-hauteur-app flex flex-col overflow-x-hidden bg-bg text-text">
+      <EnteteApp
+        ecran={ecran}
+        grandEcran={grandEcran}
+        statut={statut}
+        theme={theme}
+        onEjecter={resonderEtat}
+        onBasculerTheme={basculerTheme}
+        onChoisirEcran={setEcran}
+      />
 
       {alerte !== null && <BandeauRefus refus={alerte} />}
 
@@ -368,6 +444,8 @@ export function App(): ReactElement {
           </AnimatePresence>
         </FrontiereErreur>
       </main>
+
+      {!grandEcran && <BarreOnglets ecran={ecran} enBas onChoisir={setEcran} />}
     </div>
   );
 }

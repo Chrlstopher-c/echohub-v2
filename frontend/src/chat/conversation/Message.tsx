@@ -38,7 +38,7 @@ function Statistiques({ message }: { message: MessageChat }): ReactElement | nul
   return (
     <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-2xs tabular-nums text-text-3">
       {modele !== null && (
-        <span className="max-w-[22rem] truncate text-text-2" title={modele}>
+        <span className="max-w-full truncate text-text-2 lg:max-w-[22rem]" title={modele}>
           {nomCourt(modele)}
         </span>
       )}
@@ -73,11 +73,13 @@ export function Message({ message }: MessageProps): ReactElement {
       {/* La largeur est portée par CE conteneur, pas par la bulle : l'enveloppe d'actions insère un
           bloc entre le flex et la bulle, et un `max-w-[80%]` posé plus bas se calculerait alors par
           rapport à cet intercalaire — ce qui écrasait les messages sur deux ou trois mots. */}
-      <div className={cn('min-w-0', utilisateur ? 'max-w-[80%]' : 'w-full')}>
+      {/* 80 % d'une colonne de 390 px laisse 78 px de vide pour une bulle déjà à l'étroit : au doigt
+          la retenue tombe à 92 %, la distinction gauche/droite suffisant à identifier l'auteur. */}
+      <div className={cn('min-w-0', utilisateur ? 'max-w-[92%] lg:max-w-[80%]' : 'w-full')}>
         <EnveloppeMessage message={message}>
           <div className={cn(utilisateur && 'rounded-md bg-surface-2 px-3 py-2')}>
             {utilisateur ? (
-              <p className="whitespace-pre-wrap text-sm leading-relaxed text-text">{message.contenu}</p>
+              <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-text">{message.contenu}</p>
             ) : (
               <ReponseModele source={message.contenu} />
             )}

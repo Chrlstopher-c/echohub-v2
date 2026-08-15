@@ -63,7 +63,7 @@ interface PiedProps {
 
 function PiedEdition({ envoyable, occupe, onAnnuler, onConfirmer }: PiedProps): ReactElement {
   return (
-    <div className="mt-1.5 flex items-center justify-between gap-3">
+    <div className="mt-1.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
       <p className="text-2xs text-text-3">
         Le message d’origine et sa réponse sont conservés, atteignables par « ‹ › ».
       </p>
@@ -105,7 +105,8 @@ export function EditeurEnPlace({
   const touches: Touches = { contenu, envoyable, onAnnuler, onConfirmer };
 
   return (
-    <div className="w-full min-w-[16rem]">
+    // `min-w` ramené à `lg:` : à 390 px un plancher de 16 rem déborderait la bulle au lieu de la tenir.
+    <div className="w-full lg:min-w-[16rem]">
       <textarea
         autoFocus
         rows={lignesUtiles(contenuInitial)}

@@ -1,15 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ReactElement } from 'react';
-import { Button, cn, MenuContextuel, type EntreeMenu } from '../../shared/design';
+import { BoutonActions, Button, cn, MenuContextuel, type EntreeMenu } from '../../shared/design';
 import type { ResumeConversation } from '../api/contrats';
 
 /*
  * Colonne des conversations. La sélection se marque par une surface, pas par une bordure ni une
  * couleur d'accent : l'accent est réservé aux actions et à l'activité en cours.
  *
- * Le clic droit ouvre les actions de la conversation. Le bouton de suppression au survol reste :
- * une action uniquement accessible par clic droit serait invisible pour qui ne pense pas à le
- * tenter — le menu enrichit, il ne remplace pas.
+ * Le clic droit ouvre les actions de la conversation. L'exigence d'origine — « une action seulement
+ * au clic droit serait invisible » — est tenue par un déclencheur PERMANENT (`BoutonActions`) et non
+ * plus par un bouton révélé au survol : le survol n'existe pas au doigt, l'ancienne corbeille y était
+ * donc simplement absente. Une seule voie mène désormais à Supprimer, celle du menu.
  */
 
 interface EntreeProps {
@@ -94,34 +95,34 @@ function Entree({ conversation, active, onOuvrir, onSupprimer, onRenommer }: Ent
 
   return (
     <MenuContextuel entrees={entrees} className="group relative block">
-      <li className="relative list-none">
-        <button
-          type="button"
-          onClick={onOuvrir}
-          className={cn(
-            'w-full rounded-sm px-2 py-1.5 text-left transition-colors duration-fast',
-            active ? 'bg-surface-2 text-text' : 'text-text-2 hover:bg-surface-2 hover:text-text',
-          )}
-        >
-          <span className="block truncate pr-6 text-xs">{conversation.titre}</span>
-          <span className="block font-mono text-2xs tabular-nums text-text-3">
-            {conversation.nb_messages} messages
-          </span>
-        </button>
-      <span className="absolute right-1 top-1 hidden group-hover:block">
-        <Button variant="ghost" size="sm" aria-label="Supprimer la conversation" onClick={onSupprimer}>
-          <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" aria-hidden="true">
-            <path
-              d="M3.5 4.5h9M6.5 4.5V3h3v1.5M5 4.5l.5 8h5l.5-8"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-          </Button>
-        </span>
-      </li>
+      {({ ouvrirDepuis }) => (
+        <li className="relative flex list-none items-center">
+          <button
+            type="button"
+            onClick={onOuvrir}
+            className={cn(
+              'min-w-0 flex-1 rounded-sm px-2 py-1.5 text-left transition-colors duration-fast',
+              active ? 'bg-surface-2 text-text' : 'text-text-2 hover:bg-surface-2 hover:text-text',
+            )}
+          >
+            <span className="block truncate text-xs">{conversation.titre}</span>
+            <span className="block font-mono text-2xs tabular-nums text-text-3">
+              {conversation.nb_messages} messages
+            </span>
+          </button>
+          {/* Permanent au doigt ; sur grand écran il reste révélé au survol (ou au focus clavier),
+              exactement comme la corbeille qu'il remplace — la densité de la colonne est intacte. */}
+          <BoutonActions
+            libelle="Actions sur la conversation"
+            onClick={(evenement) => ouvrirDepuis(evenement.currentTarget)}
+            className={cn(
+              'lg:pointer-events-none lg:opacity-0',
+              'lg:group-hover:pointer-events-auto lg:group-hover:opacity-100',
+              'lg:focus-visible:pointer-events-auto lg:focus-visible:opacity-100',
+            )}
+          />
+        </li>
+      )}
     </MenuContextuel>
   );
 }
@@ -146,15 +147,24 @@ export function ListeConversations({
   onRenommer,
 }: ListeConversationsProps): ReactElement {
   return (
-    <nav className="flex h-full w-60 shrink-0 flex-col border-r border-border bg-surface">
-      <div className="flex items-center justify-between gap-2 px-3 py-3">
-        <h2 className="text-xs font-medium uppercase tracking-wide text-text-3">Conversations</h2>
-        <Button variant="secondary" size="sm" onClick={onCreer}>
+    // Dans le tiroir, la largeur et la bordure viennent du panneau : `w-60` y créerait une colonne
+    // de 240 px dans un panneau de 320, avec un vide à droite.
+    <nav
+      className={cn(
+        'flex h-full w-full min-w-0 flex-col bg-surface',
+        'lg:w-60 lg:shrink-0 lg:border-r lg:border-border',
+      )}
+    >
+      <div className="flex items-center gap-2 px-3 py-3">
+        {/* Le titre est déjà porté par l'entête du tiroir sous le seuil — le répéter volerait une
+            ligne sur un écran qui n'en a pas de trop. */}
+        <h2 className="hidden text-xs font-medium uppercase tracking-wide text-text-3 lg:block">Conversations</h2>
+        <Button variant="secondary" size="sm" className="ml-auto" onClick={onCreer}>
           Nouvelle
         </Button>
       </div>
       {erreur !== null && <p className="px-3 pb-2 text-2xs text-critical">{erreur}</p>}
-      <ul className="flex-1 space-y-0.5 overflow-y-auto px-2 pb-3">
+      <ul className="min-h-0 flex-1 space-y-0.5 overflow-y-auto overflow-x-hidden px-2 pb-3">
         {conversations.map((conversation) => (
           <Entree
             key={conversation.id}

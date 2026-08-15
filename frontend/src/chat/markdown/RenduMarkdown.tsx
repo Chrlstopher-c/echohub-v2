@@ -38,7 +38,7 @@ function Inline({ segments }: { segments: SegmentInline[] }): ReactElement {
       {segments.map((segment, index) => {
         if (segment.type === 'code') {
           return (
-            <code key={index} className="rounded-xs bg-surface-2 px-1 font-mono text-xs text-text">
+            <code key={index} className="break-words rounded-xs bg-surface-2 px-1 font-mono text-xs text-text">
               {segment.texte}
             </code>
           );
@@ -65,7 +65,7 @@ function Lien({ texte, href }: { texte: string; href: string }): ReactElement {
       href={href}
       target="_blank"
       rel="noreferrer noopener"
-      className="text-accent underline decoration-border-strong underline-offset-2 hover:decoration-accent"
+      className="break-words text-accent underline decoration-border-strong underline-offset-2 hover:decoration-accent"
     >
       {texte}
     </a>
@@ -97,8 +97,11 @@ function Liste({ bloc }: { bloc: BlocListe }): ReactElement {
 function Tableau({ bloc }: { bloc: BlocTableau }): ReactElement {
   const aligner = (colonne: number): string => CLASSE_ALIGNEMENT[bloc.alignements[colonne] ?? 'gauche'];
   return (
-    <div className="my-2 overflow-x-auto rounded-sm border border-border">
-      <table className="w-full border-collapse text-xs">
+    <div className="my-2 max-w-full overflow-x-auto rounded-sm border border-border">
+      {/* `w-max min-w-full` et non `w-full` : sous `w-full` le tableau se comprime dans le cadre au
+          lieu de le déborder, le conteneur ne défile donc jamais et les colonnes deviennent des
+          piles d'une lettre. Ici il prend la largeur de son contenu, et c'est le cadre qui défile. */}
+      <table className="w-max min-w-full border-collapse text-xs">
         <thead>
           <tr className="border-b border-border bg-surface-2">
             {bloc.entetes.map((cellule, colonne) => (
@@ -143,7 +146,7 @@ function Bloc({ bloc }: { bloc: BlocMarkdown }): ReactElement {
     case 'separateur':
       return <hr className="my-3 border-0 border-t border-border" />;
     default:
-      return <p className="whitespace-pre-wrap"><Inline segments={bloc.contenu} /></p>;
+      return <p className="whitespace-pre-wrap break-words"><Inline segments={bloc.contenu} /></p>;
   }
 }
 
@@ -155,7 +158,7 @@ export function RenduMarkdown({ source }: RenduMarkdownProps): ReactElement {
   // Le streaming remplace `source` à chaque fragment : l'analyse est mémoïsée sur le texte reçu.
   const blocs = useMemo(() => analyserMarkdown(source), [source]);
   return (
-    <div className="space-y-2 text-sm leading-relaxed text-text">
+    <div className="min-w-0 max-w-full space-y-2 text-sm leading-relaxed text-text">
       {blocs.map((bloc, index) => (
         <Bloc key={index} bloc={bloc} />
       ))}

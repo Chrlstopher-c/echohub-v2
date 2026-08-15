@@ -12,7 +12,18 @@ export { Progress, type ProgressProps } from './Progress';
 export { Tooltip, type TooltipProps } from './Tooltip';
 export { Modal, type ModalProps, type ModalSize } from './Modal';
 
-export { MenuContextuel, type EntreeMenu, type MenuContextuelProps } from './MenuContextuel';
+export {
+  MenuContextuel,
+  type ApiMenuContextuel,
+  type EntreeMenu,
+  type MenuContextuelProps,
+} from './MenuContextuel';
+/* ---- Briques tactiles : ce que les écrans utilisent sous le seuil de 1024 px ---- */
+export { Feuille, type CoteFeuille, type FeuilleProps } from './Feuille';
+export { BoutonActions, type BoutonActionsProps } from './BoutonActions';
+export { useEstGrandEcran } from './useEstGrandEcran';
+export { useHauteurVisuelle } from './useHauteurVisuelle';
+
 export { TONE_SOFT_VAR, TONE_VAR, type Tone } from './tones';
 export {
   DUR,

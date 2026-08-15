@@ -1,7 +1,16 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import { useState } from 'react';
 import type { ReactElement, ReactNode } from 'react';
-import { Badge, Button, Card, cn, fadeUp, MenuContextuel } from '../../shared/design';
+import {
+  Badge,
+  BoutonActions,
+  Button,
+  Card,
+  cn,
+  fadeUp,
+  MenuContextuel,
+  type ApiMenuContextuel,
+} from '../../shared/design';
 import type { ModeleEnregistre, RapportCoherence } from '../api/types';
 import { journal } from '../api/client';
 import { verifierCoherence } from '../api/registre';
@@ -51,18 +60,21 @@ function EnTeteModele({
   modele,
   budget,
   onBasculerFavori,
+  ouvrirActions,
 }: {
   modele: ModeleEnregistre;
   budget: BudgetMemoire;
   onBasculerFavori?: (modele: ModeleEnregistre) => void;
+  /** Chemin tactile vers le menu contextuel — le clic droit n'existe pas au doigt. */
+  ouvrirActions: (element: HTMLElement | null) => void;
 }): ReactElement {
   return (
-    <div className="mb-2 flex items-start justify-between gap-3">
-      <div className="min-w-0">
+    <div className="mb-2 flex flex-col items-start gap-1.5 lg:flex-row lg:justify-between lg:gap-3">
+      <div className="min-w-0 max-w-full">
         <h3 className="truncate text-md font-semibold text-text">{modele.fichier ?? modele.depot}</h3>
         <p className="truncate text-2xs text-text-3">{modele.depot}</p>
       </div>
-      <div className="flex shrink-0 items-center gap-1.5">
+      <div className="flex flex-wrap items-center gap-1.5 lg:shrink-0 lg:flex-nowrap">
         {onBasculerFavori !== undefined && (
           <button
             type="button"
@@ -70,7 +82,9 @@ function EnTeteModele({
             aria-pressed={modele.favori}
             title={modele.favori ? 'Retirer des favoris' : 'Mettre en favori'}
             className={cn(
-              'rounded-sm p-1 transition-colors duration-fast ease-out',
+              'inline-flex items-center justify-center rounded-sm p-1',
+              'min-h-[44px] min-w-[44px] lg:min-h-0 lg:min-w-0',
+              'transition-colors duration-fast ease-out',
               'focus-visible:outline-none focus-visible:shadow-[0_0_0_2px_var(--ring)]',
               modele.favori ? 'text-accent' : 'text-text-3 hover:text-text-2',
             )}
@@ -80,6 +94,11 @@ function EnTeteModele({
         )}
         <Badge tone="neutral">{modele.format}</Badge>
         <PastilleFaisabilite faisabilite={evaluer(modele.taille_octets, budget)} />
+        <BoutonActions
+          libelle="Actions sur le modèle"
+          className="lg:hidden"
+          onClick={(evenement): void => ouvrirActions(evenement.currentTarget)}
+        />
       </div>
     </div>
   );
@@ -97,15 +116,16 @@ function ActionsModele({
   onSupprimerDisque?: (modele: ModeleEnregistre) => void;
 }): ReactElement {
   return (
-    <div className="mt-3 flex items-center justify-between gap-2">
+    <div className="mt-3 flex flex-col items-start gap-2 lg:flex-row lg:items-center lg:justify-between">
       <EtatMetadonnees modele={modele} />
-      <div className="flex gap-1.5">
+      <div className="flex w-full flex-wrap gap-1.5 lg:w-auto lg:flex-nowrap">
         {/* « Oublier » ne retire que l'entrée du registre : les fichiers restent, et la
             synchronisation suivante réinscrit le modèle. Sans le dire, l'action paraît sans effet.
             La suppression réelle des octets est proposée à côté, avec sa confirmation. */}
         <Button
           size="sm"
           variant="ghost"
+          className="grow lg:grow-0"
           title="Retire du registre sans effacer les fichiers"
           onClick={(): void => onOublier(modele.id)}
         >
@@ -115,6 +135,7 @@ function ActionsModele({
           <Button
             size="sm"
             variant="ghost"
+            className="grow lg:grow-0"
             title="Efface définitivement les fichiers du disque"
             onClick={(): void => onSupprimerDisque(modele)}
           >
@@ -122,7 +143,7 @@ function ActionsModele({
           </Button>
         )}
         {onCharger !== undefined && (
-          <Button size="sm" variant="primary" onClick={(): void => onCharger(modele)}>
+          <Button size="sm" variant="primary" className="grow lg:grow-0" onClick={(): void => onCharger(modele)}>
             Charger
           </Button>
         )}
@@ -198,8 +219,14 @@ function CarteModele({
           : []),
       ]}
     >
+    {({ ouvrirDepuis }: ApiMenuContextuel): ReactElement => (
     <Card level="surface">
-      <EnTeteModele modele={modele} budget={budget} onBasculerFavori={onBasculerFavori} />
+      <EnTeteModele
+        modele={modele}
+        budget={budget}
+        onBasculerFavori={onBasculerFavori}
+        ouvrirActions={ouvrirDepuis}
+      />
       {rapport !== null && <RapportLigne rapport={rapport} />}
       <dl className="space-y-1">
         <Champ libelle="Taille sur disque">{octetsLisibles(modele.taille_octets)}</Champ>
@@ -216,6 +243,7 @@ function CarteModele({
         onSupprimerDisque={onSupprimerDisque}
       />
     </Card>
+    )}
     </MenuContextuel>
   );
 }
@@ -271,7 +299,7 @@ export function ModelesLocaux({ etat, budget, onCharger }: ModelesLocauxProps): 
       {favoris.length > 0 && (
         <section className="mb-8">
           <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-text-3">Favoris</h3>
-          <div className="grid gap-3 md:grid-cols-2">
+          <div className="grid grid-cols-[minmax(0,1fr)] gap-3 lg:grid-cols-2">
             <AnimatePresence initial={false}>{favoris.map(carte)}</AnimatePresence>
           </div>
         </section>
@@ -279,7 +307,7 @@ export function ModelesLocaux({ etat, budget, onCharger }: ModelesLocauxProps): 
       {favoris.length > 0 && autres.length > 0 && (
         <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-text-3">Autres modèles</h3>
       )}
-      <div className="grid gap-3 md:grid-cols-2">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-3 lg:grid-cols-2">
         <AnimatePresence initial={false}>{autres.map(carte)}</AnimatePresence>
       </div>
       {disque.erreur !== null && <p className="mt-3 text-2xs text-critical">{disque.erreur}</p>}

@@ -24,9 +24,11 @@ const VARIANT: Record<ButtonVariant, string> = {
   danger: 'bg-critical-soft text-critical hover:bg-critical hover:text-on-accent',
 };
 
+/* Au doigt, 28 px de haut n'est pas une cible : sous le seuil tout bouton fait au moins 44×44.
+ * La densité de bureau n'est pas perdue, elle revient à `lg:` — rien n'est grossi sur écran large. */
 const SIZE: Record<ButtonSize, string> = {
-  sm: 'h-7 px-2.5 text-xs',
-  md: 'h-8 px-3.5 text-sm',
+  sm: 'min-h-[44px] min-w-[44px] px-3 text-xs lg:h-7 lg:min-h-0 lg:min-w-0 lg:px-2.5',
+  md: 'min-h-[44px] min-w-[44px] px-4 text-sm lg:h-8 lg:min-h-0 lg:min-w-0 lg:px-3.5',
 };
 
 function Spinner(): ReactElement {

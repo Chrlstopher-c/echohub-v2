@@ -32,14 +32,16 @@ export function BlocCode({ texte, langage, complet }: BlocCodeProps): ReactEleme
   const jetons = useMemo(() => colorier(texte, langage), [texte, langage]);
   const { copie, copier } = useCopie(texte);
   return (
-    <figure className="my-2 overflow-hidden rounded-sm border border-border bg-bg">
-      <figcaption className="flex items-center justify-between border-b border-border px-2.5 py-1">
-        <span className="font-mono text-2xs text-text-3">{langage !== '' ? langage : 'texte'}</span>
+    <figure className="my-2 max-w-full overflow-hidden rounded-sm border border-border bg-bg">
+      <figcaption className="flex items-center justify-between gap-2 border-b border-border px-2.5 py-1">
+        <span className="min-w-0 truncate font-mono text-2xs text-text-3">{langage !== '' ? langage : 'texte'}</span>
         <Button variant="ghost" size="sm" onClick={copier} aria-label="Copier le bloc de code">
           {copie ? 'copié' : 'copier'}
         </Button>
       </figcaption>
-      <pre className="overflow-x-auto px-2.5 py-2 font-mono text-xs leading-relaxed">
+      {/* `overscroll-x-contain` : un balayage arrivé au bout du code ne doit pas se propager à
+          l'historique du navigateur, dont le geste « retour » part du même bord. */}
+      <pre className="overflow-x-auto overscroll-x-contain px-2.5 py-2 font-mono text-xs leading-relaxed">
         <code>
           {jetons.map((jeton, index) => (
             <span key={index} className={CLASSE_JETON[jeton.type]}>

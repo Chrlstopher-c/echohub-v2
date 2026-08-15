@@ -17,8 +17,8 @@ import { SEQUENCES_ARRET } from './definitions';
  */
 
 const CLASSE_SAISIE =
-  'flex-1 rounded-sm border border-border bg-surface-2 px-2 py-1 font-mono text-xs text-text '
-  + 'outline-none placeholder:text-text-3 focus:border-border-strong';
+  'min-h-[44px] min-w-0 flex-1 rounded-sm border border-border bg-surface-2 px-2 py-1 font-mono '
+  + 'text-xs text-text outline-none placeholder:text-text-3 focus:border-border-strong lg:min-h-0';
 
 interface PuceProps {
   readonly valeur: string;
@@ -27,13 +27,14 @@ interface PuceProps {
 
 function Puce({ valeur, onRetirer }: PuceProps): ReactElement {
   return (
-    <li className="flex items-center gap-1.5 rounded-xs bg-surface-2 py-0.5 pl-2 pr-1">
-      <span className="font-mono text-2xs text-text">{`"${valeur}"`}</span>
+    <li className="flex max-w-full items-center gap-1.5 rounded-xs bg-surface-2 py-0.5 pl-2 pr-1">
+      <span className="min-w-0 break-all font-mono text-2xs text-text">{`"${valeur}"`}</span>
       <button
         type="button"
         onClick={onRetirer}
         aria-label={`Retirer la séquence ${valeur}`}
-        className="rounded-xs px-1 text-2xs text-text-3 transition-colors duration-fast hover:text-critical"
+        className="min-h-[44px] min-w-[44px] shrink-0 rounded-xs px-1 text-2xs text-text-3
+          transition-colors duration-fast hover:text-critical lg:min-h-0 lg:min-w-0"
       >
         ×
       </button>

@@ -59,8 +59,8 @@ function lignes(contraintes: ContraintesPlateforme): LigneContrainte[] {
 function Ligne({ ligne, justification }: { ligne: LigneContrainte; justification?: string }): ReactElement {
   return (
     <li className="border-t border-border py-3 first:border-t-0 first:pt-0">
-      <div className="flex items-baseline justify-between gap-3">
-        <span className="text-sm font-medium text-text">{ligne.libelle}</span>
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <span className="min-w-0 text-sm font-medium text-text">{ligne.libelle}</span>
         <Badge tone={ligne.contraignante ? 'caution' : 'neutral'}>{ligne.valeur}</Badge>
       </div>
       {justification !== undefined && <p className="mt-1.5 text-xs leading-relaxed text-text-2">{justification}</p>}
@@ -79,9 +79,10 @@ function VariablesImposees({ variables }: { variables: Record<string, string> })
         Variables d&apos;environnement imposées au moteur. Elles sont posées explicitement, y compris à
         &laquo;&nbsp;0&nbsp;&raquo; : omettre la variable laisserait un environnement hérité réactiver le piège.
       </p>
-      <ul className="space-y-1">
+      {/* Une variable ne se coupe pas au milieu : elle défile dans son propre conteneur. */}
+      <ul className="space-y-1 overflow-x-auto">
         {entrees.map(([nom, valeur]) => (
-          <li key={nom} className="font-mono text-2xs tabular-nums text-text">
+          <li key={nom} className="whitespace-nowrap font-mono text-2xs tabular-nums text-text">
             {nom}=<span className="text-mem-kv">{valeur}</span>
           </li>
         ))}

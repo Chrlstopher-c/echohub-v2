@@ -76,7 +76,7 @@ export function ReponseModele({ source, actif = false }: ReponseModeleProps): Re
   const visible = segmentee.visible.trim();
   const multiples = segmentee.raisonnements.length > 1;
   return (
-    <div className="space-y-2">
+    <div className="min-w-0 space-y-2">
       {segmentee.raisonnements.map((segment, index) => (
         <SegmentOuArtefact
           key={index}

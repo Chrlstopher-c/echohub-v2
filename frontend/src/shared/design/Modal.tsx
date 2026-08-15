@@ -28,20 +28,23 @@ export interface ModalProps {
   children: ReactNode;
 }
 
+/* Sous le seuil, la largeur choisie par l'appelant ne veut plus rien dire : une modale prend
+ * l'écran, sinon elle n'est qu'une carte étroite dans un écran déjà étroit. `SIZE` ne reprend
+ * qu'à partir de `lg` — l'agrandissement (`xl`) reste donc un geste de bureau, comme avant. */
 const SIZE: Record<ModalSize, string> = {
-  sm: 'max-w-sm',
-  md: 'max-w-lg',
-  lg: 'max-w-2xl',
-  xl: 'max-w-5xl',
+  sm: 'lg:max-w-sm',
+  md: 'lg:max-w-lg',
+  lg: 'lg:max-w-2xl',
+  xl: 'lg:max-w-5xl',
 };
 
-/* Seul le mode agrandi contraint une hauteur : les autres tailles restent la hauteur de leur
- * contenu, comme avant ce lot — rien ne doit bouger pour un appelant qui ignore `expansible`. */
+/* Seul le mode agrandi contraint une hauteur SUR GRAND ÉCRAN : les autres tailles restent la
+ * hauteur de leur contenu. Sous le seuil, c'est le panneau lui-même qui borne la hauteur. */
 const HAUTEUR_CORPS: Record<ModalSize, string> = {
   sm: '',
   md: '',
   lg: '',
-  xl: 'max-h-[70vh] overflow-y-auto',
+  xl: 'lg:max-h-[70vh]',
 };
 
 /* Échap ferme, et le fond ne défile plus tant que la modale est ouverte. */
@@ -65,6 +68,13 @@ function useModalEffects(open: boolean, onClose: () => void): void {
   }, [open, onClose]);
 }
 
+/* Cible tactile au doigt sous le seuil ; la densité de bureau revient à `lg`. */
+const BOUTON_ENTETE =
+  'inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-xs text-text-2 ' +
+  'transition-colors duration-fast hover:bg-surface-2 hover:text-text ' +
+  'focus-visible:outline-none focus-visible:shadow-[0_0_0_3px_var(--ring)] ' +
+  'lg:min-h-0 lg:min-w-0 lg:p-1';
+
 function BoutonAgrandir({ agrandi, onBasculer }: { agrandi: boolean; onBasculer: () => void }): ReactElement {
   return (
     <button
@@ -72,7 +82,7 @@ function BoutonAgrandir({ agrandi, onBasculer }: { agrandi: boolean; onBasculer:
       onClick={onBasculer}
       aria-label={agrandi ? 'Réduire' : 'Agrandir'}
       title={agrandi ? 'Réduire' : 'Agrandir'}
-      className="rounded-xs p-1 text-text-2 transition-colors duration-fast hover:bg-surface-2 hover:text-text"
+      className={BOUTON_ENTETE}
     >
       {agrandi ? (
         <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" aria-hidden="true">
@@ -117,7 +127,7 @@ function PanelHeader({
   onClose,
 }: PanelHeaderProps): ReactElement {
   return (
-    <header className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+    <header className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-2 lg:py-3">
       <h2 className="min-w-0 truncate text-md font-semibold text-text">{title}</h2>
       <div className="flex shrink-0 items-center gap-1">
         {actionsEntete}
@@ -126,7 +136,7 @@ function PanelHeader({
           type="button"
           onClick={onClose}
           aria-label="Fermer"
-          className="rounded-xs p-1 text-text-2 transition-colors duration-fast hover:bg-surface-2 hover:text-text"
+          className={BOUTON_ENTETE}
         >
           <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" aria-hidden="true">
             <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
@@ -164,7 +174,9 @@ function ModalPanel({
       animate="visible"
       exit="exit"
       className={cn(
-        'relative flex w-full flex-col rounded-lg border border-border-strong bg-overlay shadow-3',
+        'relative flex w-full max-w-none flex-col rounded-lg border border-border-strong bg-overlay shadow-3',
+        // Le panneau ne dépasse jamais l'écran visible ; c'est le corps qui défile, pas la page.
+        'eh-marge-sure-bas max-h-[85dvh] lg:max-h-none',
         SIZE[size],
       )}
     >
@@ -176,9 +188,11 @@ function ModalPanel({
         onBasculerAgrandi={onBasculerAgrandi}
         onClose={onClose}
       />
-      <div className={cn('px-4 py-4', HAUTEUR_CORPS[size])}>{children}</div>
+      <div className={cn('min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-4', HAUTEUR_CORPS[size])}>
+        {children}
+      </div>
       {footer !== undefined && (
-        <footer className="flex justify-end gap-2 border-t border-border px-4 py-3">{footer}</footer>
+        <footer className="flex shrink-0 justify-end gap-2 border-t border-border px-4 py-3">{footer}</footer>
       )}
     </motion.div>
   );
@@ -206,7 +220,7 @@ export function Modal({
   return createPortal(
     <AnimatePresence>
       {open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="eh-marge-sure-x fixed inset-0 z-50 flex items-center justify-center py-4">
           <motion.div
             variants={overlayFade}
             initial="hidden"
