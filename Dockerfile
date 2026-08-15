@@ -75,6 +75,17 @@ COPY frontend/ frontend/
 # `tsc` doit casser le build : c'est le seul endroit du projet qui garantit que le typage passe.
 RUN cd frontend && bun run build
 
+# --- Utilisateur non privilégié du bac à sable (lot L2) --------------------------------------
+# Identifiant fixe — `backend/outils/bac_a_sable.py` le porte en dur (SANDBOX_UID/GID), comme une
+# borne de sécurité, pas une variable d'environnement. Sans shell utilisable (`/usr/sbin/nologin`)
+# et sans dossier personnel réel (`--no-create-home`, `-d /nonexistent`) : cet utilisateur ne sert
+# qu'à exécuter le code Python d'un modèle, jamais à ouvrir une session. Le backend reste root —
+# c'est lui qui bascule vers cet utilisateur juste avant d'exec le processus confiné
+# (`setrlimit` → `setgid` → `setuid`, dans cet ordre, voir `bac_a_sable._preexec`).
+RUN groupadd --gid 65532 echohub-bac \
+    && useradd --uid 65532 --gid echohub-bac --no-create-home --home-dir /nonexistent \
+        --shell /usr/sbin/nologin --comment "Bac à sable Python — echohub-v2" echohub-bac
+
 # --- Backend applicatif ---------------------------------------------------------------------
 # Copié en dernier des sources : c'est ce qui change le plus souvent.
 COPY backend/ backend/

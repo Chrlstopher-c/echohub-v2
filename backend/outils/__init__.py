@@ -9,12 +9,16 @@ décrit au modèle. Une seule source, lue aux deux endroits.
 
 Découpe interne, dans l'ordre des dépendances :
 
-    contrat         forme d'un outil et de son résultat
-    recherche_web   premier outil, adossé au domaine `recherche`
-    registre        outils disponibles et exécution d'un appel
-    socle           prompt système posé avant celui de la conversation
+    contrat          forme d'un outil et de son résultat
+    recherche_web    premier outil, adossé au domaine `recherche`
+    bac_a_sable      lanceur du processus Python confiné (rlimits, changement d'utilisateur)
+    balayage_bac     enregistre dans le magasin `fichiers` ce que le bac contient de nouveau
+    executer_python  outil qui relie les deux, exécution Python réelle par conversation
+    registre         outils disponibles et exécution d'un appel
+    socle            prompt système posé avant celui de la conversation
 """
 
+from backend.outils.bac_a_sable import LIMITES_REELLES_TEXTE
 from backend.outils.contrat import DescriptionOutil, Outil, ResultatOutil
 from backend.outils.registre import descriptions, disponibles, executer, format_moteur
 from backend.outils.socle import composer, construire
@@ -38,6 +42,7 @@ __all__ = [
     "DescriptionOutil",
     "Outil",
     "ResultatOutil",
+    "LIMITES_REELLES_TEXTE",
     "descriptions",
     "disponibles",
     "executer",

@@ -8,11 +8,15 @@ L'application tourne, en Docker, sur RTX 5080 / WSL2. On charge un modèle GGUF 
 calculé, on discute avec, le modèle appelle réellement des outils (recherche web via SearXNG
 local), et l'interface montre son raisonnement, ses appels d'outils et l'occupation du contexte.
 
-Six domaines backend montés, **53 opérations HTTP**, **196 tests Python verts**, typage TypeScript
+Six domaines backend montés, **53 opérations HTTP**, **280 tests Python verts**, typage TypeScript
 strict sans `any`. Accès local et LAN (`http://10.0.0.6:37920`).
 
-Le socle est solide ; ce qui manque est fonctionnel, pas structurel. Le prochain gros chantier est
-le bac à sable d'exécution de code et les artefacts (voir TODO.md, en tête).
+Le socle est solide. Le modèle exécute maintenant réellement du code Python, confiné (lot L2,
+2026-08-15) : utilisateur non privilégié, bornes CPU/mémoire/taille de fichier/processus, un bac par
+conversation balayé vers le magasin de fichiers après chaque exécution. Le réseau du processus
+confiné n'est PAS coupé — mesuré impossible sans capacité supplémentaire, voir
+`backend/outils/bac_a_sable.py::LIMITES_REELLES_TEXTE`. Reste à faire : la présentation des
+artefacts dans le fil (L3, prochain lot).
 
 ## Ce qui a été fait — session du 2026-08-14 au 2026-08-15
 
