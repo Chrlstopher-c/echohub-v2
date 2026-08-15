@@ -31,6 +31,13 @@ export const CONVENTIONS_RAISONNEMENT: readonly ConventionRaisonnement[] = [
   // chaque appel d'outil et son résultat. Repliée comme le raisonnement — c'est du travail
   // intermédiaire, pas la réponse —, mais nommée « outil » pour que la distinction reste nette.
   { nom: 'outil', ouvrante: '<outil>', fermante: '</outil>' },
+  // L'appel émis par le MODÈLE, dans son propre balisage. Il traverse le flux avant d'être exécuté
+  // — il est lu à la fin du tour, pas retiré du texte au vol — et il s'affichait donc en clair au
+  // milieu de la réponse. Replié ici : c'est une instruction machine, pas un propos adressé au
+  // lecteur. Les deux dialectes constatés ont la même balise englobante.
+  { nom: 'appel', ouvrante: '<tool_call>', fermante: '</tool_call>' },
+  // Certains gabarits l'émettent sans englobant. Même traitement, pour la même raison.
+  { nom: 'appel', ouvrante: '<function=', fermante: '</function>' },
 ];
 
 /** Libellé affiché en tête d'un bloc replié, par convention. */
@@ -38,4 +45,5 @@ export const LIBELLE_CONVENTION: Readonly<Record<string, string>> = {
   think: 'Raisonnement',
   process: 'Raisonnement',
   outil: 'Outil',
+  appel: 'Appel d’outil',
 };
