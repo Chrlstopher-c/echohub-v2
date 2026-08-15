@@ -269,28 +269,14 @@ async def flux_telechargements() -> StreamingResponse:
     return StreamingResponse(_flux_global(), media_type="text/event-stream", headers=ENTETES_FLUX)
 
 
-@router.get("/telechargements/{identifiant}", response_model=Telechargement)
-def etat_telechargement(identifiant: str) -> Telechargement:
-    try:
-        return gestionnaire().etat(identifiant)
-    except EchoHubError as exc:
-        raise _en_http(exc) from exc
-
-
-@router.delete("/telechargements/{identifiant}", response_model=Telechargement)
-def annuler_telechargement(
-    identifiant: str,
-    supprimer_fichiers: bool = Query(default=False),
-) -> Telechargement:
-    """Le défaut CONSERVE les octets déjà écrits : un transfert de plusieurs Go doit pouvoir
-    reprendre plutôt que repartir de zéro."""
-    try:
-        return gestionnaire().annuler(identifiant, supprimer_fichiers=supprimer_fichiers)
-    except EchoHubError as exc:
-        raise _en_http(exc) from exc
-
-
-@router.post("/telechargements/{identifiant}/relance", response_model=Telechargement)
+# `:path`, pour la même raison qu'au registre : un identifiant de transfert vaut
+# `<depot>::<fichier>` et le dépôt contient un `/`. Le navigateur l'encode en %2F, le serveur le
+# décode AVANT le routage, et un paramètre à segment unique ne correspond plus — annulation et
+# relance répondaient 404 sur tout modèle venu du Hub.
+#
+# Les routes SUFFIXÉES viennent avant la route nue : `:path` est glouton et avalerait `/relance`
+# et `/flux` dans l'identifiant.
+@router.post("/telechargements/{identifiant:path}/relance", response_model=Telechargement)
 def relancer_telechargement(identifiant: str) -> Telechargement:
     """Reprend un transfert interrompu là où il s'était arrêté."""
     try:
@@ -299,7 +285,7 @@ def relancer_telechargement(identifiant: str) -> Telechargement:
         raise _en_http(exc) from exc
 
 
-@router.get("/telechargements/{identifiant}/flux")
+@router.get("/telechargements/{identifiant:path}/flux")
 async def flux_telechargement(identifiant: str) -> StreamingResponse:
     """Progression d'un transfert précis — la diffusion native du domaine."""
 
@@ -313,3 +299,24 @@ async def flux_telechargement(identifiant: str) -> StreamingResponse:
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(flux(), media_type="text/event-stream", headers=ENTETES_FLUX)
+
+
+@router.get("/telechargements/{identifiant:path}", response_model=Telechargement)
+def etat_telechargement(identifiant: str) -> Telechargement:
+    try:
+        return gestionnaire().etat(identifiant)
+    except EchoHubError as exc:
+        raise _en_http(exc) from exc
+
+
+@router.delete("/telechargements/{identifiant:path}", response_model=Telechargement)
+def annuler_telechargement(
+    identifiant: str,
+    supprimer_fichiers: bool = Query(default=False),
+) -> Telechargement:
+    """Le défaut CONSERVE les octets déjà écrits : un transfert de plusieurs Go doit pouvoir
+    reprendre plutôt que repartir de zéro."""
+    try:
+        return gestionnaire().annuler(identifiant, supprimer_fichiers=supprimer_fichiers)
+    except EchoHubError as exc:
+        raise _en_http(exc) from exc

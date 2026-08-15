@@ -27,12 +27,45 @@ DELAI_ARRET_FIL_S = 5.0
 _SENTINELLE = object()
 
 
-def _deposer(boucle: asyncio.AbstractEventLoop, file: "asyncio.Queue[Any]", valeur: Any, delai: float) -> None:
-    """Dépose une valeur depuis un fil. Un consommateur disparu fait expirer l'attente, pas bloquer."""
-    try:
-        asyncio.run_coroutine_threadsafe(file.put(valeur), boucle).result(timeout=delai)
-    except (TimeoutError, asyncio.TimeoutError, RuntimeError) as exc:
-        logger.warning("Flux moteur : dépôt abandonné ({}), le consommateur ne lit plus", exc)
+# Pas d'attente d'un seul tenant : on repasse voir le drapeau d'arrêt à ce rythme.
+PAS_ATTENTE_DEPOT_S = 0.25
+
+
+def _deposer(
+    boucle: asyncio.AbstractEventLoop,
+    file: "asyncio.Queue[Any]",
+    valeur: Any,
+    delai: float,
+    arret: threading.Event | None = None,
+) -> None:
+    """Dépose une valeur depuis un fil, sans jamais ignorer une demande d'arrêt.
+
+    L'attente est FRACTIONNÉE, et c'est tout l'enjeu. Attendue d'un seul tenant, elle immobilisait
+    le fil jusqu'au bout du délai dès que le client se déconnectait — trente secondes pendant
+    lesquelles le VERROU DU MOTEUR restait pris. Une génération lancée entre-temps dans une autre
+    conversation échouait alors sur « une génération est déjà en cours », et le chat paraissait
+    charger dans le vide. Mesuré le 2026-08-14 : changer de conversation en cours de génération
+    rendait l'application inutilisable jusqu'à expiration du délai.
+
+    Le drapeau d'arrêt est justement levé dans ce cas : le consulter régulièrement suffit à rendre
+    le verrou tout de suite.
+    """
+    futur = asyncio.run_coroutine_threadsafe(file.put(valeur), boucle)
+    restant = delai
+    while restant > 0:
+        if arret is not None and arret.is_set():
+            futur.cancel()
+            return
+        try:
+            futur.result(timeout=min(PAS_ATTENTE_DEPOT_S, restant))
+            return
+        except (TimeoutError, asyncio.TimeoutError):
+            restant -= PAS_ATTENTE_DEPOT_S
+        except RuntimeError as exc:  # boucle asyncio fermée : plus personne pour recevoir
+            logger.warning("Flux moteur : dépôt impossible ({}), le consommateur a disparu", exc)
+            return
+    futur.cancel()
+    logger.warning("Flux moteur : dépôt abandonné après {} s, le consommateur ne lit plus", delai)
 
 
 def _demarrer_producteur(
@@ -49,12 +82,12 @@ def _demarrer_producteur(
             for element in fabrique(arret):
                 if arret.is_set():
                     break
-                _deposer(boucle, file, element, delai_publication_s)
+                _deposer(boucle, file, element, delai_publication_s, arret)
         except BaseException as exc:  # remontée telle quelle au consommateur, qui la relèvera
             logger.error("Flux moteur interrompu : {}", exc)
-            _deposer(boucle, file, exc, delai_publication_s)
+            _deposer(boucle, file, exc, delai_publication_s, arret)
         finally:
-            _deposer(boucle, file, _SENTINELLE, delai_publication_s)
+            _deposer(boucle, file, _SENTINELLE, delai_publication_s, arret)
 
     fil = threading.Thread(target=producteur, daemon=True, name="flux-moteur")
     fil.start()

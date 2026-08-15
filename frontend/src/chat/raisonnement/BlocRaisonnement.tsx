@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { useId, useState } from 'react';
 import type { ReactElement } from 'react';
 import { Badge, cn, DUR, fadeUp } from '../../shared/design';
+import { LIBELLE_CONVENTION } from './conventions';
 import type { SegmentRaisonnement } from './extraction';
 
 /*
@@ -75,7 +76,12 @@ function Entete({ segment, rang, actif, ouvert, cible, onBasculer }: EnteteProps
       )}
     >
       <Chevron ouvert={ouvert} />
-      <span className="font-medium">Raisonnement{rang !== null ? ` ${rang}` : ''}</span>
+      {/* Le libellé suit la convention du segment : un appel d'outil et une réflexion se replient
+          de la même façon, mais doivent se distinguer d'un coup d'œil. */}
+      <span className="font-medium">
+        {LIBELLE_CONVENTION[segment.convention] ?? 'Raisonnement'}
+        {rang !== null ? ` ${rang}` : ''}
+      </span>
       <span className="font-mono text-2xs tabular-nums">
         {CARACTERES.format(segment.texte.length)} caractères
       </span>

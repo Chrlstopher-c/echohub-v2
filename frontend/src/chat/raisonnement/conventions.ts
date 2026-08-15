@@ -27,4 +27,15 @@ export const CONVENTIONS_RAISONNEMENT: readonly ConventionRaisonnement[] = [
   // CONSTATÉE le 2026-08-14 sur les dérivés Qwen3.6 abliterated chargés ici : la balise sort telle
   // quelle dans la réponse et s'affiche à l'écran. Ajoutée pour cette raison, pas par précaution.
   { nom: 'process', ouvrante: '<process>', fermante: '</process>' },
+  // Posée par NOTRE harnais, pas par un modèle : `backend/inference/__init__.py` encadre ainsi
+  // chaque appel d'outil et son résultat. Repliée comme le raisonnement — c'est du travail
+  // intermédiaire, pas la réponse —, mais nommée « outil » pour que la distinction reste nette.
+  { nom: 'outil', ouvrante: '<outil>', fermante: '</outil>' },
 ];
+
+/** Libellé affiché en tête d'un bloc replié, par convention. */
+export const LIBELLE_CONVENTION: Readonly<Record<string, string>> = {
+  think: 'Raisonnement',
+  process: 'Raisonnement',
+  outil: 'Outil',
+};

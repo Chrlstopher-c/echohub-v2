@@ -95,46 +95,70 @@ def _texte_appel(appel: dict[str, Any]) -> tuple[str, Any]:
     return str(appel.get("name", "")), appel.get("arguments", "")
 
 
+"""Balises du flux annonçant un outil. Elles voyagent dans le texte de la réponse, comme celles du
+raisonnement, et l'interface les replie de la même façon : l'utilisateur voit la recherche se
+faire, sans que le résultat brut n'écrase la réponse.
+
+Passer par le texte plutôt que par un type d'événement dédié n'est pas un raccourci : c'est ce qui
+rend l'information PERSISTANTE. Un événement de flux disparaît au rechargement de la page, alors
+qu'un message enregistré garde la trace de ce qui a été cherché — et c'est justement ce qui permet
+de vérifier une réponse plus tard."""
+BALISE_OUTIL_OUVRANTE = "<outil>"
+BALISE_OUTIL_FERMANTE = "</outil>"
+
+
+def _annonce(nom: str, arguments: object) -> str:
+    """Ligne lisible d'un appel, montrée telle quelle dans le bloc replié."""
+    if isinstance(arguments, dict):
+        detail = ", ".join(f"{cle} : {valeur}" for cle, valeur in arguments.items())
+    else:
+        detail = str(arguments or "")
+    return f"{nom}({detail})" if detail else nom
+
+
 async def _resoudre_outils(
     messages: list[MessageChat],
     options: OptionsGeneration,
-) -> list[MessageChat]:
-    """Exécute les outils que le modèle demande, et rend la conversation enrichie des résultats.
+) -> AsyncIterator[dict[str, Any]]:
+    """Exécute les outils demandés, en annonçant chaque étape dans le flux au fur et à mesure.
+
+    Rend des fragments à afficher ET, en dernier lieu, la conversation enrichie sous la clé
+    `messages` — l'appelant s'en sert pour la génération finale. Un générateur plutôt qu'une
+    fonction : sans cela, l'utilisateur reste devant un écran figé pendant toute la recherche, sans
+    savoir si quelque chose se passe.
 
     Le résultat d'un outil est réinjecté comme un tour d'assistant plutôt qu'avec le rôle `tool` :
     le contrat `MessageChat` du projet n'accepte que system/user/assistant, et les gabarits des
-    modèles chargés ici lisent parfaitement un résultat annoncé en clair. Passer par un rôle que la
-    moitié de la chaîne ne connaît pas aurait coûté une migration de contrat pour un gain nul.
+    modèles chargés ici lisent parfaitement un résultat annoncé en clair.
 
-    Tout échec ramène la conversation d'origine : le harnais ne doit jamais empêcher une réponse.
+    Tout échec rend la conversation d'origine : le harnais ne doit jamais empêcher une réponse.
     """
     from backend.outils import executer, format_moteur
 
     outils = format_moteur()
-    if not outils:
-        return messages
-
     enrichis = list(messages)
+    if not outils:
+        yield {"messages": enrichis}
+        return
+
     for tour in range(TOURS_OUTILS_MAX):
         try:
             appels = await superviseur.proposer_outils(enrichis, options, outils)
         except Exception as exc:  # noqa: BLE001 — frontière moteur : jamais fatale pour la réponse
             logger.warning("Proposition d'outils abandonnée au tour {} : {}", tour + 1, exc)
-            return enrichis
+            break
         if not appels:
-            return enrichis
+            break
         for appel in appels:
             nom, arguments = _texte_appel(appel)
+            yield {"texte": f"{BALISE_OUTIL_OUVRANTE}{_annonce(nom, arguments)}\n"}
             resultat = await executer(nom, arguments)
             etat = "résultat" if resultat.succes else "échec"
-            enrichis.append(
-                MessageChat(
-                    role="assistant",
-                    content=f"[outil {resultat.nom} — {etat}]\n{resultat.texte}",
-                )
-            )
-    logger.warning("Borne de {} tours d'outils atteinte : la réponse suit avec ce qui a été trouvé.", TOURS_OUTILS_MAX)
-    return enrichis
+            yield {"texte": f"{resultat.texte}{BALISE_OUTIL_FERMANTE}\n\n"}
+            enrichis.append(MessageChat(role="assistant", content=f"[outil {resultat.nom} — {etat}]\n{resultat.texte}"))
+    else:
+        logger.warning("Borne de {} tours d'outils atteinte : la réponse suit avec ce qui existe.", TOURS_OUTILS_MAX)
+    yield {"messages": enrichis}
 
 
 class MoteurChat:
@@ -152,7 +176,15 @@ class MoteurChat:
     async def _flux(self, requete: object) -> AsyncIterator[dict[str, Any]]:
         messages = _messages_depuis(getattr(requete, "messages", None))
         options = _options_depuis(getattr(requete, "parametres", None))
-        messages = await _resoudre_outils(messages, options)
+        # La phase d'outils s'affiche pendant qu'elle se déroule : ses fragments partent au client
+        # au fil de l'eau, et le dernier élément porte la conversation enrichie des résultats.
+        async for etape in _resoudre_outils(messages, options):
+            texte = etape.get("texte")
+            if isinstance(texte, str):
+                yield {"texte": texte}
+            enrichis = etape.get("messages")
+            if isinstance(enrichis, list):
+                messages = enrichis
         debut = time.monotonic()
         tokens = 0
 
