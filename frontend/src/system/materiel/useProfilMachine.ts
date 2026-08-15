@@ -12,10 +12,13 @@ import { useSondage, type EtatSondage } from '../api/sondage';
 import type { ProfilMachine } from '../api/types';
 
 /**
- * Deux secondes : assez pour voir la VRAM bouger pendant un chargement, assez lâche pour ne pas
- * lancer `nvidia-smi` en rafale — la mesure peut coûter plusieurs centaines de millisecondes.
+ * Douze secondes (L9) : chaque sondage rouvre une session NVML complète (`nvml.py`, `nvmlInit`/
+ * `nvmlShutdown`), mesurée à 29 ms au premier appel puis 16 ms en natif — pas le sondage qui
+ * coûtait cher, sa cadence à 2 s (30 cycles NVML/min/onglet). 12 s retenu après mesure HTTP réelle
+ * (~40-50 ms/appel en natif, `curl` chronométré) : au milieu de la fourchette 10-15 s demandée,
+ * avec marge si le conteneur GPU ajoute un coût que le natif ne peut pas révéler.
  */
-export const INTERVALLE_PROFIL_MS = 2000;
+export const INTERVALLE_PROFIL_MS = 12000;
 
 export type EtatProfil = EtatSondage<ProfilMachine>;
 
