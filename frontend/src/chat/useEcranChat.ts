@@ -2,7 +2,9 @@
  * Assemblage de l'état de l'écran de chat : liste, conversation courante, plan et chargement.
  *
  * Réunir les quatre hooks ici garde le composant d'écran purement compositionnel, et surtout tient
- * en un seul endroit la règle qui les relie : on ne saisit pas tant qu'un moteur n'est pas prêt.
+ * en un seul endroit l'état `moteurPret` que l'écran affiche (badge, plan). Il ne conditionne PLUS
+ * la saisie elle-même : le composeur reste actif sans modèle chargé, règle de l'opérateur
+ * documentée dans `conversation/Composeur.tsx`.
  */
 
 import { useCallback, useEffect, useState } from 'react';

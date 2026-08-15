@@ -56,12 +56,18 @@ function FilVide({ cible }: { cible: CibleChargement | null }): ReactElement {
   );
 }
 
+/*
+ * Le composeur (texte, pièces jointes) ne se bloque QUE faute de conversation : `!moteurPret` en
+ * ferait une condition d'envoi, ce que la règle de l'opérateur interdit explicitement (Composeur.tsx)
+ * — l'application transmet toujours, y compris sans modèle chargé ; c'est au modèle de répondre
+ * qu'il ne voit rien, avec ses mots, jamais à l'interface de refuser à sa place.
+ */
 function empechementSaisie(conversationChoisie: boolean, moteurPret: boolean): string {
   if (!conversationChoisie) {
     return 'Créez une conversation pour commencer.';
   }
   if (!moteurPret) {
-    return 'Aucun modèle prêt : chargez-en un depuis le plan, à droite.';
+    return 'Aucun modèle chargé : la réponse ne pourra pas être générée tant que le plan, à droite, n’en charge un.';
   }
   return '';
 }
@@ -100,7 +106,7 @@ function ColonneEchange({ etat, cible, fil }: ColonneEchangeProps): ReactElement
       </FournisseurActions>
       <Composeur
         genere={genere}
-        desactive={conversationActive === null || !moteurPret}
+        desactive={conversationActive === null}
         empechement={empechementSaisie(conversationActive !== null, moteurPret)}
         conversationId={conversationActive}
         onEnvoyer={(contenu, fichierIds) => envoyer(courante, fil, contenu, fichierIds)}
