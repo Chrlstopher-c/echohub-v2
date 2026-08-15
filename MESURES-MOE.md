@@ -235,6 +235,57 @@ réellement reçus, pas leur contenu. La cause de la dégénérescence n'a pas �
 identique dans les deux plans testés, donc **étrangère au déport d'experts** — pas dans le
 périmètre de ce lot.
 
+### 4.1. Diagnostic de la dégénérescence (lot L10, complément du 2026-08-15)
+
+Trois maillons du chemin prompt → modèle ont été inspectés, chacun sur un artefact réel — jamais
+supposés :
+
+**1. Transport (interface → backend → adaptateur).** JSON sur HTTP est UTF-8 par construction ;
+FastAPI/Pydantic décode en `str` Python (Unicode), sans transcodage supplémentaire. Rien dans
+`chat/generation.py` ni `inference/__init__.py` ne réencode, n'échappe ni ne filtre le texte du
+message avant de l'assembler en `MessageChat`. Vérifié en le prouvant à l'envers : le même prompt,
+caractère `’` (U+2019) inclus, envoyé via `POST /chat/conversations/{id}/generer` à DEUX modèles
+Qwen de la même famille (`Qwen3-VL-2B-Instruct-Q4_K_M` et `Qwen3.5-9B-Q5_K_M`, tous deux en
+conteneur, sur ce projet), produit du texte français cohérent dans les deux cas — donc rien sur ce
+chemin ne corrompt le caractère avant qu'il n'atteigne le moteur.
+
+**2. Gabarit de conversation.** Le gabarit jinja du fichier GGUF `Qwen3.6-35B-A3B-UD-Q4_K_M.gguf`
+lui-même (lu directement depuis ses métadonnées, `tokenizer.chat_template`, chargement
+`vocab_only=True` — aucun poids, aucune VRAM, aucune génération) interpole le contenu textuel tel
+quel (`{{- content }}` / `{{- item.text }}`) : aucune fonction d'échappement, de normalisation
+Unicode ni de remplacement n'y touche l'apostrophe.
+
+**3. Tokenisation.** Tokenisé directement contre le VRAI vocabulaire du même fichier GGUF
+(`llama_cpp.Llama(..., vocab_only=True)`, sans charger les poids) :
+
+```
+apostrophe droite (U+0027) seule  -> [6]                 b"'"
+apostrophe typographique (U+2019) -> [515]                b'\xe2\x80\x99'
+"ce qu'est un mélange d'experts"  -> [341, 893, 16811, 632, 189540, 293, 6, 4431, 15089]
+"ce qu’est un mélange d’experts"  -> [341, 893, 20746, 632, 189540, 293, 515, 4431, 15089]
+                                        341=ce  893=' qu'  20746='’est'  632=' un'
+                                        189540=' mélange'  293=' d'  515='’'  4431='exp' 15089='erts'
+```
+
+Les deux formes produisent des tokens **valides, uniques et de faible identifiant** (aucun
+identifiant hors plage, aucun repli sur un octet brut, aucun jeton de remplacement) : la
+tokenisation fusionne correctement `’est` en un seul token, exactement comme `'est` le fait côté
+apostrophe droite. Rien n'indique une corruption à cette étape.
+
+**Conclusion.** Les trois maillons que le projet contrôle (transport, gabarit, tokenisation) sont
+vérifiés propres sur le VRAI fichier du modèle en cause. La dégénérescence n'a été observée que sur
+ce checkpoint précis (`unsloth/Qwen3.6-35B-A3B-GGUF`, quantification dynamique `UD-Q4_K_M`), jamais
+reproduite sur deux autres modèles Qwen de la même famille avec le même caractère. Le rapprochement
+le plus probable est un défaut de calibration du modèle/de la quantification pour ces jetons
+peu fréquents (`’est` à l'identifiant 20746 sur 248 320, `’` seul à 515) — une quantification
+agressive dégrade en priorité les jetons rares, et le test d'origine utilisait une température de
+1.0, qui amplifie l'effet d'une distribution mal calibrée. **La cause n'est donc pas dans le projet
+EchoHub** — aucun correctif n'est proposé ici, un correctif côté harnais masquerait un défaut réel
+du modèle/de sa quantification sans le résoudre. Non reproduit sur le modèle en cause lui-même dans
+ce lot, conformément à la consigne de ne pas charger le 35B-A3B (coût de chargement à froid mesuré
+en 4.1 : 208 s) ; la reproduction originale (§4, ci-dessus) reste la seule observée en génération
+réelle sur ce checkpoint.
+
 ## 5. Tableau récapitulatif
 
 | | sans déport | avec déport | écart |
