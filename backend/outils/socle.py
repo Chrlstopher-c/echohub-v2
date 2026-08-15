@@ -25,6 +25,10 @@ from collections.abc import Sequence
 
 from backend.outils.contrat import DescriptionOutil
 
+_LANGUE = """Réponds toujours en français, y compris ton raisonnement s'il en produit un — pas seulement le
+texte final montré à l'utilisateur. Ne bascule en anglais ou dans une autre langue que si
+l'utilisateur écrit explicitement dans cette langue, ou demande lui-même une traduction."""
+
 _SANS_OUTIL = """Tu tournes en local, sans aucun accès extérieur : ni web, ni fichiers, ni exécution de code.
 Tu ne peux donc pas chercher, ouvrir un lien, lire un document ni vérifier une information.
 Si on te demande quelque chose qui l'exigerait, dis-le simplement au lieu de faire semblant.
@@ -60,11 +64,16 @@ def construire(outils: Sequence[DescriptionOutil]) -> str:
 
     Fonction pure : elle décrit ce qu'on lui donne. Un outil déclaré ici mais absent du registre
     ferait exactement le mensonge que ce fichier combat.
+
+    La consigne de langue est posée EN PREMIER, avant les faits sur les outils : constaté le
+    2026-08-15 sur le socle en français existant, les modèles répondent souvent en anglais, y
+    compris leur raisonnement — le socle décrivait des capacités sans jamais dire dans quelle
+    langue les exprimer, et un modèle entraîné majoritairement en anglais y retombe par défaut.
     """
     if not outils:
-        return _SANS_OUTIL
+        return f"{_LANGUE}\n\n{_SANS_OUTIL}"
     lignes = [f"- {outil.nom} : {outil.description}" for outil in outils]
-    return "\n".join([_AVEC_OUTILS, *lignes])
+    return "\n".join([_LANGUE, "", _AVEC_OUTILS, *lignes])
 
 
 def composer(socle: str, prompt_conversation: str) -> str:
