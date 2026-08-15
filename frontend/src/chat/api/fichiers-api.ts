@@ -6,7 +6,8 @@
  * `DemandeGeneration.fichier_ids` : aucun octet ne traverse la route de génération.
  */
 
-import { postFormData } from './client';
+import { lireErreur, postFormData } from './client';
+import { journal } from './journal';
 import type { FichierConversation } from './contrats';
 
 export function deposerFichier(
@@ -23,4 +24,23 @@ export function deposerFichier(
 /** URL de service d'un fichier — même route pour un artefact produit et une pièce jointe. */
 export function urlFichier(fichierId: string): string {
   return `/api/fichiers/${fichierId}`;
+}
+
+/**
+ * Contenu textuel d'un fichier — pour l'afficher en code, ou l'injecter dans un aperçu HTML.
+ * Passe par `fetch` directement plutôt que par `requete<T>` (`client.ts`) : la réponse n'est pas
+ * du JSON, c'est le fichier lui-même, servi tel quel par `FileResponse` (`backend/fichiers/routes.py`).
+ */
+export async function chargerTexteFichier(fichierId: string, signal?: AbortSignal): Promise<string> {
+  let reponse: Response;
+  try {
+    reponse = await fetch(urlFichier(fichierId), { signal });
+  } catch (cause) {
+    journal.erreur(`lecture du fichier ${fichierId} échouée`, cause);
+    throw cause;
+  }
+  if (!reponse.ok) {
+    throw await lireErreur(reponse);
+  }
+  return reponse.text();
 }

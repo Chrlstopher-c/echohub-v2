@@ -57,6 +57,7 @@ _DOMAINES = (
     "backend.inference.api",
     "backend.chat.routes",
     "backend.fichiers.routes",
+    "backend.outils.api",
     "backend.recherche.api",
 )
 

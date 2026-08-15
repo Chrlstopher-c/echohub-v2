@@ -18,13 +18,19 @@ from loguru import logger
 
 from backend.outils.contrat import ContexteExecution, DescriptionOutil, Outil, ResultatOutil
 from backend.outils.executer_python import OUTIL as OUTIL_PYTHON
+from backend.outils.presenter_fichier import OUTIL as OUTIL_PRESENTER
 from backend.outils.recherche_web import OUTIL as OUTIL_RECHERCHE
 
 # Ordre significatif : c'est celui dans lequel les outils sont présentés au modèle, et le premier
 # est celui vers lequel il se tourne le plus volontiers. La recherche web est en tête parce que
 # c'est l'absence de sources qui produit le plus d'inventions ; l'exécution Python vient ensuite,
-# pour le calcul et la production de fichiers.
-_OUTILS: dict[str, Outil] = {OUTIL_RECHERCHE.nom: OUTIL_RECHERCHE, OUTIL_PYTHON.nom: OUTIL_PYTHON}
+# pour le calcul et la production de fichiers ; la présentation vient en dernier, elle ne fait
+# jamais rien sans qu'un fichier existe déjà.
+_OUTILS: dict[str, Outil] = {
+    OUTIL_RECHERCHE.nom: OUTIL_RECHERCHE,
+    OUTIL_PYTHON.nom: OUTIL_PYTHON,
+    OUTIL_PRESENTER.nom: OUTIL_PRESENTER,
+}
 
 
 def disponibles() -> list[Outil]:

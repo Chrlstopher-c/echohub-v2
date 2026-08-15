@@ -1,8 +1,9 @@
 import { useMemo } from 'react';
 import type { ReactElement } from 'react';
+import { CarteArtefact, artefactDepuisSegment } from '../artefacts';
 import { RenduMarkdown } from '../markdown';
 import { BlocRaisonnement } from './BlocRaisonnement';
-import { segmenterReponse, type ReponseSegmentee } from './extraction';
+import { segmenterReponse, type ReponseSegmentee, type SegmentRaisonnement } from './extraction';
 
 /*
  * Une réponse de modèle telle qu'elle doit se lire : les blocs de raisonnement d'abord, repliés,
@@ -47,6 +48,26 @@ export interface ReponseModeleProps {
   actif?: boolean;
 }
 
+/*
+ * Un artefact présenté (`presenter_fichier`) se lit comme la réponse elle-même, pas comme un
+ * appel d'outil ordinaire : il sort donc du traitement replié de `BlocRaisonnement` et s'affiche
+ * en carte, directement visible dans le fil — c'est tout l'objet de l'outil (plan d'exécution,
+ * lot L3), le faire voir plutôt que le laisser dans un bloc que l'utilisateur doit déplier.
+ */
+interface SegmentOuArtefactProps {
+  segment: SegmentRaisonnement;
+  rang: number | null;
+  actif: boolean;
+}
+
+function SegmentOuArtefact({ segment, rang, actif }: SegmentOuArtefactProps): ReactElement {
+  const artefact = artefactDepuisSegment(segment);
+  if (artefact !== null) {
+    return <CarteArtefact artefact={artefact} />;
+  }
+  return <BlocRaisonnement segment={segment} rang={rang} actif={actif} />;
+}
+
 export function ReponseModele({ source, actif = false }: ReponseModeleProps): ReactElement {
   // Le streaming remplace `source` à chaque fragment : la séparation est mémoïsée sur le texte reçu.
   const segmentee = useMemo(() => segmenterReponse(source), [source]);
@@ -57,7 +78,7 @@ export function ReponseModele({ source, actif = false }: ReponseModeleProps): Re
   return (
     <div className="space-y-2">
       {segmentee.raisonnements.map((segment, index) => (
-        <BlocRaisonnement
+        <SegmentOuArtefact
           key={index}
           segment={segment}
           rang={multiples ? index + 1 : null}
