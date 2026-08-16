@@ -59,7 +59,31 @@ from backend.models.storage import fichiers_projecteurs
 
 # Identifiants de types GGML acceptés pour le cache KV. Une valeur hors table est un plan invalide :
 # la deviner produirait un cache différent de celui que le planificateur a dimensionné.
-TYPES_KV: dict[str, int] = {"f32": 0, "f16": 1, "q4_0": 2, "q8_0": 8}
+#
+# Les identifiants sont lus sur le module llama_cpp quand il est présent, et non recopiés : ils sont
+# fixés par ggml, pas par nous, et une table écrite à la main diverge au premier ajout amont. C'est
+# exactement ce qui s'était produit — la table ne connaissait que quatre types alors que le binaire
+# en expose trente-trois, dont `q2_0` et `q1_0`, les caches très basse précision qui rendent les
+# fenêtres de plusieurs centaines de milliers de tokens tenables sur une carte de 16 Go.
+#
+# Le repli en dur ne sert qu'aux tests sans binaire ; les quatre valeurs y sont stables depuis
+# longtemps et vérifiées le 2026-08-16 sur llama-cpp-python 0.3.34.
+_TYPES_KV_REPLI: dict[str, int] = {"f32": 0, "f16": 1, "q4_0": 2, "q8_0": 8}
+_NOMS_KV = ("f32", "f16", "q8_0", "q5_1", "q5_0", "q4_1", "q4_0", "iq4_nl", "q2_0", "q1_0")
+
+
+def _types_kv_disponibles() -> dict[str, int]:
+    """Types de cache que le binaire chargé sait réellement servir, avec leur identifiant ggml."""
+    try:
+        import llama_cpp
+    except ImportError:
+        return dict(_TYPES_KV_REPLI)
+    trouves = {nom: getattr(llama_cpp, f"GGML_TYPE_{nom.upper()}", None) for nom in _NOMS_KV}
+    connus = {nom: valeur for nom, valeur in trouves.items() if isinstance(valeur, int)}
+    return connus or dict(_TYPES_KV_REPLI)
+
+
+TYPES_KV: dict[str, int] = _types_kv_disponibles()
 
 DELAI_VERROU_GENERATION_S = 5.0
 

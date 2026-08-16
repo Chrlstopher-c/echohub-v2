@@ -41,3 +41,48 @@ AVERTISSEMENT_FENETRE_PLEINE = (
     "\n\n*[Réponse interrompue : la fenêtre de contexte du modèle est pleine. "
     "Recharger le modèle avec un contexte plus grand, ou repartir d'une nouvelle conversation.]*"
 )
+
+
+# Relance d'une réponse qui s'ARRÊTE SUR UNE PROMESSE.
+#
+# Symptôme mesuré le 2026-08-16, socle renforcé déjà en place : le modèle cherche sur le web, cite
+# ses sources correctement, puis termine par « Je te l'ai intégré dans le simulateur. Voici le
+# fichier : » — et rien. Aucun appel d'outil dans ce tour, donc aucun fichier. La consigne du socle
+# (« annoncer et faire sont deux actes distincts ») n'a pas suffi : un modèle quantisé bas annonce
+# plus volontiers qu'il n'agit.
+#
+# Le harnais ne peut pas deviner une intention, mais il peut reconnaître une phrase LAISSÉE OUVERTE.
+# Un texte qui se termine sur un deux-points, ou sur une annonce explicite suivie de rien, est le
+# seul cas où l'on relance — une seule fois, avec les outils sous les yeux et une consigne directe.
+#
+# C'est une heuristique, et elle est volontairement étroite : mieux vaut rater une promesse que
+# relancer une réponse terminée. Un tour de plus coûte du temps à l'utilisateur.
+RELANCES_PROMESSE_MAX = 1
+
+_FINS_DE_PROMESSE = (
+    "voici le fichier", "voici la nouvelle version", "voici le nouveau", "voici la version",
+    "je vais l'écrire", "je vais écrire", "je vais le créer", "je l'écris maintenant",
+    "here is the file", "here is the new version", "i will now write", "let me write",
+)
+
+CONSIGNE_PROMESSE = (
+    "Your message ended by announcing something you did not do: no tool call followed it, so "
+    "nothing was created and the user sees nothing. Do it NOW, in this turn — emit the call with "
+    "every argument inline. If you cannot do it, say plainly what is blocking you, instead of "
+    "announcing it a second time."
+)
+
+
+def promesse_non_tenue(texte: str) -> bool:
+    """Le tour s'achève-t-il sur une annonce laissée sans suite ?
+
+    Appelée seulement quand le tour n'a produit AUCUN appel d'outil : sans cette condition, un
+    modèle qui annonce puis appelle — le comportement normal — serait relancé pour rien.
+    """
+    fin = texte.rstrip()
+    if not fin:
+        return False
+    if fin.endswith(":"):
+        return True
+    derniere_ligne = fin.rsplit("\n", 1)[-1].lower()
+    return any(marqueur in derniere_ligne for marqueur in _FINS_DE_PROMESSE)

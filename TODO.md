@@ -30,17 +30,25 @@ dans les appels enregistrés :
       ce qui a été refusé comme redite (`logger.info` dans `registre.executer`, `logger.warning` dans
       `_executer_appels`). Lire le journal AVANT de toucher au code.
 
-### 2. Un modèle 1M sur cette machine — arbitrage à trancher
+### 2. Très long contexte — ce que la carte permet vraiment
 
-Le « 1M » de Qwen2.5-1M repose sur **Dual Chunk Attention**, que llama.cpp n'implémente pas : les
-deux `config.json` déclarent `original_max_position_embeddings: 262144`. En GGUF, le plafond utile
-est donc 262 144, pas un million — quel que soit le modèle.
+Le facteur limitant n'est pas le modèle mais le cache KV, et il se calcule à partir du nombre de
+couches à **attention pleine** : les architectures hybrides (Qwen3.5/3.8, `linear_attention`) n'en
+paient qu'une sur quatre. Chiffres établis sur les `config.json` réels, avec les types de cache que
+le binaire chargé sait servir (`q2_0` débloqué le 2026-08-16) :
 
-- [ ] Trancher entre contexte et qualité :
-      `huihui-ai/Qwen2.5-7B-Instruct-1M-abliterated` (Q4_K_M ≈ 4,7 Go, KV q8_0 → **262 144 tokens
-      tenables**, soit le double de l'actuel) contre le 14B-1M, qui plafonne vers 130 k sur 16 Go et
-      n'apporte donc rien de plus que le MoE en place. Les deux sont des Qwen**2.5**, en retrait des
-      Qwen3.6 utilisés aujourd'hui.
+| cible | modèle | total sur 16 Go |
+|---|---|---|
+| 262 144 (natif) | Qwen3.8-27B Q3_K_S + KV q2_0 | 15,9 Go — tient |
+| 500 000 (YaRN) | Qwen3.5-4B Q8_0 + KV q2_0 | 8,1 Go — large |
+| 500 000 | Qwen3.8-27B Q2_K + KV q2_0 | 16,8 Go — dépasse |
+| 1 000 000 | aucun modèle correct | — |
+
+- [ ] Trancher : `Qwen3.8-27B` abliterated pour la qualité à 262 k, ou `Qwen3.5-4B` pour aller
+      au-delà avec un modèle nettement plus faible. Au-dessus de 262 144, on quitte le contexte
+      natif des deux et on extrapole.
+- [ ] Exposer le choix du type de cache KV dans les réglages de chargement : `q2_0` divise le cache
+      par six par rapport à `f16` et c'est lui qui rend ces fenêtres tenables.
 
 ### 3. Deux défauts moteur mesurés le 2026-08-16
 
