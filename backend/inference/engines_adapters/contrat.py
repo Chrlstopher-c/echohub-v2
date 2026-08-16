@@ -168,7 +168,16 @@ class MessageChat(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    role: Literal["system", "user", "assistant"]
+    # `tool` est le rôle des RÉSULTATS d'outils, et il est admis parce que les gabarits le gèrent —
+    # vérifié le 2026-08-16 dans l'en-tête GGUF des huit modèles présents, tous portent la branche
+    # `{%- elif message.role == "tool" %}` qui enveloppe le contenu dans `<tool_response>`.
+    #
+    # Il ne faisait pas partie du contrat jusque-là, et les résultats repartaient donc en `assistant`
+    # préfixés d'un « [outil nom — résultat] ». Le modèle a fini par IMITER ce préfixe : il écrivait
+    # « [outil presenter_fichier] Affichant le fichier … » en prose au lieu d'appeler l'outil, et
+    # aucune carte n'apparaissait. Un format inventé dans l'historique finit toujours par être
+    # reproduit ; le canal natif du gabarit est le seul que le modèle ne confond pas avec sa prose.
+    role: Literal["system", "user", "assistant", "tool"]
     content: str | list[PartieContenu]
 
 

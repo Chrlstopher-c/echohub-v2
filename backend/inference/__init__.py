@@ -194,9 +194,12 @@ async def _executer_appels(
         entree = f"{BALISE_ENTREE_OUVRANTE}{_annonce(nom, arguments)}{BALISE_ENTREE_FERMANTE}"
         yield {"texte": f"{BALISE_OUTIL_OUVRANTE}{entree}{BALISE_SORTIE_OUVRANTE}"}
         resultat = await executer(nom, arguments, contexte)
-        etat = "résultat" if resultat.succes else "échec"
         yield {"texte": f"{resultat.texte}{BALISE_SORTIE_FERMANTE}{BALISE_OUTIL_FERMANTE}\n\n"}
-        messages.append(MessageChat(role="assistant", content=f"[outil {resultat.nom} — {etat}]\n{resultat.texte}"))
+        # Rôle `tool`, contenu NU. Le gabarit l'enveloppe lui-même dans `<tool_response>` : c'est
+        # le canal que le modèle a appris à l'entraînement, et il ne le confond pas avec sa propre
+        # prose. L'ancienne forme — rôle `assistant` préfixé « [outil nom — résultat] » — était un
+        # format inventé par nous, et le modèle a fini par l'imiter au lieu d'appeler l'outil.
+        messages.append(MessageChat(role="tool", content=resultat.texte))
 
 
 async def _resoudre_outils(
@@ -211,9 +214,10 @@ async def _resoudre_outils(
     fonction : sans cela, l'utilisateur reste devant un écran figé pendant toute la recherche, sans
     savoir si quelque chose se passe.
 
-    Le résultat d'un outil est réinjecté comme un tour d'assistant plutôt qu'avec le rôle `tool` :
-    le contrat `MessageChat` du projet n'accepte que system/user/assistant, et les gabarits des
-    modèles chargés ici lisent parfaitement un résultat annoncé en clair.
+    Le résultat d'un outil est réinjecté avec le rôle `tool`, que les gabarits des modèles présents
+    gèrent tous (vérifié dans leurs en-têtes GGUF le 2026-08-16) et enveloppent dans
+    `<tool_response>`. Il l'était auparavant comme un tour d'`assistant` préfixé — un format
+    inventé, que le modèle a fini par imiter en prose au lieu d'appeler l'outil.
 
     Tout échec rend la conversation d'origine : le harnais ne doit jamais empêcher une réponse.
     """
@@ -237,9 +241,8 @@ async def _resoudre_outils(
             nom, arguments = _texte_appel(appel)
             yield {"texte": f"{BALISE_OUTIL_OUVRANTE}{_annonce(nom, arguments)}\n"}
             resultat = await executer(nom, arguments, contexte)
-            etat = "résultat" if resultat.succes else "échec"
             yield {"texte": f"{resultat.texte}{BALISE_OUTIL_FERMANTE}\n\n"}
-            enrichis.append(MessageChat(role="assistant", content=f"[outil {resultat.nom} — {etat}]\n{resultat.texte}"))
+            enrichis.append(MessageChat(role="tool", content=resultat.texte))
     else:
         logger.warning("Borne de {} tours d'outils atteinte : la réponse suit avec ce qui existe.", TOURS_OUTILS_MAX)
     yield {"messages": enrichis}
