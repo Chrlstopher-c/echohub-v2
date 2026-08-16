@@ -139,3 +139,40 @@ def test_aucune_relance_sans_registre_d_outils(monkeypatch: Any) -> None:
     _jouer(monkeypatch, superviseur, avec_outils=False)
 
     assert superviseur.tours == 1
+
+
+class _PrometPuisAgitPuisPromet:
+    """Promet, agit quand on le relance, puis referme sur une SECONDE promesse.
+
+    Comportement réel mesuré le 2026-08-16 : relancé une fois, le modèle écrit son fichier, puis
+    termine par « Le voici : » sans appeler `presenter_fichier`. Un compteur global de relances
+    laissait passer cette seconde promesse alors qu'un travail réel venait d'avoir lieu.
+    """
+
+    def __init__(self) -> None:
+        self.tours = 0
+
+    def generer(self, messages, options, outils=None):  # type: ignore[no-untyped-def]
+        self.tours += 1
+        return self._flux(self.tours)
+
+    async def _flux(self, tour: int) -> AsyncIterator[MorceauGeneration]:
+        if tour == 1:
+            contenu = "Voici le fichier :"           # promesse -> relance 1
+        elif tour == 2:
+            contenu = '<tool_call>{"name": "ecrire_fichier", "arguments": {}}</tool_call>'
+        elif tour == 3:
+            contenu = "Le voici :"                   # promesse APRÈS un outil abouti -> relance 2
+        else:
+            contenu = "Le fichier est présenté ci-dessus."
+        yield MorceauGeneration(type="token", contenu=contenu)
+        yield MorceauGeneration(type="fin", raison_arret="stop")
+
+
+def test_un_outil_abouti_redonne_droit_a_une_relance(monkeypatch: Any) -> None:
+    superviseur = _PrometPuisAgitPuisPromet()
+
+    texte = _jouer(monkeypatch, superviseur)
+
+    assert superviseur.tours == 4, "la promesse qui suit un travail réel est relancée elle aussi"
+    assert "présenté ci-dessus" in texte, "le tour final n'est plus une promesse"

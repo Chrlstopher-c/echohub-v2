@@ -441,10 +441,18 @@ class MoteurChat:
             messages = list(messages) + [
                 MessageChat(role="assistant", content=_sans_appels_outils("".join(recu)))
             ]
+            avant = aboutis
             async for etape in _executer_appels(appels, messages, contexte, echecs_vus):
                 if isinstance(etape.get("texte"), str):
                     yield {"texte": etape["texte"]}
                 aboutis += 1 if etape.get("succes") else 0
+            if aboutis > avant:
+                # Un outil a abouti : l'ardoise des relances est effacée, comme celle des redites.
+                # MESURÉ le 2026-08-16 : relancé une fois, le modèle écrit bien son fichier — puis
+                # referme aussitôt sur « Le voici : » sans appeler `presenter_fichier`. Un compteur
+                # global le laissait passer. Ce qu'il faut borner, c'est la promesse SANS PROGRÈS ;
+                # une promesse qui suit un travail réel mérite le même traitement que la première.
+                relances = 0
         async for morceau in self._cloturer(messages, options, aboutis):
             yield morceau
 
