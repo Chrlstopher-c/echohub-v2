@@ -50,7 +50,19 @@ le binaire chargé sait servir (`q2_0` débloqué le 2026-08-16) :
 - [ ] Exposer le choix du type de cache KV dans les réglages de chargement : `q2_0` divise le cache
       par six par rapport à `f16` et c'est lui qui rend ces fenêtres tenables.
 
-### 3. Deux défauts moteur mesurés le 2026-08-16
+### 3. Reconnexion à une génération en cours
+
+La génération survit désormais au départ du client (2026-08-16) et se persiste seule. Ce qui manque
+encore, côté interface :
+
+- [ ] Au retour de veille, le fil ne se rafraîchit pas tout seul : la réponse est bien en base, mais
+      il faut recharger la page pour la voir apparaître.
+- [ ] Aucune indication qu'une génération tourne encore quand on revient. `annulation.est_active()`
+      le sait déjà côté serveur ; il manque la route et l'affichage.
+- [ ] Se rebrancher sur le FLUX d'une génération en cours (et non attendre la fin) demanderait de
+      diffuser vers plusieurs abonnés — la file actuelle n'en sert qu'un.
+
+### 4. Deux défauts moteur mesurés le 2026-08-16
 
 - [ ] **Le verrou du moteur reste tenu après déconnexion du client** — mesuré à plus de 12 minutes.
       Une génération abandonnée côté navigateur continue d'occuper l'instance `Llama`, et tout
@@ -59,7 +71,7 @@ le binaire chargé sait servir (`q2_0` débloqué le 2026-08-16) :
       VRAM ne sont pas rendus. Récupéré par `wsl --shutdown`. Le déchargement doit refuser tant
       qu'une génération tient le verrou, ou l'interrompre proprement — jamais planter.
 
-### 4. Longueur des réponses — leviers restants
+### 5. Longueur des réponses — leviers restants
 
 Mesuré : **rien dans l'application ne raccourcit les réponses** (quatre cellules, 6 389 à 7 904
 caractères, la chaîne complète avec harnais donnant la plus longue). Les hypothèses « c'est
@@ -71,7 +83,7 @@ l'échantillonnage » puis « c'est le harnais » ont toutes deux été réfuté
 - [ ] Regarder le prompt système de la conversation : c'est le levier non mesuré qui reste.
 - [ ] Considérer une quantification supérieure à Q3_K_S pour le modèle utilisé.
 
-### 5. Captures d'écran et fichiers dans les conversations
+### 6. Captures d'écran et fichiers dans les conversations
 
 - [ ] Joindre un fichier non-image à un message (les images passent depuis le 2026-08-15)
 - [ ] Transmettre au modèle chargé dès qu'il sait les lire, quel que soit le modèle
@@ -81,7 +93,7 @@ aucun message générique** du type « ce modèle ne prend pas en charge les ima
 le modèle chargé n'a pas de tour de vision, c'est **lui** qui répond qu'il ne voit rien, avec ses
 mots. Une interface qui refuse à sa place se trompera tôt ou tard sur ce dont le modèle est capable.
 
-### 6. Charger un MoE en conditions réelles
+### 7. Charger un MoE en conditions réelles
 
 - [ ] Charger le 35B-A3B et mesurer : VRAM occupée, RAM, débit
 - [ ] Comparer au plan calculé — le déport des experts récupère-t-il les 6 Go inutilisés ?
@@ -89,7 +101,7 @@ mots. Une interface qui refuse à sa place se trompera tôt ou tard sur ce dont 
 Planifiable depuis le 2026-08-15 (`largeur_ffn_active` sérialisée), **jamais chargé**. Tout le code
 de déport existe et est couvert par des tests unitaires ; aucune mesure ne l'a validé.
 
-### 7. Vérifications restées en suspens
+### 8. Vérifications restées en suspens
 
 - [ ] GGUF en plusieurs parts : correctif écrit et poussé, **jamais éprouvé** sur un vrai
       téléchargement découpé

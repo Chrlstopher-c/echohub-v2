@@ -356,11 +356,64 @@ def _pieces_du_contexte(historique: list[MessageChat]) -> dict[str, list[PieceJo
     }
 
 
+# Tâches de génération vivantes, gardées en référence forte le temps qu'elles s'achèvent.
+#
+# `asyncio.create_task` ne suffit pas seul : la boucle ne détient qu'une référence FAIBLE vers la
+# tâche, qui peut donc être ramassée en pleine exécution. C'est le piège documenté dans la doc
+# d'asyncio, et il se manifesterait ici précisément quand plus personne ne lit le flux — le cas
+# qu'on cherche justement à faire survivre.
+_taches_en_cours: set[asyncio.Task[None]] = set()
+
+
+async def _produire(
+    preparation: PreparationGeneration, etat: _EtatFlux, file: asyncio.Queue[EvenementFlux | None]
+) -> None:
+    """Mène la génération jusqu'à son terme et la persiste, que quelqu'un l'écoute ou non.
+
+    C'est la moitié qui NE DOIT PAS dépendre du client. Elle vivait auparavant dans le générateur
+    du flux : quand le navigateur fermait la connexion — un téléphone qui passe en veille suffit —
+    Starlette détruisait ce générateur, `GeneratorExit` remontait, et la génération s'arrêtait net.
+    L'utilisateur retrouvait son message envoyé et une réponse vide, sans savoir si quelque chose
+    tournait encore. Mesuré sur mobile le 2026-08-16, deux fois de suite.
+
+    Les événements partent dans une file plutôt que d'être rendus directement : le lecteur peut
+    disparaître sans que la production s'arrête. `None` clôt la file et n'est jamais diffusé.
+    """
+    erreur: EvenementErreur | None = None
+    try:
+        async for texte in _fragments(preparation, etat):
+            await file.put(EvenementFragment(texte=texte))
+    except EchoHubError as exc:
+        logger.error("Génération interrompue sur {} : {}", preparation.conversation_id, exc)
+        erreur = EvenementErreur(code=exc.code, message=exc.message, remediation=exc.remediation)
+    except Exception as exc:  # dernier filet : un moteur tiers peut lever n'importe quoi
+        logger.exception("Échec inattendu de la génération sur {}", preparation.conversation_id)
+        erreur = EvenementErreur(code="erreur_interne", message=str(exc))
+    finally:
+        annulation.liberer(preparation.generation)
+        # La persistance a lieu ICI, dans la tâche, et non dans le flux : c'est ce qui garantit
+        # qu'une réponse produite sans auditeur est tout de même écrite.
+        erreur = _persister(preparation, etat) or erreur
+        if erreur is not None:
+            await file.put(erreur)
+        await file.put(_evenement_fin(preparation, etat))
+        await file.put(None)
+
+
 async def diffuser(preparation: PreparationGeneration) -> AsyncIterator[EvenementFlux]:
-    """Streame la réponse, puis persiste ce qui a été produit — y compris après une interruption."""
+    """Diffuse au client ce que la tâche de génération produit — sans jamais la commander.
+
+    Le départ du client ferme ce générateur ; il ne touche pas à la tâche, qui poursuit et persiste.
+    C'est le sens de la séparation : la connexion HTTP transporte la réponse, elle ne la conditionne
+    plus.
+    """
     annulation.marquer_demarree(preparation.generation)
     etat = _EtatFlux()
-    erreur: EvenementErreur | None = None
+    file: asyncio.Queue[EvenementFlux | None] = asyncio.Queue()
+
+    tache = asyncio.create_task(_produire(preparation, etat, file))
+    _taches_en_cours.add(tache)
+    tache.add_done_callback(_taches_en_cours.discard)
 
     yield EvenementDebut(
         conversation_id=preparation.conversation_id,
@@ -370,24 +423,19 @@ async def diffuser(preparation: PreparationGeneration) -> AsyncIterator[Evenemen
         message_utilisateur_id=preparation.message_utilisateur_id,
     )
     try:
-        async for texte in _fragments(preparation, etat):
-            yield EvenementFragment(texte=texte)
+        while True:
+            evenement = await file.get()
+            if evenement is None:
+                return
+            yield evenement
     except GeneratorExit:
-        _cloturer_sans_client(preparation, etat)
+        # Le client est parti. On le NOTE et on ne fait rien d'autre : annuler la tâche ici
+        # reproduirait exactement le défaut corrigé.
+        logger.info(
+            "Client déconnecté sur {} : la génération se poursuit et sera persistée.",
+            preparation.conversation_id,
+        )
         raise
-    except EchoHubError as exc:
-        logger.error("Génération interrompue sur {} : {}", preparation.conversation_id, exc)
-        erreur = EvenementErreur(code=exc.code, message=exc.message, remediation=exc.remediation)
-    except Exception as exc:  # dernier filet : un moteur tiers peut lever n'importe quoi
-        logger.exception("Échec inattendu de la génération sur {}", preparation.conversation_id)
-        erreur = EvenementErreur(code="erreur_interne", message=str(exc))
-    finally:
-        annulation.liberer(preparation.generation)
-
-    erreur = _persister(preparation, etat) or erreur
-    if erreur is not None:
-        yield erreur
-    yield _evenement_fin(preparation, etat)
 
 
 def _evenement_fin(preparation: PreparationGeneration, etat: _EtatFlux) -> EvenementFin:
@@ -399,15 +447,6 @@ def _evenement_fin(preparation: PreparationGeneration, etat: _EtatFlux) -> Evene
         duree_ms=etat.duree_ms(),
         interrompu=etat.interrompu,
     )
-
-
-def _cloturer_sans_client(preparation: PreparationGeneration, etat: _EtatFlux) -> None:
-    """Le client s'est déconnecté : plus rien ne peut être émis, mais le texte produit est conservé."""
-    etat.interrompu = True
-    annulation.liberer(preparation.generation)
-    echec = _persister(preparation, etat)
-    if echec is not None:
-        logger.error("Réponse partielle perdue après déconnexion : {}", echec.message)
 
 
 async def _fragments(preparation: PreparationGeneration, etat: _EtatFlux) -> AsyncIterator[str]:
