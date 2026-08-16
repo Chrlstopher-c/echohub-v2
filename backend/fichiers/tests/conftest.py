@@ -48,3 +48,9 @@ def racine_data_home(base: Path) -> Path:
 def conversation(base: Path) -> ResumeConversation:
     """Une conversation vide, prête à recevoir des fichiers."""
     return creer_conversation("Essai fichiers", None, ReglagesConversation())
+
+
+@pytest.fixture
+def autre_conversation(base: Path) -> ResumeConversation:
+    """Une SECONDE conversation — le cloisonnement ne se prouve qu'avec deux."""
+    return creer_conversation("Essai fichiers, voisine", None, ReglagesConversation())

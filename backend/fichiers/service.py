@@ -82,6 +82,34 @@ def lire_fichier(fichier_id: str) -> FichierConversation:
     return fichier
 
 
+def resoudre_reference(conversation_id: str, reference: str) -> FichierConversation:
+    """Fichier de CETTE conversation désigné par son identifiant ou par son nom affiché.
+
+    Un modèle désigne spontanément un fichier par son nom — « hello.py » —, jamais par l'UUID que
+    le harnais lui a rendu. Mesuré le 2026-08-16 : `presenter_fichier(fichier_id="hello.py")`
+    répondait « aucun fichier n'existe » alors que le fichier venait d'être déposé sous
+    l'identifiant `afaaa20c…`. Le refus était exact et inutile ; le modèle a conclu que son
+    fichier avait disparu et a tenté de le recréer.
+
+    L'identifiant est essayé d'abord : c'est la désignation sans ambiguïté. Le nom ne sert qu'en
+    repli, et à noms égaux le plus récent gagne — c'est celui que le modèle vient de produire.
+    Le filtrage par conversation est appliqué dans les DEUX cas : un identifiant d'une autre
+    conversation reste introuvable, exactement comme avant.
+    """
+    reference = reference.strip()
+    if not reference:
+        raise FichierIntrouvable("Aucune référence de fichier fournie.")
+
+    direct = depot.lire_fichier(reference)
+    if direct is not None and direct.conversation_id == conversation_id:
+        return direct
+
+    candidats = [f for f in depot.lister_fichiers(conversation_id) if f.nom_affiche == reference]
+    if not candidats:
+        raise FichierIntrouvable(f"Fichier inconnu dans cette conversation : {reference}")
+    return max(candidats, key=lambda fichier: fichier.cree_le)
+
+
 def chemin_disque(fichier: FichierConversation) -> Path:
     """Chemin absolu résolu et borné au magasin — c'est ce que la route de service ouvre."""
     return stockage.chemin_absolu(fichier.chemin_relatif)

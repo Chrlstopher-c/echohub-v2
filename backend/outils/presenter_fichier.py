@@ -18,7 +18,7 @@ from typing import Any
 
 from loguru import logger
 
-from backend.fichiers import FichierIntrouvable, lire_fichier
+from backend.fichiers import FichierIntrouvable, resoudre_reference
 from backend.outils.contrat import ContexteExecution, DescriptionOutil, Outil
 
 NOM = "presenter_fichier"
@@ -28,8 +28,10 @@ _SCHEMA: dict[str, Any] = {
     "properties": {
         "fichier_id": {
             "type": "string",
-            "description": "Identifiant du fichier à présenter — celui rendu par `executer_python` "
-            "après avoir produit un fichier, ou celui d'une pièce jointe de cette conversation.",
+            "description": "Le fichier à présenter, désigné SOIT par son identifiant rendu par "
+            "`executer_python` (forme `afaaa20c-65a9-…`), SOIT par son nom de fichier tel qu'il "
+            "a été produit (« hello.py », « graphe.png »). Les deux formes fonctionnent ; le nom "
+            "suffit quand le fichier vient d'être créé dans cette conversation.",
         },
     },
     "required": ["fichier_id"],
@@ -49,22 +51,26 @@ DESCRIPTION = DescriptionOutil(
 
 
 async def executer(arguments: dict[str, Any], contexte: ContexteExecution) -> str:
-    """Vérifie que le fichier appartient à CETTE conversation, rend sa référence en JSON.
+    """Résout la référence DANS cette conversation, rend la référence du fichier en JSON.
 
-    Un identifiant d'une autre conversation est refusé exactement comme s'il n'existait pas : le
-    rendre visible ici fuiterait un fichier vers une conversation qui n'y a pas droit — même
+    La résolution est déléguée au domaine `fichiers`, qui accepte l'identifiant comme le nom
+    affiché : un modèle désigne spontanément « hello.py », pas l'UUID qu'on lui a rendu. Elle
+    borne la recherche à la conversation courante, donc un identifiant étranger reste introuvable
+    — le rendre visible ici fuiterait un fichier vers une conversation qui n'y a pas droit, même
     discipline que `service.lier_fichiers_au_message`.
     """
-    fichier_id = str(arguments.get("fichier_id", "")).strip()
-    if not fichier_id:
-        return "Échec : aucun « fichier_id » fourni. Rappeler l'outil avec cet argument."
+    reference = str(arguments.get("fichier_id", "")).strip()
+    if not reference:
+        return "Échec : aucun « fichier_id » fourni. Rappeler l'outil avec le nom ou l'identifiant du fichier."
     try:
-        fichier = lire_fichier(fichier_id)
+        fichier = resoudre_reference(contexte.conversation_id, reference)
     except FichierIntrouvable:
-        return f"Échec : aucun fichier « {fichier_id} » n'existe."
-    if fichier.conversation_id != contexte.conversation_id:
-        logger.warning("presenter_fichier : {} hors de la conversation {}", fichier_id, contexte.conversation_id)
-        return f"Échec : aucun fichier « {fichier_id} » n'existe."
+        logger.warning("presenter_fichier : « {} » introuvable dans {}", reference, contexte.conversation_id)
+        return (
+            f"Échec : aucun fichier « {reference} » dans cette conversation. "
+            "Les fichiers disponibles sont ceux produits par `executer_python` ou joints par "
+            "l'utilisateur ; un fichier écrit dans le bac n'existe qu'une fois l'exécution terminée."
+        )
     return json.dumps(
         {
             "fichier_id": fichier.id,

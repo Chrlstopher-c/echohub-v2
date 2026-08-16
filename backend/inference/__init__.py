@@ -283,14 +283,26 @@ class MoteurChat:
         # UN SEUL appel au moteur par tour, outils déclarés dedans. Le tour suivant n'a lieu que si
         # le modèle a réellement demandé un outil ; sinon la boucle s'arrête au premier passage.
         #
-        # `outils` n'est transmis QU'AU PREMIER tour. Dès qu'un tour a produit des résultats
-        # (des appels exécutés), il est remis à `None` pour le tour suivant : sinon le modèle voit
-        # encore les mêmes outils déclarés après les avoir déjà reçus, et n'a aucune raison
-        # d'arrêter d'en redemander — c'est exactement le bouclage constaté en conditions réelles
-        # (plan d'exécution, L10-b) sur un modèle à qui on montrait une image.
+        # DEUX notions distinctes, et les confondre a coûté cher :
+        #
+        # - `outils_declares` : ce qu'on montre au moteur. Transmis AU PREMIER TOUR SEULEMENT. Dès
+        #   qu'un tour a produit des résultats, il repasse à `None` — sinon le modèle voit encore
+        #   les mêmes outils après les avoir déjà reçus et n'a aucune raison d'arrêter d'en
+        #   redemander (plan d'exécution, L10-b).
+        # - `outils` : le fait qu'un registre existe. Il ne bouge pas de la boucle, et c'est lui
+        #   qui autorise l'EXÉCUTION.
+        #
+        # La sortie de boucle ne doit dépendre que des appels réellement demandés. Mesuré le
+        # 2026-08-16 en conditions réelles : le modèle demandait `presenter_fichier` au second
+        # tour, l'appel était bien détecté, mais la condition portait aussi sur les outils déclarés
+        # — devenus `None` — donc la boucle sortait SANS exécuter, et le `<tool_call>` restait
+        # affiché en XML brut dans la réponse. Ne plus déclarer un outil n'est pas la même chose
+        # que refuser de faire ce que le modèle demande ; c'est `TOURS_OUTILS_MAX` qui borne, pas
+        # cette condition.
+        outils_declares = outils or None
         for tour in range(TOURS_OUTILS_MAX):
             recu: list[str] = []
-            async for morceau in superviseur.generer(messages, options, outils):
+            async for morceau in superviseur.generer(messages, options, outils_declares):
                 if morceau.type == "token" and morceau.contenu:
                     tokens += 1
                     recu.append(morceau.contenu)
@@ -299,8 +311,10 @@ class MoteurChat:
                     # Le flux HTTP est déjà ouvert : signaler dedans est la seule façon d'informer.
                     logger.error("Génération interrompue par le moteur : {}", morceau.contenu)
                     raise RuntimeError(morceau.contenu or "Le moteur a interrompu la génération.")
-            appels = _appels_demandes("".join(recu))
-            if not appels or not outils:
+            # Sans registre, un `<tool_call>` écrit par le modèle est une hallucination : l'exécuter
+            # produirait un bloc « outil inconnu » là où il n'y a simplement aucun outil.
+            appels = _appels_demandes("".join(recu)) if outils else []
+            if not appels:
                 break
             # Ce tour appelait un outil : ce qui vient d'être écrit était donc du commentaire de
             # travail, pas la réponse. On le signale au lieu de le laisser passer pour une réponse.
@@ -310,10 +324,27 @@ class MoteurChat:
                 texte = etape.get("texte")
                 if isinstance(texte, str):
                     yield {"texte": texte}
-            # Résultats rendus : le tour suivant ne reverra plus les outils.
-            outils = None
+            # Résultats rendus : le tour suivant ne reverra plus les outils déclarés.
+            outils_declares = None
         else:
-            logger.warning("Borne de {} tours d'outils atteinte.", TOURS_OUTILS_MAX)
+            # Borne atteinte : les trois tours ont TOUS demandé un outil, donc aucun n'a produit de
+            # réponse. Sortir ici laissait la conversation sans un mot — l'interface affichait
+            # « le modèle n'a rien écrit en dehors de son raisonnement » sous une pile de blocs
+            # d'outils. Mesuré le 2026-08-16 sur un modèle qui réémettait un appel vide en boucle.
+            #
+            # Un tour de plus, sans outil déclaré et sans droit d'en appeler, garantit qu'il reste
+            # une réponse. Ce n'est pas une quatrième chance donnée à l'outil : c'est la clôture.
+            logger.warning(
+                "Borne de {} tours d'outils atteinte : tour de clôture sans outil.", TOURS_OUTILS_MAX
+            )
+            yield {"texte": BALISE_FIN_ETAPE}
+            async for morceau in superviseur.generer(messages, options, None):
+                if morceau.type == "token" and morceau.contenu:
+                    tokens += 1
+                    yield {"texte": morceau.contenu}
+                elif morceau.type == "erreur":
+                    logger.error("Tour de clôture interrompu par le moteur : {}", morceau.contenu)
+                    raise RuntimeError(morceau.contenu or "Le moteur a interrompu la génération.")
 
         ecoule = time.monotonic() - debut
         # Le compte de tokens est celui des morceaux réellement reçus, et le débit en découle. Si

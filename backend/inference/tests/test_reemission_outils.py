@@ -83,6 +83,137 @@ def _consommer(requete: RequeteGeneration) -> None:
     asyncio.run(lire())
 
 
+class SuperviseurInsistantFactice:
+    """Demande un outil aux DEUX premiers tours, qu'on lui en présente ou non.
+
+    C'est le comportement réel d'un modèle qui enchaîne « j'exécute le code » puis « je présente le
+    fichier produit » : le second appel arrive à un tour où le harnais ne déclare plus les outils.
+    """
+
+    def __init__(self) -> None:
+        self.tours = 0
+        self.outils_recus: list[bool] = []
+
+    def generer(
+        self,
+        messages: Sequence[MessageChat],
+        options: OptionsGeneration,
+        outils: Sequence[dict[str, Any]] | None = None,
+    ) -> AsyncIterator[MorceauGeneration]:
+        self.tours += 1
+        self.outils_recus.append(bool(outils))
+        return self._flux(demande_outil=self.tours <= 2)
+
+    async def _flux(self, *, demande_outil: bool) -> AsyncIterator[MorceauGeneration]:
+        if demande_outil:
+            yield MorceauGeneration(
+                type="token",
+                contenu='<tool_call>{"name": "outil_factice", "arguments": {}}</tool_call>',
+            )
+        else:
+            yield MorceauGeneration(type="token", contenu="Voici le résultat.")
+
+
+def test_un_appel_demande_au_second_tour_est_execute(monkeypatch: Any) -> None:
+    """Régression du 2026-08-16 : l'appel du second tour était détecté puis JAMAIS exécuté.
+
+    La condition de sortie portait à la fois sur les appels demandés et sur les outils encore
+    déclarés. Ces derniers valant `None` dès le second tour (L10-b), la boucle sortait sans
+    exécuter, et le `<tool_call>` restait affiché en XML brut dans la réponse — c'est ce que
+    l'utilisateur a vu quand `presenter_fichier` « ne marchait pas ». Cesser de DÉCLARER un outil
+    ne doit pas revenir à refuser de faire ce que le modèle demande ; seul `TOURS_OUTILS_MAX` borne.
+    """
+    executions: list[int] = []
+
+    async def executer_outil_factice(arguments: dict[str, Any], contexte: ContexteExecution) -> str:
+        executions.append(1)
+        return "fait"
+
+    outil_factice = Outil(
+        description=DescriptionOutil(
+            nom="outil_factice",
+            description="Outil de test, sans effet réel.",
+            parametres={"type": "object", "properties": {}},
+        ),
+        executer=executer_outil_factice,
+    )
+    monkeypatch.setitem(registre._OUTILS, outil_factice.nom, outil_factice)
+    superviseur_factice = SuperviseurInsistantFactice()
+    monkeypatch.setattr(domaine_inference, "superviseur", superviseur_factice)
+
+    _consommer(_requete_test())
+
+    assert len(executions) == 2, "les DEUX appels demandés sont exécutés, y compris celui du second tour"
+    assert superviseur_factice.outils_recus == [True, False, False], (
+        "les outils restent déclarés au seul premier tour : l'intention de L10-b est préservée"
+    )
+
+
+class SuperviseurEntetantFactice:
+    """Demande un outil à CHAQUE tour, sans jamais répondre — sauf si on ne lui déclare rien.
+
+    Reproduit le modèle observé le 2026-08-16 : il réémettait un appel vide, recevait « aucun code
+    fourni », s'en excusait, et recommençait jusqu'à épuisement de la borne.
+    """
+
+    def __init__(self) -> None:
+        self.tours = 0
+        self.outils_recus: list[bool] = []
+
+    def generer(
+        self,
+        messages: Sequence[MessageChat],
+        options: OptionsGeneration,
+        outils: Sequence[dict[str, Any]] | None = None,
+    ) -> AsyncIterator[MorceauGeneration]:
+        self.tours += 1
+        self.outils_recus.append(bool(outils))
+        return self._flux()
+
+    async def _flux(self) -> AsyncIterator[MorceauGeneration]:
+        yield MorceauGeneration(
+            type="token",
+            contenu='<tool_call>{"name": "outil_factice", "arguments": {}}</tool_call>',
+        )
+
+
+def test_la_borne_atteinte_produit_quand_meme_une_reponse(monkeypatch: Any) -> None:
+    """Régression du 2026-08-16 : la borne épuisée laissait la conversation SANS un mot.
+
+    Les trois tours demandaient tous un outil, donc aucun n'écrivait de réponse, et la boucle
+    rendait la main — l'interface affichait « le modèle n'a rien écrit en dehors de son
+    raisonnement » sous une pile de blocs d'outils. Un tour de clôture, sans outil déclaré, doit
+    suivre la borne.
+    """
+    executions: list[int] = []
+
+    async def executer_outil_factice(arguments: dict[str, Any], contexte: ContexteExecution) -> str:
+        executions.append(1)
+        return "fait"
+
+    outil_factice = Outil(
+        description=DescriptionOutil(
+            nom="outil_factice",
+            description="Outil de test, sans effet réel.",
+            parametres={"type": "object", "properties": {}},
+        ),
+        executer=executer_outil_factice,
+    )
+    monkeypatch.setitem(registre._OUTILS, outil_factice.nom, outil_factice)
+    superviseur_factice = SuperviseurEntetantFactice()
+    monkeypatch.setattr(domaine_inference, "superviseur", superviseur_factice)
+
+    _consommer(_requete_test())
+
+    assert len(executions) == domaine_inference.TOURS_OUTILS_MAX, "la borne limite bien les exécutions"
+    assert superviseur_factice.tours == domaine_inference.TOURS_OUTILS_MAX + 1, (
+        "un tour de clôture suit la borne, pour qu'une réponse existe malgré tout"
+    )
+    assert superviseur_factice.outils_recus[-1] is False, (
+        "le tour de clôture ne déclare aucun outil : c'est une clôture, pas une chance de plus"
+    )
+
+
 def test_les_outils_ne_sont_plus_repasses_apres_un_tour_avec_resultats(monkeypatch: Any) -> None:
     executions: list[int] = []
 

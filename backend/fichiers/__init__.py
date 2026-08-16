@@ -32,6 +32,7 @@ from backend.fichiers.service import (
     lier_fichiers_au_message,
     lire_fichier,
     pieces_pour_messages,
+    resoudre_reference,
 )
 from backend.fichiers.stockage import supprimer_dossier_conversation
 
@@ -50,6 +51,7 @@ __all__ = [
     # Opérations
     "deposer_fichier",
     "lire_fichier",
+    "resoudre_reference",
     "chemin_disque",
     "lier_fichiers_au_message",
     "pieces_pour_messages",
