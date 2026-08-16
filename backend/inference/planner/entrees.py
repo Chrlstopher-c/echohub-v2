@@ -33,20 +33,22 @@ class FormatModele(str, Enum):
 
 
 class TypeCacheKV(str, Enum):
-    """Quantification du cache KV. Compression croissante : F16 > Q8_0 > Q4_0 > Q2_0 > Q1_0.
+    """Quantification du cache KV. Ordre de compression croissante : F16 > Q8_0 > Q4_0.
 
-    `q2_0` et `q1_0` sont les caches très basse précision servis par les llama.cpp récents (vérifié
-    le 2026-08-16 sur llama-cpp-python 0.3.34, qui expose leurs identifiants ggml). Le planificateur
-    les refusait alors que le binaire les accepte, et c'est le poste qui grandit le plus vite avec
-    la fenêtre : sur le MoE 35B, `f16` coûte 80 Ko par token contre 12,5 Ko en `q2_0`. Les écarter
-    revenait à laisser des couches calculer sur CPU faute de VRAM, sans aucune raison technique.
+    Trois valeurs, et pas davantage : ce sont les seuls types que le backend CUDA sait réellement
+    servir COMME CACHE. Le 2026-08-16, `q2_0` et `q1_0` ont été ajoutés ici parce que ggml les
+    expose — ils ont tué le processus au chargement (`SET_ROWS` non implémenté sur CUDA pour ces
+    types, donc `ggml_abort()`, donc SIGABRT non rattrapable). Le gain espéré était pourtant réel :
+    32 couches sur GPU au lieu de 21, à fenêtre constante. Il reste hors de portée tant que le
+    backend ne sait pas écrire dans un cache de ce type.
+
+    Voir `adaptateur_llama_cpp.TYPES_KV` : la liste y est doublée, et volontairement restrictive
+    des deux côtés. Un type ne s'y ajoute qu'après un chargement ET une génération réels.
     """
 
     F16 = "f16"
     Q8_0 = "q8_0"
     Q4_0 = "q4_0"
-    Q2_0 = "q2_0"
-    Q1_0 = "q1_0"
 
 
 class Plateforme(str, Enum):

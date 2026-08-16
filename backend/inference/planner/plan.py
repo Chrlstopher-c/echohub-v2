@@ -21,14 +21,15 @@ T = TypeVar("T")
 
 # Coût mémoire d'un élément de cache KV, en octets. Ce ne sont pas des valeurs choisies : ce sont
 # les formats de bloc GGML. Un bloc q8_0 encode 32 valeurs sur 32 octets + 1 échelle f16 = 34 o ;
-# un bloc q4_0 encode 32 valeurs sur 16 octets + 1 échelle f16 = 18 o ; q2_0 sur 8 octets = 10 o ;
-# q1_0 sur 4 octets = 6 o. Même règle pour tous : la charge utile plus l'échelle du bloc.
+# un bloc q4_0 encode 32 valeurs sur 16 octets + 1 échelle f16 = 18 o.
+#
+# Aucune entrée pour des types plus compressés : `TypeCacheKV` n'en expose pas, et pour cause —
+# `q2_0` tue le processus au chargement (voir son docstring). Une table qui les chiffrerait ferait
+# croire le planificateur capable de dimensionner un cache que le moteur ne sait pas servir.
 OCTETS_PAR_ELEMENT_KV: dict[TypeCacheKV, float] = {
     TypeCacheKV.F16: 2.0,
     TypeCacheKV.Q8_0: 34.0 / 32.0,
     TypeCacheKV.Q4_0: 18.0 / 32.0,
-    TypeCacheKV.Q2_0: 10.0 / 32.0,
-    TypeCacheKV.Q1_0: 6.0 / 32.0,
 }
 
 

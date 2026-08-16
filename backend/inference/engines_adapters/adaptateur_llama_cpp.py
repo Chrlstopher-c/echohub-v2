@@ -60,30 +60,22 @@ from backend.models.storage import fichiers_projecteurs
 # Identifiants de types GGML acceptés pour le cache KV. Une valeur hors table est un plan invalide :
 # la deviner produirait un cache différent de celui que le planificateur a dimensionné.
 #
-# Les identifiants sont lus sur le module llama_cpp quand il est présent, et non recopiés : ils sont
-# fixés par ggml, pas par nous, et une table écrite à la main diverge au premier ajout amont. C'est
-# exactement ce qui s'était produit — la table ne connaissait que quatre types alors que le binaire
-# en expose trente-trois, dont `q2_0` et `q1_0`, les caches très basse précision qui rendent les
-# fenêtres de plusieurs centaines de milliers de tokens tenables sur une carte de 16 Go.
+# CETTE LISTE EST RESTRICTIVE À DESSEIN, et l'élargir a un coût mesuré. Le binaire expose
+# trente-trois types ggml, dont `q2_0` et `q1_0` — les caches très basse précision qui rendraient
+# tenables des fenêtres de plusieurs centaines de milliers de tokens. Le 2026-08-16, les avoir
+# acceptés parce qu'ils EXISTAIENT a tué le backend au chargement :
 #
-# Le repli en dur ne sert qu'aux tests sans binaire ; les quatre valeurs y sont stables depuis
-# longtemps et vérifiées le 2026-08-16 sur llama-cpp-python 0.3.34.
-_TYPES_KV_REPLI: dict[str, int] = {"f32": 0, "f16": 1, "q4_0": 2, "q8_0": 8}
-_NOMS_KV = ("f32", "f16", "q8_0", "q5_1", "q5_0", "q4_1", "q4_0", "iq4_nl", "q2_0", "q1_0")
-
-
-def _types_kv_disponibles() -> dict[str, int]:
-    """Types de cache que le binaire chargé sait réellement servir, avec leur identifiant ggml."""
-    try:
-        import llama_cpp
-    except ImportError:
-        return dict(_TYPES_KV_REPLI)
-    trouves = {nom: getattr(llama_cpp, f"GGML_TYPE_{nom.upper()}", None) for nom in _NOMS_KV}
-    connus = {nom: valeur for nom, valeur in trouves.items() if isinstance(valeur, int)}
-    return connus or dict(_TYPES_KV_REPLI)
-
-
-TYPES_KV: dict[str, int] = _types_kv_disponibles()
+#   ggml-backend.cpp:898: pre-allocated tensor (cache_k_l11 (view)) in a buffer (CUDA0)
+#   that cannot run the operation (SET_ROWS)  ->  ggml_abort(), SIGABRT, processus mort
+#
+# Qu'un type existe dans ggml dit seulement qu'on sait ENCODER des poids avec. Servir un CACHE KV
+# demande en plus que le backend sache écrire dedans (`SET_ROWS`), et CUDA ne l'implémente pas pour
+# ces types. L'échec est un `abort()` natif qu'aucun `try/except` Python ne rattrape — même classe
+# de faute que le projecteur de vision (`_detacher_vision_si_vram_insuffisante`), et même
+# conclusion : la seule protection est de ne jamais tenter.
+#
+# N'ajouter un type ici qu'après l'avoir CHARGÉ et fait générer, pas après l'avoir vu dans `dir()`.
+TYPES_KV: dict[str, int] = {"f32": 0, "f16": 1, "q4_0": 2, "q8_0": 8}
 
 DELAI_VERROU_GENERATION_S = 5.0
 
