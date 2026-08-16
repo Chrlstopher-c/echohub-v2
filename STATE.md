@@ -68,6 +68,21 @@ modèle réémet alors un appel VIDE, trois tours de suite, puis annonce à l'ut
 inexistant et une carte qui n'est pas affichée. Un seul refus de synonyme a produit toute la
 cascade. Règle qui en découle : quand l'intention d'un appel est lisible, le harnais la sert.
 
+**Retirer ses outils au modèle après un tour l'empêchait de finir sa tâche.** Renversement du
+2026-08-16, imposé par la mesure. Les outils n'étaient déclarés qu'au PREMIER tour (L10-b), pour
+qu'un modèle ne redemande pas sans fin un outil dont il a déjà le résultat. Mesuré sur le MoE 35B,
+contexte servi de 131 072 tokens dont 18 835 occupés — donc sans aucune contrainte de fenêtre : le
+modèle appelle `lire_fichier`, apprend que le fichier n'existe pas, annonce « je repars de zéro,
+voici la nouvelle version »… et s'arrête. Il n'avait pas renoncé : `ecrire_fichier` ne lui était
+plus déclaré. C'est le symptôme « ça coupe alors que le contexte est large ».
+
+La boucle que le socle DEMANDE compte plusieurs appels enchaînés — écrire, exécuter, relire,
+corriger, présenter. `TOURS_OUTILS_MAX` passe donc de 3 à 6, et les outils restent déclarés à chaque
+tour. Mesure avant/après sur la MÊME demande, même modèle, même conversation : 758 caractères et un
+seul outil, contre **19 469 caractères et trois outils enchaînés** — le modèle écrit désormais ses
+deux fichiers, les relit, et termine sa réponse. Ce que L10-b protégeait est couvert ailleurs et mieux ciblé : cette borne, l'anti-redite sur
+les appels échoués, et le retrait du balisage d'appel de l'historique.
+
 **Tout format que le harnais laisse dans le contexte finit imité.** Deux fois : le préfixe
 `[outil nom — résultat]`, puis le balisage `<function=…>` d'un appel raté. Ce qui revient au modèle
 comme étant son propre texte lui sert d'exemple de ce qu'il a « bien » fait.

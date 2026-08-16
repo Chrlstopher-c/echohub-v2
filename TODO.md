@@ -8,11 +8,17 @@ Rien. Session close sur un état stable, arbre git propre, application en ligne,
 
 ## À faire (priorité)
 
-### 1. Éprouver le harnais corrigé sur un GROS modèle
+### 1. Deux habitudes du modèle à corriger dans le socle
 
-Validé le 2026-08-16 sur Qwen2.5-0.5B, par l'API réelle : 236 événements SSE, appel d'outil détecté
-et exécuté, réponse close sur une ponctuation. Reste à confirmer sur un modèle de production, dont
-la conversation est longue.
+Validé le 2026-08-16 sur le MoE 35B, conversation réelle, contexte servi 262 144 : trois outils
+enchaînés, deux fichiers produits, 19 469 caractères de réponse. Deux écarts subsistent, visibles
+dans les appels enregistrés :
+
+- [ ] Le modèle écrit ses fichiers via `executer_python(code=...)` avec un `open().write()` — donc
+      avec le double échappement que `ecrire_fichier` existe précisément pour supprimer. Le socle le
+      lui dit déjà ; il faut soit le dire plus fort, soit comprendre pourquoi il préfère l'autre.
+- [ ] `presenter_fichier` n'est pas appelé même quand la demande dit « présente-le moi » : les
+      fichiers sont déposés dans la conversation mais aucune carte n'apparaît.
 
 - [ ] Reprendre le scénario exact qui a échoué : « écris-moi une page HTML avec un simulateur »,
       puis « ça ne rend pas bien, corrige ». Ce que la correction doit produire :
@@ -24,7 +30,19 @@ la conversation est longue.
       ce qui a été refusé comme redite (`logger.info` dans `registre.executer`, `logger.warning` dans
       `_executer_appels`). Lire le journal AVANT de toucher au code.
 
-### 2. Deux défauts moteur mesurés le 2026-08-16
+### 2. Un modèle 1M sur cette machine — arbitrage à trancher
+
+Le « 1M » de Qwen2.5-1M repose sur **Dual Chunk Attention**, que llama.cpp n'implémente pas : les
+deux `config.json` déclarent `original_max_position_embeddings: 262144`. En GGUF, le plafond utile
+est donc 262 144, pas un million — quel que soit le modèle.
+
+- [ ] Trancher entre contexte et qualité :
+      `huihui-ai/Qwen2.5-7B-Instruct-1M-abliterated` (Q4_K_M ≈ 4,7 Go, KV q8_0 → **262 144 tokens
+      tenables**, soit le double de l'actuel) contre le 14B-1M, qui plafonne vers 130 k sur 16 Go et
+      n'apporte donc rien de plus que le MoE en place. Les deux sont des Qwen**2.5**, en retrait des
+      Qwen3.6 utilisés aujourd'hui.
+
+### 3. Deux défauts moteur mesurés le 2026-08-16
 
 - [ ] **Le verrou du moteur reste tenu après déconnexion du client** — mesuré à plus de 12 minutes.
       Une génération abandonnée côté navigateur continue d'occuper l'instance `Llama`, et tout
@@ -33,7 +51,7 @@ la conversation est longue.
       VRAM ne sont pas rendus. Récupéré par `wsl --shutdown`. Le déchargement doit refuser tant
       qu'une génération tient le verrou, ou l'interrompre proprement — jamais planter.
 
-### 3. Longueur des réponses — leviers restants
+### 4. Longueur des réponses — leviers restants
 
 Mesuré : **rien dans l'application ne raccourcit les réponses** (quatre cellules, 6 389 à 7 904
 caractères, la chaîne complète avec harnais donnant la plus longue). Les hypothèses « c'est
@@ -45,7 +63,7 @@ l'échantillonnage » puis « c'est le harnais » ont toutes deux été réfuté
 - [ ] Regarder le prompt système de la conversation : c'est le levier non mesuré qui reste.
 - [ ] Considérer une quantification supérieure à Q3_K_S pour le modèle utilisé.
 
-### 4. Captures d'écran et fichiers dans les conversations
+### 5. Captures d'écran et fichiers dans les conversations
 
 - [ ] Joindre un fichier non-image à un message (les images passent depuis le 2026-08-15)
 - [ ] Transmettre au modèle chargé dès qu'il sait les lire, quel que soit le modèle
@@ -55,7 +73,7 @@ aucun message générique** du type « ce modèle ne prend pas en charge les ima
 le modèle chargé n'a pas de tour de vision, c'est **lui** qui répond qu'il ne voit rien, avec ses
 mots. Une interface qui refuse à sa place se trompera tôt ou tard sur ce dont le modèle est capable.
 
-### 5. Charger un MoE en conditions réelles
+### 6. Charger un MoE en conditions réelles
 
 - [ ] Charger le 35B-A3B et mesurer : VRAM occupée, RAM, débit
 - [ ] Comparer au plan calculé — le déport des experts récupère-t-il les 6 Go inutilisés ?
@@ -63,7 +81,7 @@ mots. Une interface qui refuse à sa place se trompera tôt ou tard sur ce dont 
 Planifiable depuis le 2026-08-15 (`largeur_ffn_active` sérialisée), **jamais chargé**. Tout le code
 de déport existe et est couvert par des tests unitaires ; aucune mesure ne l'a validé.
 
-### 6. Vérifications restées en suspens
+### 7. Vérifications restées en suspens
 
 - [ ] GGUF en plusieurs parts : correctif écrit et poussé, **jamais éprouvé** sur un vrai
       téléchargement découpé
