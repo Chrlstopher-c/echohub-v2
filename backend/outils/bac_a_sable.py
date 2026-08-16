@@ -129,6 +129,49 @@ def preparer_bac(racine_bac: Path) -> None:
         os.chmod(racine_bac, 0o700)
 
 
+class CheminHorsBac(Exception):
+    """Le chemin demandé par le modèle sort du bac de sa conversation."""
+
+
+def resoudre_dans_bac(racine_bac: Path, chemin_demande: str) -> Path:
+    """Chemin absolu d'un fichier du bac — ou lève, jamais un chemin approximatif.
+
+    Le modèle choisit librement le nom de ses fichiers : c'est donc une entrée non fiable, au même
+    titre qu'une saisie utilisateur. Trois refus, et le troisième est le seul qui compte vraiment :
+
+    - chemin vide : rien à résoudre ;
+    - chemin absolu : `/etc/passwd` n'est pas un fichier de bac ;
+    - chemin qui, UNE FOIS RÉSOLU, sort de la racine. La résolution suit les liens symboliques,
+      donc un lien posé par le code confiné vers l'extérieur est attrapé ici — vérifier la chaîne
+      brute (`..` dans le texte) ne l'aurait pas vu.
+
+    `strict=False` est implicite : on résout un chemin qui n'existe pas encore, c'est le cas normal
+    d'une écriture.
+    """
+    if not chemin_demande.strip():
+        raise CheminHorsBac("Aucun chemin fourni.")
+    demande = Path(chemin_demande)
+    if demande.is_absolute():
+        raise CheminHorsBac(f"Chemin absolu refusé : « {chemin_demande} ». Utiliser un chemin relatif au bac.")
+    racine = racine_bac.resolve()
+    cible = (racine / demande).resolve()
+    if cible != racine and racine not in cible.parents:
+        raise CheminHorsBac(f"Chemin hors du bac : « {chemin_demande} ».")
+    return cible
+
+
+def adopter_par_le_bac(chemin: Path) -> None:
+    """Donne un fichier écrit par le backend à l'utilisateur confiné.
+
+    Sans cela, le fichier appartiendrait à root et le code confiné, qui tourne sous
+    `SANDBOX_UID`, ne pourrait pas le RÉÉCRIRE — il pourrait le supprimer (le dossier lui
+    appartient) mais pas l'ouvrir en écriture. Un outil d'édition qui produit des fichiers que
+    l'exécution ne peut plus modifier serait un piège silencieux.
+    """
+    if os.getuid() == 0:
+        os.chown(chemin, SANDBOX_UID, SANDBOX_GID)
+
+
 def executer_code_confine(code: str, racine_bac: Path) -> ResultatExecution:
     """Lance `python3 -I -c <code>` dans le bac, confiné, et rend ce qui a été produit.
 

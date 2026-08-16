@@ -13,7 +13,7 @@ from pathlib import Path
 
 from backend.chat.modeles import ResumeConversation
 from backend.fichiers import chemin_disque, lire_fichier
-from backend.outils import executer_python
+from backend.outils import executer_python, fichiers_bac
 from backend.outils.contrat import ContexteExecution
 
 _MOTIF_ID_FICHIER = re.compile(r"\(id ([0-9a-f-]{36})\)")
@@ -42,6 +42,55 @@ def test_executer_refuse_labsence_de_code(conversation: ResumeConversation, raci
     contexte = ContexteExecution(conversation_id=conversation.id, racine_bac=racine_bac)
 
     texte = asyncio.run(executer_python.executer({}, contexte))
+
+    assert "Échec" in texte
+
+
+def test_executer_lance_un_fichier_du_bac(conversation: ResumeConversation, racine_bac: Path) -> None:
+    """Le maillon qui referme la boucle écrire → lancer → corriger, sans réémettre le programme."""
+    contexte = ContexteExecution(conversation_id=conversation.id, racine_bac=racine_bac)
+    asyncio.run(
+        fichiers_bac.OUTIL_ECRIRE.executer(
+            {"chemin": "app.py", "contenu": "print('lancé depuis le fichier')\n"}, contexte
+        )
+    )
+
+    texte = asyncio.run(executer_python.executer({"fichier": "app.py"}, contexte))
+
+    assert "lancé depuis le fichier" in texte
+    assert "Code de retour : 0" in texte
+
+
+def test_executer_un_fichier_execute_le_garde_main(conversation: ResumeConversation, racine_bac: Path) -> None:
+    """Un script ordinaire met son travail sous `if __name__ == "__main__":`.
+
+    Sans `run_name='__main__'`, lancer un tel fichier ne produirait rien de visible — ce qui
+    ressemble à une panne bien plus qu'à un choix.
+    """
+    contexte = ContexteExecution(conversation_id=conversation.id, racine_bac=racine_bac)
+    programme = "def principal():\n    print('travail fait')\n\nif __name__ == '__main__':\n    principal()\n"
+    asyncio.run(fichiers_bac.OUTIL_ECRIRE.executer({"chemin": "app.py", "contenu": programme}, contexte))
+
+    texte = asyncio.run(executer_python.executer({"fichier": "app.py"}, contexte))
+
+    assert "travail fait" in texte
+
+
+def test_executer_un_fichier_absent_oriente_vers_l_ecriture(
+    conversation: ResumeConversation, racine_bac: Path
+) -> None:
+    contexte = ContexteExecution(conversation_id=conversation.id, racine_bac=racine_bac)
+
+    texte = asyncio.run(executer_python.executer({"fichier": "absent.py"}, contexte))
+
+    assert "Échec" in texte
+    assert "ecrire_fichier" in texte
+
+
+def test_executer_refuse_un_fichier_hors_du_bac(conversation: ResumeConversation, racine_bac: Path) -> None:
+    contexte = ContexteExecution(conversation_id=conversation.id, racine_bac=racine_bac)
+
+    texte = asyncio.run(executer_python.executer({"fichier": "../../etc/passwd"}, contexte))
 
     assert "Échec" in texte
 

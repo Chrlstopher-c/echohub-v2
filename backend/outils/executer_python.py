@@ -13,7 +13,13 @@ from typing import Any
 
 from loguru import logger
 
-from backend.outils.bac_a_sable import LIMITES_REELLES_TEXTE, executer_code_confine
+from backend.outils.bac_a_sable import (
+    LIMITES_REELLES_TEXTE,
+    CheminHorsBac,
+    executer_code_confine,
+    preparer_bac,
+    resoudre_dans_bac,
+)
 from backend.outils.balayage_bac import balayer_et_enregistrer, etat_bac
 from backend.outils.contrat import ContexteExecution, DescriptionOutil, Outil
 
@@ -29,26 +35,37 @@ LONGUEUR_SORTIE_MAX = 4_000
 _SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
+        "fichier": {
+            "type": "string",
+            "description": (
+                "Path of a sandbox file to run, relative — `app.py`. PREFER THIS for any program "
+                "you will iterate on: the file survives the call, so a later error is fixed with "
+                "`modifier_fichier` instead of retyping everything."
+            ),
+        },
         "code": {
             "type": "string",
             "description": (
-                "The complete Python source to run. Required — a call without it does nothing. "
-                "The working directory is this conversation's sandbox: any file written with a "
-                "relative path appears there and becomes a file of the conversation, visible to "
-                "the user. Print what you want to read back: only stdout and stderr are returned."
+                "Python source to run directly, without going through a file. Use it only for a "
+                "throwaway one-off — a quick calculation you will not need to correct. The working "
+                "directory is this conversation's sandbox. Print what you want to read back: only "
+                "stdout and stderr are returned."
             ),
         },
     },
-    "required": ["code"],
+    # Exactement un des deux, et le schéma le DIT plutôt que de le laisser deviner : les gabarits
+    # rendent `parameters` tel quel, donc `anyOf` est lu par le modèle même quand rien ne le valide.
+    "anyOf": [{"required": ["fichier"]}, {"required": ["code"]}],
 }
 
 DESCRIPTION = DescriptionOutil(
     nom=NOM,
     description=(
-        "Really executes Python code in a sandboxed process, bounded in CPU time, memory, file "
-        "size and process count. Use it to compute, transform data, or produce a file (image, "
-        "CSV, text) instead of inventing a result. The code has no access to the internet, nor to "
-        "any other conversation's files. Pass the whole program in the `code` argument."
+        "Really executes Python in a sandboxed process, bounded in CPU time, memory, file size and "
+        "process count. Use it to compute, transform data, or produce a file instead of inventing "
+        "a result. No internet access, no access to another conversation's files. Give EITHER "
+        "`fichier` — the path of a file you wrote with `ecrire_fichier`, which is the right way for "
+        "anything you may need to correct — OR `code` for a one-off snippet."
     ),
     parametres=_SCHEMA,
 )
@@ -74,6 +91,52 @@ def _formater(resultat: Any, fichiers: list[Any]) -> str:
     return "\n\n".join(lignes)
 
 
+# Lanceur d'un fichier du bac, exécuté par le processus confiné.
+#
+# Il ouvre le fichier par un chemin RELATIF, et c'est la seule chose qui compte dans ce gabarit.
+# `runpy.run_path` a été essayé d'abord et écarté sur mesure (2026-08-16) : il reconvertit son
+# argument en chemin ABSOLU puis le rouvre, ce qui oblige l'utilisateur confiné à traverser tous
+# les dossiers parents du bac — dossiers qui ne lui appartiennent pas et qu'il n'a aucune raison
+# de pouvoir traverser. Résultat mesuré : `PermissionError` sur un fichier pourtant lisible par
+# lui. Un chemin relatif se résout contre le répertoire de travail que le processus détient déjà
+# (le `chdir` a lieu AVANT la bascule d'utilisateur), donc aucun parent n'est retraversé.
+#
+# `__name__ = "__main__"` fait tourner le garde `if __name__ == "__main__":` d'un script ordinaire.
+# Sans lui, lancer un fichier ne produirait rien de visible — ce qui ressemble à une panne.
+_GABARIT_LANCEUR = (
+    "import sys\n"
+    "chemin = {chemin!r}\n"
+    "with open(chemin, 'rb') as fichier:\n"
+    "    source = fichier.read()\n"
+    "sys.argv = [chemin]\n"
+    "exec(compile(source, chemin, 'exec'), {{'__name__': '__main__', '__file__': chemin}})\n"
+)
+
+
+def _source_a_executer(arguments: dict[str, Any], contexte: ContexteExecution) -> str:
+    """Code à exécuter : celui d'un fichier du bac, ou celui passé directement. Lève sur refus.
+
+    Le fichier est lancé par un lanceur généré plutôt qu'en changeant la commande du processus
+    confiné : tout le confinement (rlimits, bascule d'utilisateur, répertoire de travail) vit dans
+    `bac_a_sable.executer_code_confine` et n'a aucune raison d'apprendre une seconde façon de
+    démarrer.
+    """
+    fichier = str(arguments.get("fichier", "")).strip()
+    if fichier:
+        cible = resoudre_dans_bac(contexte.racine_bac, fichier)
+        if not cible.is_file():
+            raise CheminHorsBac(f"« {fichier} » n'existe pas dans le bac. Le créer avec `ecrire_fichier`.")
+        # Forme résolue puis relative : normalisée, et l'appartenance au bac vient d'être vérifiée.
+        relatif = cible.relative_to(contexte.racine_bac.resolve())
+        return _GABARIT_LANCEUR.format(chemin=str(relatif))
+    code = str(arguments.get("code", "")).strip()
+    if not code:
+        raise CheminHorsBac(
+            "Ni « fichier » ni « code » fourni. Donner le chemin d'un fichier du bac, ou du code à exécuter."
+        )
+    return code
+
+
 async def executer(arguments: dict[str, Any], contexte: ContexteExecution) -> str:
     """Exécute le code demandé dans le bac de `contexte`, balaie, rend un texte pour le modèle.
 
@@ -81,9 +144,11 @@ async def executer(arguments: dict[str, Any], contexte: ContexteExecution) -> st
     (`asyncio.to_thread`) pour ne jamais geler la boucle asyncio pendant les quelques secondes
     d'exécution.
     """
-    code = str(arguments.get("code", "")).strip()
-    if not code:
-        return "Échec : aucun code fourni. Rappeler l'outil avec un argument « code » non vide."
+    preparer_bac(contexte.racine_bac)
+    try:
+        code = _source_a_executer(arguments, contexte)
+    except CheminHorsBac as exc:
+        return f"Échec : {exc}"
 
     avant = etat_bac(contexte.racine_bac)
     resultat = await asyncio.to_thread(executer_code_confine, code, contexte.racine_bac)
