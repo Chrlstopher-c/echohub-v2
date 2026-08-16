@@ -18,16 +18,26 @@ from loguru import logger
 
 from backend.outils.contrat import ContexteExecution, DescriptionOutil, Outil, ResultatOutil
 from backend.outils.executer_python import OUTIL as OUTIL_PYTHON
+from backend.outils.fichiers_bac import OUTIL_ECRIRE, OUTIL_LIRE, OUTIL_MODIFIER
 from backend.outils.presenter_fichier import OUTIL as OUTIL_PRESENTER
 from backend.outils.recherche_web import OUTIL as OUTIL_RECHERCHE
 
 # Ordre significatif : c'est celui dans lequel les outils sont présentés au modèle, et le premier
 # est celui vers lequel il se tourne le plus volontiers. La recherche web est en tête parce que
-# c'est l'absence de sources qui produit le plus d'inventions ; l'exécution Python vient ensuite,
-# pour le calcul et la production de fichiers ; la présentation vient en dernier, elle ne fait
-# jamais rien sans qu'un fichier existe déjà.
+# c'est l'absence de sources qui produit le plus d'inventions.
+#
+# Viennent ensuite les trois outils de fichier DANS L'ORDRE DE LA BOUCLE DE TRAVAIL — écrire, lire,
+# modifier — puis l'exécution. Ce n'est pas cosmétique : jusqu'au 2026-08-16, `executer_python`
+# était le seul moyen de produire un fichier, le modèle emballait donc son contenu dans du source
+# Python et réécrivait TOUT à chaque erreur. Présenter l'écriture avant l'exécution pousse à poser
+# le fichier d'abord, ce qui rend la correction suivante possible au lieu d'être une réémission.
+#
+# La présentation vient en dernier : elle ne fait jamais rien sans qu'un fichier existe déjà.
 _OUTILS: dict[str, Outil] = {
     OUTIL_RECHERCHE.nom: OUTIL_RECHERCHE,
+    OUTIL_ECRIRE.nom: OUTIL_ECRIRE,
+    OUTIL_LIRE.nom: OUTIL_LIRE,
+    OUTIL_MODIFIER.nom: OUTIL_MODIFIER,
     OUTIL_PYTHON.nom: OUTIL_PYTHON,
     OUTIL_PRESENTER.nom: OUTIL_PRESENTER,
 }
