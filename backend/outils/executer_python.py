@@ -24,14 +24,19 @@ NOM = "executer_python"
 # cette borne locale évite seulement de construire un texte énorme avant d'y arriver.
 LONGUEUR_SORTIE_MAX = 4_000
 
+# Descriptions et schémas EN ANGLAIS : ils sont rendus tels quels dans le gabarit du modèle, à côté
+# d'exemples d'appel eux-mêmes anglais. C'est le texte qui décide de la qualité de l'appel émis.
 _SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "code": {
             "type": "string",
-            "description": "Code Python à exécuter. Le répertoire de travail est le bac de cette "
-            "conversation : tout fichier écrit avec un chemin relatif y apparaît et devient un "
-            "fichier de la conversation, visible par l'utilisateur.",
+            "description": (
+                "The complete Python source to run. Required — a call without it does nothing. "
+                "The working directory is this conversation's sandbox: any file written with a "
+                "relative path appears there and becomes a file of the conversation, visible to "
+                "the user. Print what you want to read back: only stdout and stderr are returned."
+            ),
         },
     },
     "required": ["code"],
@@ -40,10 +45,10 @@ _SCHEMA: dict[str, Any] = {
 DESCRIPTION = DescriptionOutil(
     nom=NOM,
     description=(
-        "Exécute du code Python réellement, dans un processus confiné et borné en temps, mémoire "
-        "et nombre de processus. Utiliser pour calculer, transformer des données ou produire un "
-        "fichier (image, CSV, texte…) plutôt que d'inventer un résultat. Le code n'a pas accès à "
-        "Internet ni aux fichiers d'autres conversations."
+        "Really executes Python code in a sandboxed process, bounded in CPU time, memory, file "
+        "size and process count. Use it to compute, transform data, or produce a file (image, "
+        "CSV, text) instead of inventing a result. The code has no access to the internet, nor to "
+        "any other conversation's files. Pass the whole program in the `code` argument."
     ),
     parametres=_SCHEMA,
 )

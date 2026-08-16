@@ -834,7 +834,14 @@ Le JSON relevé porte des accolades doublées (`{{"name": …}}`), artefact du g
 retente donc une fois après les avoir réduites : refuser un appel pour une accolade en trop
 reviendrait à casser l'outil sur un détail de mise en forme que le modèle ne contrôle pas.
 """
-_MOTIF_APPEL_TEXTE = re.compile(r"<tool_call>\s*(?P<charge>.+?)\s*</tool_call>", re.DOTALL | re.IGNORECASE)
+# La balise fermante est FACULTATIVE, et c'est la seule tolérance qui compte ici : un modèle
+# dégradé (quantification basse) ou une génération arrêtée net laisse un `<tool_call>` ouvert, et
+# l'exiger faisait perdre l'appel ENTIER — pas dégrader, perdre. L'alternance est en dernier
+# recours : le moteur d'expressions essaie `</tool_call>` d'abord à chaque position, `\Z` ne sert
+# que s'il n'existe pas. Un appel bien formé se lit donc exactement comme avant.
+_MOTIF_APPEL_TEXTE = re.compile(
+    r"<tool_call>\s*(?P<charge>.+?)\s*(?:</tool_call>|\Z)", re.DOTALL | re.IGNORECASE
+)
 
 
 def _charger_json_tolerant(charge: str) -> dict[str, Any] | None:
@@ -853,8 +860,17 @@ def _charger_json_tolerant(charge: str) -> dict[str, Any] | None:
 # du JSON mais du balisage, `<function=nom><parameter=cle>valeur</parameter></function>`. C'est la
 # convention des gabarits de la famille Qwen3-Coder. Les deux formes cohabitent selon le modèle, et
 # aucune n'est devinable à l'avance : on lit celle qui arrive.
-_MOTIF_FONCTION_BALISEE = re.compile(r"<function=(?P<nom>[\w.-]+)>(?P<corps>.*?)</function>", re.DOTALL)
-_MOTIF_PARAMETRE = re.compile(r"<parameter=(?P<cle>[\w.-]+)>(?P<valeur>.*?)</parameter>", re.DOTALL)
+# Fermantes facultatives, même raison que pour `<tool_call>`. Pour un paramètre, la borne de repli
+# n'est pas seulement la fin du texte : c'est aussi le paramètre suivant ou la fin de la fonction,
+# sans quoi une valeur non fermée avalerait tous les arguments qui la suivent — un `code` qui
+# engloutit le reste de l'appel est pire qu'un argument manquant, parce qu'il s'exécute.
+_MOTIF_FONCTION_BALISEE = re.compile(
+    r"<function=(?P<nom>[\w.-]+)>(?P<corps>.*?)(?:</function>|\Z)", re.DOTALL
+)
+_MOTIF_PARAMETRE = re.compile(
+    r"<parameter=(?P<cle>[\w.-]+)>(?P<valeur>.*?)(?:</parameter>|(?=<parameter=)|(?=</function>)|\Z)",
+    re.DOTALL,
+)
 
 
 def _appels_balises(texte: str) -> list[dict[str, Any]]:

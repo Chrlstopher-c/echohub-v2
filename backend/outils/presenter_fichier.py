@@ -23,15 +23,19 @@ from backend.outils.contrat import ContexteExecution, DescriptionOutil, Outil
 
 NOM = "presenter_fichier"
 
+# Descriptions et schémas EN ANGLAIS : ils sont rendus tels quels dans le gabarit du modèle, à côté
+# d'exemples d'appel eux-mêmes anglais. C'est le texte qui décide de la qualité de l'appel émis.
 _SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "fichier_id": {
             "type": "string",
-            "description": "Le fichier à présenter, désigné SOIT par son identifiant rendu par "
-            "`executer_python` (forme `afaaa20c-65a9-…`), SOIT par son nom de fichier tel qu'il "
-            "a été produit (« hello.py », « graphe.png »). Les deux formes fonctionnent ; le nom "
-            "suffit quand le fichier vient d'être créé dans cette conversation.",
+            "description": (
+                "The file to show. Required — a call without it does nothing. Give EITHER the id "
+                "returned by `executer_python` (like `afaaa20c-65a9-…`) OR the file name as it was "
+                "produced (`hello.py`, `chart.png`). Both work; the name is enough for a file just "
+                "created in this conversation."
+            ),
         },
     },
     "required": ["fichier_id"],
@@ -40,11 +44,10 @@ _SCHEMA: dict[str, Any] = {
 DESCRIPTION = DescriptionOutil(
     nom=NOM,
     description=(
-        "Affiche, dans le fil de la conversation, un fichier qui existe déjà (produit par "
-        "`executer_python`, ou joint par l'utilisateur) sous forme de carte cliquable que "
-        "l'utilisateur peut ouvrir pour en voir le code source ou un aperçu. Utiliser cet outil "
-        "après avoir produit ou reçu un fichier qui mérite d'être montré — pas pour un résultat "
-        "purement textuel, qui n'a pas besoin d'être présenté."
+        "Shows an EXISTING file in the conversation as a clickable card the user can open to read "
+        "its source or see a preview. The file must already exist — produced by `executer_python` "
+        "or attached by the user; this tool displays, it never creates. Use it after producing or "
+        "receiving a file worth showing, not for a purely textual result."
     ),
     parametres=_SCHEMA,
 )
