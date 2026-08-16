@@ -149,6 +149,68 @@ def test_un_appel_demande_au_second_tour_est_execute(monkeypatch: Any) -> None:
     )
 
 
+class SuperviseurEspionFactice:
+    """Demande un outil au premier tour, puis retient les messages reçus au tour suivant."""
+
+    def __init__(self) -> None:
+        self.tours = 0
+        self.messages_du_second_tour: list[MessageChat] = []
+
+    def generer(
+        self,
+        messages: Sequence[MessageChat],
+        options: OptionsGeneration,
+        outils: Sequence[dict[str, Any]] | None = None,
+    ) -> AsyncIterator[MorceauGeneration]:
+        self.tours += 1
+        if self.tours == 2:
+            self.messages_du_second_tour = list(messages)
+        return self._flux(demande_outil=self.tours == 1)
+
+    async def _flux(self, *, demande_outil: bool) -> AsyncIterator[MorceauGeneration]:
+        if demande_outil:
+            yield MorceauGeneration(
+                type="token",
+                contenu='<tool_call>{"name": "outil_factice", "arguments": {}}</tool_call>',
+            )
+        else:
+            yield MorceauGeneration(type="token", contenu="Voici le résultat.")
+
+
+def test_le_resultat_repart_avec_le_role_tool_et_sans_prefixe(monkeypatch: Any) -> None:
+    """Régression du 2026-08-16 : le modèle imitait le format d'injection au lieu d'appeler l'outil.
+
+    Les résultats repartaient en rôle `assistant`, préfixés « [outil nom — résultat] ». Le modèle a
+    fini par écrire ce préfixe lui-même, en prose — « [outil presenter_fichier] Affichant le
+    fichier … » — et aucune carte n'apparaissait, puisqu'aucun outil n'avait été appelé. Le rôle
+    `tool` est le canal natif du gabarit, que le modèle ne confond pas avec sa propre écriture.
+    """
+
+    async def executer_outil_factice(arguments: dict[str, Any], contexte: ContexteExecution) -> str:
+        return "SORTIE BRUTE DE L'OUTIL"
+
+    outil_factice = Outil(
+        description=DescriptionOutil(
+            nom="outil_factice",
+            description="Outil de test, sans effet réel.",
+            parametres={"type": "object", "properties": {}},
+        ),
+        executer=executer_outil_factice,
+    )
+    monkeypatch.setitem(registre._OUTILS, outil_factice.nom, outil_factice)
+    espion = SuperviseurEspionFactice()
+    monkeypatch.setattr(domaine_inference, "superviseur", espion)
+
+    _consommer(_requete_test())
+
+    resultats = [m for m in espion.messages_du_second_tour if m.role == "tool"]
+    assert len(resultats) == 1, "le résultat d'outil repart avec le rôle `tool`"
+    assert resultats[0].content == "SORTIE BRUTE DE L'OUTIL", "contenu nu : le gabarit l'enveloppe lui-même"
+    assert all(
+        "[outil" not in str(m.content) for m in espion.messages_du_second_tour
+    ), "aucun préfixe inventé dans l'historique : c'est ce que le modèle imitait"
+
+
 class SuperviseurEntetantFactice:
     """Demande un outil à CHAQUE tour, sans jamais répondre — sauf si on ne lui déclare rien.
 
