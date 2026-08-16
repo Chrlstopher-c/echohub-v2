@@ -73,6 +73,11 @@ services:
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       HF_TOKEN: ${HF_TOKEN:-}
+      # Authentification HTTP de l'interface, posée par docker/entrypoint.sh. Vides = aucune
+      # authentification, comportement d'origine. Générer le couple avec docker/outils-acces.py :
+      # le mot de passe n'existe qu'à l'écran, seul son empreinte crypt salée passe par ici.
+      ECHOHUB_AUTH_USER: ${ECHOHUB_AUTH_USER:-}
+      ECHOHUB_AUTH_HASH: ${ECHOHUB_AUTH_HASH:-}
       # Nom de service Docker, résolu par le DNS interne du réseau de la pile. Le domaine
       # `recherche` lit cette variable via backend/core/config.py — rien n'est codé en dur.
       SEARXNG_URL: ${SEARXNG_URL:-http://searxng:8080}

@@ -57,6 +57,37 @@ tracer_moteur() {
     journal "llama-cpp-python : ${version:-introuvable}"
 }
 
+# Authentification HTTP de l'interface, activée par la seule présence de ECHOHUB_AUTH_USER et
+# ECHOHUB_AUTH_HASH dans l'environnement (donc du `.env`, non suivi par git).
+#
+# Elle existe parce qu'EchoHub n'en a aucune et que son bac exécute du Python réel : sans elle,
+# tout accès distant revient à offrir l'exécution de code sur cette machine. Le mot de passe n'est
+# JAMAIS écrit ici — seul son empreinte crypt SHA-512 transite, générée par `outils-acces.py`.
+#
+# Aucun identifiant configuré = fichier vide = comportement d'avant, strictement inchangé. C'est
+# ce qui permet d'ajouter cette protection sans rien casser pour qui ne s'en sert pas.
+poser_authentification() {
+    local fichier="/etc/nginx/auth.conf"
+    if [ -z "${ECHOHUB_AUTH_USER:-}" ] || [ -z "${ECHOHUB_AUTH_HASH:-}" ]; then
+        : > "$fichier"
+        journal "authentification web : désactivée (aucun ECHOHUB_AUTH_USER/HASH)"
+        return 0
+    fi
+    printf '%s:%s\n' "$ECHOHUB_AUTH_USER" "$ECHOHUB_AUTH_HASH" > /etc/nginx/.htpasswd
+    chmod 640 /etc/nginx/.htpasswd
+    chown root:www-data /etc/nginx/.htpasswd
+    cat > "$fichier" <<'CONF'
+auth_basic "EchoHub";
+auth_basic_user_file /etc/nginx/.htpasswd;
+# `satisfy any` + `allow 127.0.0.1` : seul le healthcheck interne du conteneur passe sans mot de
+# passe. LAN, tunnel et navigateur de l'hôte arrivent par le NAT de Docker sous une autre adresse.
+satisfy any;
+allow 127.0.0.1;
+deny all;
+CONF
+    journal "authentification web : ACTIVE pour l'utilisateur « ${ECHOHUB_AUTH_USER} »"
+}
+
 terminer() {
     journal "signal reçu, arrêt propre"
     kill -TERM "$PID_UVICORN" "$PID_NGINX" 2>/dev/null || true
@@ -65,6 +96,7 @@ terminer() {
 
 mkdir -p "${MODELS_DIR:-/data/models}" "${XDG_DATA_HOME:-/data/user}"
 neutraliser_memoire_unifiee
+poser_authentification
 marquer_assets
 tracer_moteur
 

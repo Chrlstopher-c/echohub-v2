@@ -100,11 +100,17 @@ de déport existe et est couvert par des tests unitaires ; aucune mesure ne l'a 
 - [ ] **Compose par plateforme** : `docker-compose.windows.yml` / `docker-compose.linux.yml` choisis
       par `COMPOSE_FILE` dans le `.env` non suivi. Proposé, non tranché — en attendant, la syntaxe
       GPU fait le va-et-vient sur `main` à chaque pull, et `main` porte la forme Windows.
-- [ ] **Aucune authentification** : le port 37820 est ouvert sur le LAN, et le bac exécute du Python
-      avec le réseau non coupé. L'accès distant passe par Tailscale (`acces-distant.ps1`) — réseau
-      privé, rien d'exposé sur Internet — mais cela ne règle que l'exposition, pas l'absence d'auth :
-      toute machine inscrite sur le compte Tailscale a un accès complet. Une authentification dans
-      l'application reste nécessaire avant tout partage, même restreint.
+- [x] **Authentification HTTP** posée dans nginx (2026-08-16), activée par `ECHOHUB_AUTH_USER` et
+      `ECHOHUB_AUTH_HASH` dans le `.env`. Vérifiée à travers le tunnel : 401 sans identifiants sur
+      la page comme sur l'API, 200 avec. Seul `127.0.0.1` en est exempté — le healthcheck du
+      conteneur, qui échouerait sinon en permanence.
+- [ ] **Authentification APPLICATIVE** : celle de nginx protège l'accès, pas les données. Elle est
+      globale (un seul compte), sans session ni révocation, et le mot de passe voyage à chaque
+      requête. Suffisante pour un accès personnel distant, insuffisante dès qu'il y a plusieurs
+      utilisateurs ou un partage.
+- [ ] **Le tunnel « quick » Cloudflare change d'URL à chaque redémarrage** et meurt avec le
+      processus. Pour une adresse stable : tunnel nommé (compte Cloudflare + domaine), ou Tailscale
+      via `acces-distant.ps1` une fois l'accès physique à la machine retrouvé.
 - [ ] `_boucle_outils` fait 44 lignes au lieu des 35 de la norme. La découper imposerait de faire
       transiter trois valeurs à travers un générateur ; écart assumé, à revoir si la fonction grossit.
 - [ ] Option de désactivation des CUDA graphs : livrée le 2026-08-15, jamais utilisée en pratique.
