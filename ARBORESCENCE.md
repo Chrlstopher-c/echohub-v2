@@ -1,6 +1,6 @@
 # ARBORESCENCE — EchoHub v2
 
-*Dernière mise à jour : 2026-08-16 — 164 fichiers Python, 179 fichiers frontend*
+*Dernière mise à jour : 2026-08-17 — 170 fichiers Python, 179 fichiers frontend*
 
 Organisation **par domaine métier**, jamais par couche technique : la structure dit ce que le
 produit fait, pas avec quoi il est bâti. Un domaine expose son interface publique (`__init__.py`
@@ -115,12 +115,13 @@ aux assets** · `preuves_bac_a_sable.py` preuves d'isolation exécutées en cont
 `outils-acces.py` engendre les identifiants web (mot de passe affiché une fois, seule l'empreinte
 crypt salée est conservée) · `searxng/settings.yml` configuration de la recherche.
 
-## Tests — 396 verts, sans GPU ni réseau
+## Tests — 413 verts, sans GPU ni réseau
 
 `backend/inference/planner/tests/` · `backend/inference/tests/` (contexte d'exécution, pièces
 jointes, réémission d'outils, compaction de l'historique, **boucle d'appels ratés**) ·
 `backend/inference/engines_adapters/tests/` (dont dialectes d'appel d'outil, multimodal) ·
-`backend/models/tests/` · `backend/chat/tests/` · `backend/fichiers/tests/` (dont résolution de
+`backend/models/tests/` · `backend/chat/tests/` (dont **survie de la génération sans client**) ·
+`backend/fichiers/tests/` (dont résolution de
 référence) · `backend/outils/tests/` (bac à sable, balayage, outils de fichier, socle, présentation,
 **alias d'arguments**) · `backend/recherche/tests/` · `frontend/src/chat/markdown/tests/` ·
 `frontend/src/chat/raisonnement/tests/`

@@ -1,6 +1,6 @@
 # STATE — EchoHub v2
 
-*Dernière mise à jour : 2026-08-16*
+*Dernière mise à jour : 2026-08-17*
 
 ## Résumé de l'état actuel
 
@@ -8,14 +8,15 @@ L'application tourne, en Docker, sur RTX 5080 16 Go / WSL2. On charge un modèle
 calculé, on discute avec, il appelle réellement des outils, exécute du Python confiné, écrit et
 édite des fichiers dans son bac, et les présente dans le fil en artefacts cliquables.
 
-**8 domaines backend montés**, **396 tests Python verts**, typage TypeScript strict sans `any`.
-Accès local et LAN sur `http://192.168.1.67:37820`. L'interface est utilisable au téléphone depuis
-le 2026-08-15.
+**8 domaines backend montés**, **413 tests Python verts**, typage TypeScript strict sans `any`.
+Accès local, LAN (`http://192.168.1.67:37820`) et **distant** depuis le 2026-08-16 : authentification
+HTTP dans nginx, tunnel Cloudflare sans droits administrateur. L'interface est utilisable au
+téléphone depuis le 2026-08-15, et une génération y survit désormais à la mise en veille.
 
 Six outils sont déclarés au modèle, dans l'ordre de la boucle de travail : `recherche_web`,
 `ecrire_fichier`, `lire_fichier`, `modifier_fichier`, `executer_python`, `presenter_fichier`.
 
-## Ce qui a été fait — session du 2026-08-16
+## Ce qui a été fait — session des 2026-08-16 et 17
 
 **Le sujet de la journée : le harnais d'outils, corrigé sur transcripts réels.** Chaque correctif
 part d'une conversation relue en base, jamais d'une hypothèse. Deux fois dans la session, une
@@ -44,6 +45,20 @@ d'abord, les outils ensuite.
   argument : le bloc affiché pesait 7 261 caractères. Cinq lignes à l'affichage, huit lignes pour
   les blocs d'outils des tours passés qui repartent au moteur.
 - **Un synonyme d'argument ne fait plus jeter le travail du modèle** (voir « Contexte non-évident »).
+- **Les outils restent déclarés à chaque tour** (L10-b abandonné). Renversement imposé par la mesure :
+  758 → 19 469 caractères, 1 → 3 outils enchaînés sur la même demande.
+- **Une réponse coupée par la fenêtre est reprise** — `finish_reason` remontait jusqu'au contrat et
+  n'était lu par personne. Et un appel JSON incomplet est réparé au lieu d'être perdu.
+- **Le socle interdit d'affirmer sans vérifier**, de revendiquer une action non faite, et de finir
+  sur une promesse. Mesuré ensuite : le modèle cherche sur le web et cite ses sources.
+- **Une réponse close sur une annonce sans suite est relancée**, une fois, et le compteur se remet à
+  zéro dès qu'un outil aboutit — la seconde promesse passait sinon.
+- **Accès distant sans droits administrateur** : authentification HTTP dans nginx (activée par le
+  `.env`, absente = comportement d'origine), plus un tunnel Cloudflare en binaire portable. Vérifié
+  depuis Internet : 401 sans identifiants sur la page comme sur l'API, 200 avec.
+- **La génération survit au départ du client.** Elle vivait dans le générateur du flux SSE : une mise
+  en veille du téléphone la tuait et l'utilisateur retrouvait une réponse vide. Elle vit désormais
+  dans une tâche que la déconnexion ne touche pas, et c'est elle qui persiste.
 
 ## Décisions prises — 2026-08-16
 
@@ -60,6 +75,20 @@ d'abord, les outils ensuite.
 | `.gitattributes` avec `* text=auto eol=lf` | Sans lui, chaque checkout Windows recasse l'entrypoint du conteneur. `git add --renormalize` ne corrige que l'index | 2026-08-16 |
 
 ## Contexte non-évident
+
+**Quatre hypothèses réfutées le même jour, toutes par la même erreur de raisonnement.** J'ai
+supposé que `q2_0` libérerait la VRAM (il tue le processus), que les couches sur CPU coûtaient la
+vitesse (+1 % entre 26 et 29 couches), que le modèle tournait à 10–20 tok/s (28–35 mesurés), et que
+l'imatrix serait un gain quasi gratuit (−25 % de vitesse, gain non démontré). Cause commune : je
+raisonnais sur une architecture DENSE alors que ce modèle est un MoE **A3B**, 3 milliards de
+paramètres actifs par token. Une couche restée sur CPU n'y active presque aucun expert, donc elle ne
+coûte presque rien — et c'est aussi ce qui rendrait coûteux le passage à un 27B dense.
+
+**Un type ggml qui existe n'est pas pour autant servable comme cache KV.** `q2_0` et `q1_0` sont
+exposés par le binaire, mais CUDA n'implémente pas `SET_ROWS` pour eux : le chargement meurt en
+`ggml_abort()`, SIGABRT non rattrapable. La table de quatre types n'était pas un oubli, c'était une
+liste de types VALIDÉS — élargie parce qu'ils « existaient », elle a tué le backend. Un type ne s'y
+ajoute qu'après un chargement ET une génération réels.
 
 **Le harnais peut coûter plus cher que le modèle.** Mesure du 2026-08-16 : le modèle émet
 `ecrire_fichier` avec le contenu entier du fichier — 12 173 caractères de HTML valide — et un
@@ -137,8 +166,8 @@ pas celle de Chris. `gh auth logout` avant de la rendre.
 
 ## Prochaines étapes
 
-Ordonnées dans TODO.md. En tête : **valider le harnais corrigé sur une vraie conversation**, puis
-les deux défauts moteur mesurés (verrou retenu, plantage au déchargement).
+Ordonnées dans TODO.md. En tête : **la reconnexion côté interface** — au retour de veille, le fil ne
+se rafraîchit pas seul, alors que la réponse est complète en base.
 
 ## Points en suspens
 

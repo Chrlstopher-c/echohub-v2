@@ -1,24 +1,38 @@
 # TODO — EchoHub v2
 
-*Dernière mise à jour : 2026-08-16*
+*Dernière mise à jour : 2026-08-17*
 
 ## En cours
 
-Rien. Session close sur un état stable, arbre git propre, application en ligne, 396 tests verts.
+Rien. Arbre git propre, application en ligne, accès distant opérationnel, 413 tests verts.
+
+**Services vivants à connaître en reprenant** : conteneurs `echohub-v2` et `echohub-searxng`, plus un
+processus `cloudflared` détaché qui porte le tunnel. Ce dernier meurt au redémarrage de la machine
+et son URL change à chaque relance — la retrouver dans `%LOCALAPPDATA%\cloudflared\tunnel.log`.
 
 ## À faire (priorité)
 
-### 1. Deux habitudes du modèle à corriger dans le socle
+### 1. Reconnexion de l'interface après une veille
 
-Validé le 2026-08-16 sur le MoE 35B, conversation réelle, contexte servi 262 144 : trois outils
-enchaînés, deux fichiers produits, 19 469 caractères de réponse. Deux écarts subsistent, visibles
-dans les appels enregistrés :
+La génération survit désormais au départ du client et se persiste seule (2026-08-16). Il reste la
+moitié visible, et c'est ce que l'utilisateur constate en premier :
 
-- [ ] Le modèle écrit ses fichiers via `executer_python(code=...)` avec un `open().write()` — donc
-      avec le double échappement que `ecrire_fichier` existe précisément pour supprimer. Le socle le
-      lui dit déjà ; il faut soit le dire plus fort, soit comprendre pourquoi il préfère l'autre.
-- [ ] `presenter_fichier` n'est pas appelé même quand la demande dit « présente-le moi » : les
-      fichiers sont déposés dans la conversation mais aucune carte n'apparaît.
+- [ ] **Au retour de veille, le fil ne se rafraîchit pas** : la réponse est complète en base, mais il
+      faut recharger la page pour la voir. C'est le point le plus visible à l'usage mobile.
+- [ ] Aucune indication qu'une génération tourne encore quand on revient. `annulation.est_active()`
+      le sait déjà côté serveur ; il manque la route et l'affichage.
+- [ ] Se rebrancher sur le FLUX d'une génération en cours — et non attendre sa fin — demanderait de
+      diffuser vers plusieurs abonnés : la file actuelle n'en sert qu'un.
+
+### 2. Deux habitudes du modèle, à traiter dans le socle
+
+Mesurées sur des appels enregistrés, pas supposées :
+
+- [ ] Le modèle écrit parfois ses fichiers via `executer_python(code=...)` avec un `open().write()` —
+      donc avec le double échappement que `ecrire_fichier` existe pour supprimer.
+- [ ] Il cite des sources HORS SUJET sans le voir : sur une question de prix, la recherche a ramené
+      des articles sur le café, et il les a cités tels quels. La règle d'honnêteté est respectée à la
+      lettre — il cite ce que l'outil a rendu — mais rien ne lui fait vérifier la pertinence.
 
 - [ ] Reprendre le scénario exact qui a échoué : « écris-moi une page HTML avec un simulateur »,
       puis « ça ne rend pas bien, corrige ». Ce que la correction doit produire :
@@ -30,7 +44,7 @@ dans les appels enregistrés :
       ce qui a été refusé comme redite (`logger.info` dans `registre.executer`, `logger.warning` dans
       `_executer_appels`). Lire le journal AVANT de toucher au code.
 
-### 2. Très long contexte — ce que la carte permet vraiment
+### 3. Très long contexte — ce que la carte permet vraiment
 
 Le facteur limitant n'est pas le modèle mais le cache KV, et il se calcule à partir du nombre de
 couches à **attention pleine** : les architectures hybrides (Qwen3.5/3.8, `linear_attention`) n'en
@@ -50,23 +64,11 @@ le binaire chargé sait servir (`q2_0` débloqué le 2026-08-16) :
 - [ ] Exposer le choix du type de cache KV dans les réglages de chargement : `q2_0` divise le cache
       par six par rapport à `f16` et c'est lui qui rend ces fenêtres tenables.
 
-### 3. Reconnexion à une génération en cours
+### 4. Défauts moteur mesurés le 2026-08-16
 
-La génération survit désormais au départ du client (2026-08-16) et se persiste seule. Ce qui manque
-encore, côté interface :
-
-- [ ] Au retour de veille, le fil ne se rafraîchit pas tout seul : la réponse est bien en base, mais
-      il faut recharger la page pour la voir apparaître.
-- [ ] Aucune indication qu'une génération tourne encore quand on revient. `annulation.est_active()`
-      le sait déjà côté serveur ; il manque la route et l'affichage.
-- [ ] Se rebrancher sur le FLUX d'une génération en cours (et non attendre la fin) demanderait de
-      diffuser vers plusieurs abonnés — la file actuelle n'en sert qu'un.
-
-### 4. Deux défauts moteur mesurés le 2026-08-16
-
-- [ ] **Le verrou du moteur reste tenu après déconnexion du client** — mesuré à plus de 12 minutes.
-      Une génération abandonnée côté navigateur continue d'occuper l'instance `Llama`, et tout
-      comptage de contexte ou toute nouvelle génération attend derrière.
+- [x] **Le verrou du moteur restait tenu après déconnexion** (12+ min). Réglé indirectement le
+      2026-08-16 : la génération n'étant plus interrompue par le départ du client, elle s'achève
+      normalement et libère le verrou.
 - [ ] **`/inference/decharger` pendant une génération active fait tomber le backend**, et 15,4 Go de
       VRAM ne sont pas rendus. Récupéré par `wsl --shutdown`. Le déchargement doit refuser tant
       qu'une génération tient le verrou, ou l'interrompre proprement — jamais planter.
