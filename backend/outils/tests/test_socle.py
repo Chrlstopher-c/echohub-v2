@@ -50,3 +50,32 @@ def test_le_socle_exige_des_appels_complets() -> None:
     texte = construire(_OUTIL_FACTICE)
     assert "COMPLETE" in texte
     assert "empty call" in texte
+
+
+def test_l_honnetete_est_posee_avec_et_sans_outil() -> None:
+    """Demande explicite de l'utilisateur le 2026-08-16 : ne jamais mentir, ne jamais affirmer sans
+    vérifier, ne jamais prétendre avoir fait ce qui n'a pas eu lieu.
+
+    Vérifiée dans les DEUX cas : un modèle sans outil est justement celui qui ne peut rien vérifier,
+    donc celui pour qui la règle compte le plus.
+    """
+    for socle in (construire(()), construire(_OUTIL_FACTICE)):
+        assert "Never state as certain what you have not verified" in socle
+        assert "Never claim an action you did not perform" in socle
+
+
+def test_l_honnetete_precede_les_capacites() -> None:
+    """Décrire ce qu'on sait faire avant ce qu'on a le droit d'affirmer, c'est déjà promettre."""
+    socle = construire(_OUTIL_FACTICE)
+    assert socle.index("Never claim an action") < socle.index("Available tools:")
+
+
+def test_la_recherche_web_est_presentee_comme_le_moyen_de_verifier() -> None:
+    assert "recherche_web" in construire(_OUTIL_FACTICE)
+
+
+def test_le_socle_interdit_de_finir_sur_une_promesse() -> None:
+    """Le symptôme mesuré : « voici la nouvelle version : » suivi de rien."""
+    socle = construire(_OUTIL_FACTICE)
+    assert "Do not end on a promise" in socle
+    assert "announcing and doing" in socle

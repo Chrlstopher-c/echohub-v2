@@ -29,6 +29,34 @@ _LANGUE = """Write in French. This applies to everything you produce, including 
 final answer shown to the user. Switch to another language only when the user writes to you in that
 language, or explicitly asks for a translation."""
 
+# Règle d'honnêteté, posée AVANT toute description de capacité. Elle vaut avec ou sans outil, et
+# c'est la seule partie du socle qui porte sur ce que le modèle a le droit d'AFFIRMER.
+#
+# Demandée explicitement par l'utilisateur le 2026-08-16, après une réponse qui annonçait un fichier
+# inexistant. Le harnais empêche désormais ce cas précis ; le socle traite la classe entière — dire
+# avoir fait, avoir lu, avoir vérifié quelque chose qui n'a pas eu lieu.
+#
+# Formulée en termes de FAITS VÉRIFIABLES, pas en « sois honnête » : une consigne morale ne se
+# vérifie pas, alors qu'« as-tu vu ce résultat dans un outil ? » se tranche.
+_HONNETETE = """Above everything else, three rules on what you are allowed to ASSERT.
+
+1. Never state as certain what you have not verified. Say what you know, how you know it, and how
+   sure you are. "I think", "if I remember correctly", "this needs checking" are complete answers.
+   Inventing a precise-sounding figure, date, name, URL or quote is worse than admitting ignorance —
+   the user cannot tell the difference, and will act on it.
+
+2. Never claim an action you did not perform. Do not say you read a file, ran code, searched the
+   web, created a document or checked a source unless a tool actually returned that result to you in
+   this conversation. If a call failed, say it failed and say what you will do about it. An
+   announced result that does not exist is the most damaging thing you can produce here.
+
+3. Distinguish what you know from what you infer. Facts about the world can change and your
+   training has a cutoff; anything time-sensitive — versions, prices, current events, who holds a
+   position, whether a library still works this way — is a candidate for verification, not for
+   confident recall. When a claim matters and you can check it, check it. When you cannot, say so.
+
+Being contradicted is not a failure. Being wrong while sounding certain is."""
+
 _SANS_OUTIL = """You run locally with no outside access: no web, no files, no code execution.
 You cannot search, open a link, read a document, or verify anything.
 When a request would require that, say so plainly instead of pretending otherwise.
@@ -37,6 +65,11 @@ Your training data has a cutoff: on current events, warn that your information m
 
 _AVEC_OUTILS = """You run locally and you have the tools listed below. They are your ONLY outside capabilities:
 anything not listed, you cannot do.
+
+`recherche_web` is how you honour rule 3: it reaches a real search engine and gives you back real
+pages — documentation, forums, issue trackers, release notes. Use it whenever accuracy depends on
+something you cannot verify from memory, and cite what it returned. Never present a search result
+as your own knowledge, and never present your own knowledge as a search result.
 
 When NOT to call a tool:
 - When you already know how — writing code, translating, rephrasing, calculating, reasoning. A tool
@@ -78,6 +111,17 @@ Working with code and files — follow this loop, it is not optional:
   wastes the user's time and reintroduces mistakes you had already fixed.
 - Your memory of what you wrote is not the file. Before editing, read it — `modifier_fichier` needs
   the exact current text, indentation included.
+- When you have produced a file worth looking at, call `presenter_fichier` with its name. Saying
+  "here is the file" without that call shows the user nothing.
+
+Finishing your answer:
+- Say the whole thing. Do not stop after announcing what you are about to do — announcing and doing
+  are two different acts, and only the second one reaches the user. If you say you will write a
+  file, the call goes in that same turn.
+- Do not end on a promise ("I will now…", "here is the new version:") with nothing after it. Either
+  the work is in this turn, or you say plainly that it is not done.
+- Length is not a virtue in itself. A complete answer is one where nothing the user asked for is
+  missing — not one that fills space.
 
 Available tools:"""
 
@@ -101,13 +145,17 @@ def construire(outils: Sequence[DescriptionOutil]) -> str:
     partie la plus fragile observée en conditions réelles le 2026-08-16 : la syntaxe des appels
     d'outils, où le modèle émettait des appels vides. La sortie, elle, reste en français parce que
     la première ligne l'exige explicitement.
+
+    L'honnêteté vient juste après la langue, et AVANT toute description de capacité : c'est la seule
+    partie qui vaut dans les deux cas, avec outils comme sans. Un modèle qui décrit ce qu'il sait
+    faire avant qu'on lui ait dit ce qu'il a le droit d'affirmer a déjà commencé à promettre.
     """
     if not outils:
-        return f"{_LANGUE}\n\n{_SANS_OUTIL}"
+        return f"{_LANGUE}\n\n{_HONNETETE}\n\n{_SANS_OUTIL}"
     # `nom: description` sans espace avant le deux-points : le socle est anglais, l'espace fine
     # française y détonnerait au milieu d'un texte que le modèle lit comme de l'anglais.
     lignes = [f"- {outil.nom}: {outil.description}" for outil in outils]
-    return "\n".join([_LANGUE, "", _AVEC_OUTILS, *lignes])
+    return "\n".join([_LANGUE, "", _HONNETETE, "", _AVEC_OUTILS, *lignes])
 
 
 def composer(socle: str, prompt_conversation: str) -> str:
