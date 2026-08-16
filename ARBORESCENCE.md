@@ -1,6 +1,6 @@
 # ARBORESCENCE — EchoHub v2
 
-*Dernière mise à jour : 2026-08-15 — 321 fichiers suivis*
+*Dernière mise à jour : 2026-08-16 — 164 fichiers Python, 179 fichiers frontend*
 
 Organisation **par domaine métier**, jamais par couche technique : la structure dit ce que le
 produit fait, pas avec quoi il est bâti. Un domaine expose son interface publique (`__init__.py`
@@ -13,15 +13,19 @@ côté Python, `index.ts` côté TypeScript) et n'est jamais atteint par ses int
 | `ARCHITECTURE.md` | Carte des domaines et définition non ambiguë de chaque dossier |
 | `COMPATIBILITE-GPU.md` | Contraintes GPU payées en pannes réelles — CUDA, WSL2, débits mesurés |
 | `DESIGN.md` | Langage visuel : palette sémantique, typographie, mouvement |
+| `MESURES-MOE.md` | Relevés sur les modèles à experts |
+| `PREUVES-MULTIMODAL.md` | Preuves du coût en tokens d'une image et du repli sans vision |
+| `PLAN-EXECUTION.md` | Plan des lots, avec les sections référencées depuis le code |
 | `STATE.md` | État courant, décisions et leurs raisons |
 | `TODO.md` | Ce qui reste, par priorité |
 | `README.md` | Lancement manuel, stack, ports |
 | `Dockerfile` | Image GPU — CUDA 12.8 devel, recompilation de llama-cpp-python |
 | `docker-compose.yml` | Orchestration ; syntaxe GPU **inversée** entre WSL2 et Linux natif |
+| `.gitattributes` | `* text=auto eol=lf` — sans lui, un checkout Windows casse l'entrypoint |
 | `start.sh` `stop.sh` `restart.sh` | Cycle de vie, PID et journaux |
-| `.env.example` | Variables attendues, sans valeurs sensibles |
+| `.env.example` | Variables attendues, sans valeurs sensibles. **Le port réel vient du `.env`** |
 
-## backend/ — 118 fichiers
+## backend/ — 164 fichiers
 
 ### `core/` (5) — socle partagé, aucun métier
 
@@ -30,24 +34,27 @@ côté Python, `index.ts` côté TypeScript) et n'est jamais atteint par ses int
 
 ### `system/` (9) — ce que la machine offre
 
-Mesure réelle : GPU par NVML avec repli `nvidia-smi`, mémoire, contraintes de plateforme. Une
-valeur non mesurable vaut `null`, jamais une estimation.
+Mesure réelle : GPU par NVML avec repli `nvidia-smi`, mémoire, contraintes de plateforme. Une valeur
+non mesurable vaut `null`, jamais une estimation.
 
-### `models/` (22) — trouver, télécharger, **connaître** les modèles
+### `models/` (23) — trouver, télécharger, **connaître** les modèles
 
-`gguf_reader.py` analyse binaire de l'en-tête · `gguf_metadata.py` interprétation et mesure du
-poids réel des tenseurs · `safetensors_reader.py` index des poids · `coherence.py` confronte le
-déclaré au présent · `discovery.py` recherche Hub · `capacites.py` capacités **déduites** des
-annonces, tracées · `registry.py` index local · `disque.py` inventaire de ce qui occupe, y compris
-le non chargeable · `download*.py` transferts, reprise, parts multiples · `api.py` routes.
+`gguf_reader.py` analyse binaire de l'en-tête · `gguf_metadata.py` interprétation et poids réel des
+tenseurs · `safetensors_reader.py` index des poids · `coherence.py` confronte le déclaré au présent ·
+`discovery.py` recherche Hub · `capacites.py` capacités **déduites** des annonces, tracées ·
+`registry.py` index local · `disque.py` inventaire de ce qui occupe, y compris le non chargeable ·
+`storage.py` dont `fichiers_projecteurs()` (détection `mmproj*.gguf`) · `download*.py` transferts,
+reprise, parts multiples · `api.py` routes.
 
-### `inference/` (34) — décider, appliquer, générer
+### `inference/` (44) — décider, appliquer, générer
 
-`planner/` **pur et testable sans GPU** : budget mémoire, paliers, plan justifié, dégradation
-strictement conservatrice, gestion des experts MoE · `engines_adapters/` application réelle :
-adaptateurs llama.cpp et vLLM, superviseur (un modèle à la fois), diagnostic qualifié, journal,
-mesure VRAM, pont flux bloquant → asynchrone · `__init__.py` interface publique **et boucle
-d'outils** · `api.py` routes.
+| Fichier | Rôle |
+|---|---|
+| `planner/` | **Pur et testable sans GPU** : budget mémoire, paliers, plan justifié, dégradation strictement conservatrice, experts MoE |
+| `engines_adapters/` | Application réelle : adaptateurs llama.cpp et vLLM, superviseur (un modèle à la fois), diagnostic qualifié, journal, mesure VRAM, pont flux bloquant → asynchrone |
+| `__init__.py` | Interface publique **et boucle d'outils** — tours, redites bornées, clôture honnête |
+| `harnais_outils.py` | Mise en forme du flux d'outils : balises affichées, aperçus d'arguments, compaction de l'historique, retrait du balisage d'appel avant renvoi au moteur |
+| `api.py` | Routes — dont `/contexte`, qui compacte avant de compter |
 
 ### `chat/` (19) — conversations, branches, génération
 
@@ -56,42 +63,71 @@ assemblage du contexte et du prompt système · `port_inference.py` contrat atte
 côté consommateur · `adaptation_inference.py` branchement du domaine voisin · `flux_sse.py` ·
 `routes.py`.
 
-### `outils/` (5) — le harnais
+### `outils/` (22) — le harnais
 
-`contrat.py` forme d'un outil et de son résultat · `registre.py` outils disponibles et exécution ·
-`socle.py` prompt système posé **avant** celui de la conversation · `recherche_web.py` premier
-outil, adossé au domaine `recherche`.
+| Fichier | Rôle |
+|---|---|
+| `contrat.py` | Forme d'un outil, de son résultat, `EchecOutil`, et **normalisation des alias d'arguments** |
+| `registre.py` | Outils disponibles, ordre de présentation, exécution d'un appel |
+| `socle.py` | Prompt système posé **avant** celui de la conversation — en anglais |
+| `recherche_web.py` | Recherche, adossée au domaine `recherche` |
+| `fichiers_bac.py` | `ecrire_fichier`, `lire_fichier`, `modifier_fichier` — la boucle de travail |
+| `executer_python.py` | Exécution réelle, par `fichier` de préférence, par `code` pour un jetable |
+| `bac_a_sable.py` | Lanceur confiné : rlimits → setgid → setuid, résolution de chemin bornée au bac |
+| `balayage_bac.py` | Enregistre dans le magasin `fichiers` ce que le bac contient de nouveau |
+| `presenter_fichier.py` | Le modèle désigne un fichier, l'utilisateur le voit en carte cliquable |
+| `api.py` | Routes du harnais |
+
+### `fichiers/` (17) — magasin des pièces jointes et des productions
+
+`politique.py` quotas et types acceptés · `stockage.py` racines par conversation · `depot.py`
+persistance · `service.py` dépôt, liaison au message, et `resoudre_reference()` qui accepte un
+identifiant **ou** un nom affiché, borné à la conversation · `routes.py`.
 
 ### `engines/` (14) — installation et santé des moteurs
 
-Sondes réelles (importable ET capable de toucher le GPU), venvs vLLM versionnés, flux
-d'installation en SSE.
+Sondes réelles (importable ET capable de toucher le GPU), venvs vLLM versionnés, flux d'installation
+en SSE.
 
 ### `recherche/` (10) — recherche web locale
 
 Client SearXNG, analyse, service, sonde de disponibilité.
 
-## frontend/src/ — 168 fichiers
+## frontend/src/ — 179 fichiers
 
 | Dossier | Rôle |
 |---|---|
 | `App.tsx` | Navigation, bandeau d'état, éjection — seul point de rencontre des domaines |
-| `cible/` (3) | Croise métadonnées lues, profil machine et moteurs pour bâtir une cible de chargement |
-| `chat/` (79) | `conversation/` fil et composeur · `markdown/` analyseur maison, aucun HTML injecté · `raisonnement/` extraction et repli des blocs · `actions/` survol, branches, édition · `reglages/` · `plan/` · `contexte/` occupation de la fenêtre · `api/` |
-| `models/` (27) | `recherche/` Hub et filtres de capacités · `locaux/` registre, favoris, inventaire disque · `telechargements/` · `faisabilite/` verdict VRAM |
-| `system/` (19) | Matériel, contraintes, moteurs, installation vLLM |
-| `shared/` (38) | `design/` primitives, tokens, menu contextuel, polices IBM Plex versionnées · `api/` client unique, SSE, types miroirs du backend |
+| `cible/` | Croise métadonnées lues, profil machine et moteurs pour bâtir une cible de chargement |
+| `chat/` | `ChatEcran.tsx` · `EnTeteChat.tsx` et `useTiroirsChat.ts` (tiroirs mobiles) · `conversation/` fil et composeur · `markdown/` analyseur maison, aucun HTML injecté · `raisonnement/` extraction et repli · `artefacts/` détection et cartes cliquables · `actions/` survol, branches, édition · `reglages/` · `plan/` · `contexte/` occupation de la fenêtre · `api/` |
+| `models/` | `recherche/` Hub et filtres de capacités · `locaux/` registre, favoris, inventaire disque · `telechargements/` · `faisabilite/` verdict VRAM |
+| `system/` | Matériel, contraintes, moteurs, installation vLLM |
+| `shared/design/` | Primitives et tokens · `Modal.tsx` et `Feuille.tsx` (modale et tiroir, sans débordement) · `BoutonActions.tsx` · `MenuContextuel.tsx` · `useEstGrandEcran.ts` et `useHauteurVisuelle.ts` (points de rupture et clavier mobile) · polices IBM Plex versionnées |
+| `shared/api/` | Client unique, SSE, types miroirs du backend |
 
 ## docker/
 
 `nginx.conf` sert le build statique et proxifie `/api` en retirant le préfixe · `entrypoint.sh`
 lance uvicorn et nginx, neutralise la mémoire unifiée sous WSL2, **appose une empreinte de version
-aux assets** · `searxng/settings.yml` configuration JSON de la recherche.
+aux assets** · `preuves_bac_a_sable.py` preuves d'isolation exécutées en conteneur ·
+`searxng/settings.yml` configuration de la recherche.
 
-## Tests
+## Tests — 382 verts, sans GPU ni réseau
 
-`backend/inference/planner/tests/` · `backend/models/tests/` · `backend/chat/tests/` ·
-`backend/recherche/tests/` · `backend/inference/engines_adapters/tests/` ·
-`frontend/src/chat/markdown/tests/` · `frontend/src/chat/raisonnement/tests/`
+`backend/inference/planner/tests/` · `backend/inference/tests/` (contexte d'exécution, pièces
+jointes, réémission d'outils, compaction de l'historique, **boucle d'appels ratés**) ·
+`backend/inference/engines_adapters/tests/` (dont dialectes d'appel d'outil, multimodal) ·
+`backend/models/tests/` · `backend/chat/tests/` · `backend/fichiers/tests/` (dont résolution de
+référence) · `backend/outils/tests/` (bac à sable, balayage, outils de fichier, socle, présentation,
+**alias d'arguments**) · `backend/recherche/tests/` · `frontend/src/chat/markdown/tests/` ·
+`frontend/src/chat/raisonnement/tests/`
 
-**196 tests Python verts**, sans GPU ni réseau.
+**Lancer la suite sans toucher au conteneur en service** — le venv vit dans `backend/.venv`, monter
+tout `backend` l'écraserait :
+
+```bash
+docker run --rm --gpus all --entrypoint /app/backend/.venv/bin/python \
+  -v "$PWD/backend/inference:/app/backend/inference" \
+  -v "$PWD/backend/outils:/app/backend/outils" \
+  echohub:v2 -m pytest backend -q
+```
