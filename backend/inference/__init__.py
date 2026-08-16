@@ -141,24 +141,28 @@ def _contenu_moteur(contenu: str, pieces: object) -> str | list[PartieContenu]:
     return parties if parties else contenu
 
 
-# Tours d'outils avant de rendre la main au modèle pour de bon. Un modèle peut légitimement
-# enchaîner deux recherches ; au-delà, il boucle. La borne est là pour ça, et l'atteindre est
-# journalisé — un plafond silencieux ressemblerait à une réponse normale.
+# Tours d'outils avant de rendre la main au modèle pour de bon.
 #
-# DEUX notions gouvernent la boucle, et les confondre a produit deux régressions distinctes :
+# La boucle de travail que le socle DEMANDE au modèle compte plusieurs appels enchaînés : écrire un
+# fichier, l'exécuter, le relire après une erreur, le corriger, le présenter. Cinq appels, donc cinq
+# tours. Une borne à trois coupait cette boucle en son milieu.
 #
-# - les outils DÉCLARÉS, c'est-à-dire ce qu'on montre au moteur. Transmis au premier tour
-#   seulement : dès qu'un tour a produit des résultats, on cesse de les montrer, sinon le modèle
-#   voit encore les mêmes outils après les avoir déjà reçus et n'a aucune raison d'arrêter d'en
-#   redemander (plan d'exécution, L10-b) ;
-# - l'EXISTENCE du registre, qui ne bouge pas et qui seule autorise l'exécution.
+# Les outils restent DÉCLARÉS à chaque tour. Ils ne l'étaient qu'au premier (plan d'exécution,
+# L10-b), pour empêcher un modèle de redemander sans fin un outil dont il avait déjà le résultat.
+# MESURÉ le 2026-08-16 sur la conversation réelle, contexte servi de 131 072 tokens et seulement
+# 18 835 occupés — donc sans la moindre contrainte de fenêtre : le modèle appelle `lire_fichier`,
+# apprend que le fichier n'existe pas, annonce « je repars de zéro, voici la nouvelle version »…
+# et s'arrête là. Il n'a pas renoncé : au tour suivant, `ecrire_fichier` ne lui était plus déclaré.
+# C'est exactement le symptôme rapporté — « ça coupe alors que le contexte est large ».
 #
-# La sortie de boucle ne dépend que des appels réellement demandés. Mesuré le 2026-08-16 : le
-# modèle demandait `presenter_fichier` au second tour, l'appel était bien détecté, mais la
-# condition portait aussi sur les outils déclarés — devenus nuls — donc la boucle sortait SANS
-# exécuter, et le `<tool_call>` restait affiché en XML brut. Ne plus déclarer un outil n'est pas
-# refuser de faire ce que le modèle demande ; c'est cette borne-ci qui borne, pas cette condition.
-TOURS_OUTILS_MAX = 3
+# Ce que L10-b protégeait est désormais couvert, et mieux ciblé : cette borne-ci, l'anti-redite sur
+# les appels échoués (`_REDITE`), et le retrait du balisage d'appel de l'historique renvoyé. Retirer
+# ses outils au modèle au moment précis où la tâche en réclame un second n'était pas une protection,
+# c'était une amputation.
+#
+# Reste vrai, et c'est la distinction à ne pas perdre : ne plus déclarer un outil n'a jamais voulu
+# dire refuser de l'exécuter. La sortie de boucle ne dépend que des appels réellement demandés.
+TOURS_OUTILS_MAX = 6
 
 
 def _prompt_de_reprise(messages: list[MessageChat], recu: list[str]) -> list[MessageChat]:
@@ -396,9 +400,8 @@ class MoteurChat:
         """Les tours d'outils, puis la clôture si la borne est atteinte. Rend aussi `tokens` par tour.
 
         Un seul appel au moteur par tour, outils déclarés dedans ; le tour suivant n'a lieu que si
-        le modèle a réellement demandé un outil. La distinction entre les outils DÉCLARÉS et
-        l'existence du registre est expliquée sur `TOURS_OUTILS_MAX` : les confondre a produit deux
-        régressions distinctes, l'une bavarde, l'autre muette.
+        le modèle a réellement demandé un outil. Les outils restent déclarés à CHAQUE tour — voir
+        `TOURS_OUTILS_MAX` pour la mesure qui a fait abandonner l'inverse.
         """
         outils_declares = outils or None
         # Appels échoués sans succès depuis, et compte de ce qui a abouti. Portés par la boucle et
@@ -427,7 +430,6 @@ class MoteurChat:
                 if isinstance(etape.get("texte"), str):
                     yield {"texte": etape["texte"]}
                 aboutis += 1 if etape.get("succes") else 0
-            outils_declares = None  # le tour suivant ne reverra plus les outils déclarés
         async for morceau in self._cloturer(messages, options, aboutis):
             yield morceau
 

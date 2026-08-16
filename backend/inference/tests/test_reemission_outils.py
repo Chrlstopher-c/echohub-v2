@@ -144,8 +144,9 @@ def test_un_appel_demande_au_second_tour_est_execute(monkeypatch: Any) -> None:
     _consommer(_requete_test())
 
     assert len(executions) == 2, "les DEUX appels demandés sont exécutés, y compris celui du second tour"
-    assert superviseur_factice.outils_recus == [True, False, False], (
-        "les outils restent déclarés au seul premier tour : l'intention de L10-b est préservée"
+    assert superviseur_factice.outils_recus[:2] == [True, True], (
+        "le modèle voit ses outils aux deux tours : c'est ce qui lui permet d'enchaîner "
+        "`executer_python` puis `presenter_fichier` (L10-b abandonné le 2026-08-16, sur mesure)"
     )
 
 
@@ -276,7 +277,23 @@ def test_la_borne_atteinte_produit_quand_meme_une_reponse(monkeypatch: Any) -> N
     )
 
 
-def test_les_outils_ne_sont_plus_repasses_apres_un_tour_avec_resultats(monkeypatch: Any) -> None:
+def test_les_outils_restent_declares_a_chaque_tour(monkeypatch: Any) -> None:
+    """Renversement du 2026-08-16, imposé par la mesure — L10-b est abandonné.
+
+    Les outils n'étaient déclarés qu'au PREMIER tour, pour empêcher un modèle de redemander sans
+    fin un outil dont il avait déjà le résultat. Mesuré en conditions réelles sur le MoE 35B,
+    contexte servi de 131 072 tokens dont 18 835 occupés — donc sans la moindre contrainte de
+    fenêtre : le modèle appelle `lire_fichier`, apprend que le fichier n'existe pas, annonce « je
+    repars de zéro, voici la nouvelle version »… et s'arrête. Il n'avait pas renoncé :
+    `ecrire_fichier` ne lui était simplement plus déclaré. C'est le symptôme rapporté par
+    l'utilisateur — « ça coupe alors que le contexte est large ».
+
+    La boucle de travail que le socle DEMANDE compte plusieurs appels enchaînés (écrire, exécuter,
+    relire, corriger, présenter). Lui retirer ses outils au deuxième tour n'était pas une
+    protection, c'était une amputation. Ce que L10-b protégeait est désormais couvert et mieux
+    ciblé : `TOURS_OUTILS_MAX`, l'anti-redite sur les appels échoués, et le retrait du balisage
+    d'appel de l'historique renvoyé. Le test suivant prouve que la borne tient toujours.
+    """
     executions: list[int] = []
 
     async def executer_outil_factice(arguments: dict[str, Any], contexte: ContexteExecution) -> str:
@@ -297,10 +314,11 @@ def test_les_outils_ne_sont_plus_repasses_apres_un_tour_avec_resultats(monkeypat
 
     _consommer(_requete_test())
 
-    # Le cœur de la preuve : un modèle qui redemanderait l'outil à chaque fois qu'on le lui montre
-    # ne l'exécute qu'UNE fois si le harnais cesse de le lui montrer après le premier résultat.
-    assert len(executions) == 1, "un seul appel d'outil exécuté : pas de boucle"
-    assert superviseur_factice.tours == 2, "un tour avec l'outil visible, un tour de réponse sans"
-    assert superviseur_factice.outils_recus == [True, False], (
-        "les outils doivent être présents au premier tour et absents au second"
+    tours_avec_outils = superviseur_factice.outils_recus[: domaine_inference.TOURS_OUTILS_MAX]
+    assert all(tours_avec_outils), "un modèle qui enchaîne deux outils doit les voir aux deux tours"
+    assert superviseur_factice.outils_recus[-1] is False, (
+        "seul le tour de CLÔTURE se fait sans outil : c'est ce qui garantit une réponse"
     )
+    # La borne remplace L10-b : un modèle qui redemande l'outil dès qu'on le lui montre boucle
+    # jusqu'à `TOURS_OUTILS_MAX`, puis la clôture rend la main. Il ne boucle pas indéfiniment.
+    assert len(executions) == domaine_inference.TOURS_OUTILS_MAX
