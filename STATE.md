@@ -180,4 +180,24 @@ tester un modèle connu-bon de 490 Mo, qui a généré immédiatement et disculp
 | Qwen3.6-27B PHILADELPHIA Q3_K_M | 32 768 | ~72 tok/s |
 | Qwen3.6-35B-A3B IQ4_XS (29/41 couches GPU) | 32 768 | 41 tok/s |
 | idem | 57 344 | 19,6 tok/s |
-| Huihui-Qwen3.6-35B-A3B-Claude-4.7-Opus-abliterated Q3_K_S | — | 10–20 tok/s |
+| Huihui-Qwen3.6-35B-A3B-Claude-4.7-Opus-abliterated Q3_K_S | 262 144 | 28–35 tok/s |
+| idem, i1-IQ3_M (imatrix, 15,4 Go) | 262 144 | 21 tok/s |
+
+Les 10–20 tok/s relevés le 2026-08-16 sur capture d'écran étaient une mesure de conversation chargée,
+pas du modèle : mesuré en conditions contrôlées, il rend 28 à 35 tok/s selon le cache KV.
+
+**Le cache KV ne commande pas la vitesse sur un MoE.** Mesuré : `q8_0` place 26 couches sur GPU et
+rend 34,9 tok/s, `q4_0` en place 29 et rend 35,3 — soit +1 %. Sur un modèle à 3 milliards de
+paramètres actifs, une couche restée sur CPU n'active presque aucun expert et ne coûte donc presque
+rien. Le cache commande la place en VRAM, pas le débit.
+
+**`q2_0` et `q1_0` sont inutilisables comme cache KV.** Ils existent dans ggml et le binaire les
+expose, mais CUDA n'implémente pas `SET_ROWS` pour ces types : le chargement meurt en `ggml_abort()`
+— SIGABRT non rattrapable, backend tué. Vérifié en le provoquant. Un type de cache ne s'ajoute
+qu'après un chargement ET une génération réels.
+
+**L'imatrix ne s'est pas montré meilleur ici.** `i1-IQ3_M` (15,44 Go) contre `Q3_K_S` (15,18 Go) sur
+la même demande : 4 appels d'outils contre 2, un fichier de 12,4 Ko contre 7,6 Ko — mais 21 tok/s
+contre 28, les i-quants étant plus coûteux à déquantifier que les k-quants. Un échantillon chacun,
+sur un modèle dont la variance est forte : l'écart de comportement n'est pas une preuve, l'écart de
+vitesse l'est.
