@@ -4,7 +4,7 @@
 
 ## En cours
 
-Rien. Session close sur un état stable, arbre git propre, application en ligne, 382 tests verts.
+Rien. Session close sur un état stable, arbre git propre, application en ligne, 396 tests verts.
 
 ## À faire (priorité)
 
