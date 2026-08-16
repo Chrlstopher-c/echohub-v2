@@ -100,8 +100,11 @@ de déport existe et est couvert par des tests unitaires ; aucune mesure ne l'a 
 - [ ] **Compose par plateforme** : `docker-compose.windows.yml` / `docker-compose.linux.yml` choisis
       par `COMPOSE_FILE` dans le `.env` non suivi. Proposé, non tranché — en attendant, la syntaxe
       GPU fait le va-et-vient sur `main` à chaque pull, et `main` porte la forme Windows.
-- [ ] **Aucune authentification** : le port 37820 est ouvert sur le LAN, et le bac exécute désormais
-      du Python. À traiter avant toute exposition hors du réseau domestique.
+- [ ] **Aucune authentification** : le port 37820 est ouvert sur le LAN, et le bac exécute du Python
+      avec le réseau non coupé. L'accès distant passe par Tailscale (`acces-distant.ps1`) — réseau
+      privé, rien d'exposé sur Internet — mais cela ne règle que l'exposition, pas l'absence d'auth :
+      toute machine inscrite sur le compte Tailscale a un accès complet. Une authentification dans
+      l'application reste nécessaire avant tout partage, même restreint.
 - [ ] `_boucle_outils` fait 44 lignes au lieu des 35 de la norme. La découper imposerait de faire
       transiter trois valeurs à travers un générateur ; écart assumé, à revoir si la fonction grossit.
 - [ ] Option de désactivation des CUDA graphs : livrée le 2026-08-15, jamais utilisée en pratique.

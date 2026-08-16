@@ -23,6 +23,7 @@ côté Python, `index.ts` côté TypeScript) et n'est jamais atteint par ses int
 | `docker-compose.yml` | Orchestration ; syntaxe GPU **inversée** entre WSL2 et Linux natif |
 | `.gitattributes` | `* text=auto eol=lf` — sans lui, un checkout Windows casse l'entrypoint |
 | `start.sh` `stop.sh` `restart.sh` | Cycle de vie, PID et journaux |
+| `acces-distant.ps1` | Accès distant par Tailscale — réseau privé, rien d'exposé sur Internet. À lancer en administrateur, idempotent |
 | `.env.example` | Variables attendues, sans valeurs sensibles. **Le port réel vient du `.env`** |
 
 ## backend/ — 164 fichiers
