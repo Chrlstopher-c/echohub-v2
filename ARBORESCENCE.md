@@ -23,7 +23,7 @@ côté Python, `index.ts` côté TypeScript) et n'est jamais atteint par ses int
 | `docker-compose.yml` | Orchestration ; syntaxe GPU **inversée** entre WSL2 et Linux natif |
 | `.gitattributes` | `* text=auto eol=lf` — sans lui, un checkout Windows casse l'entrypoint |
 | `start.sh` `stop.sh` `restart.sh` | Cycle de vie, PID et journaux |
-| `acces-distant.ps1` | Accès distant par Tailscale — réseau privé, rien d'exposé sur Internet. À lancer en administrateur, idempotent |
+| `acces-distant.ps1` | Accès distant par Tailscale — réseau privé, rien d'exposé. Demande les droits administrateur |
 | `.env.example` | Variables attendues, sans valeurs sensibles. **Le port réel vient du `.env`** |
 
 ## backend/ — 164 fichiers
@@ -112,7 +112,8 @@ Client SearXNG, analyse, service, sonde de disponibilité.
 `nginx.conf` sert le build statique et proxifie `/api` en retirant le préfixe · `entrypoint.sh`
 lance uvicorn et nginx, neutralise la mémoire unifiée sous WSL2, **appose une empreinte de version
 aux assets** · `preuves_bac_a_sable.py` preuves d'isolation exécutées en conteneur ·
-`searxng/settings.yml` configuration de la recherche.
+`outils-acces.py` engendre les identifiants web (mot de passe affiché une fois, seule l'empreinte
+crypt salée est conservée) · `searxng/settings.yml` configuration de la recherche.
 
 ## Tests — 396 verts, sans GPU ni réseau
 
