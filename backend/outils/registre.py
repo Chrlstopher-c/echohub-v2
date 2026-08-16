@@ -16,7 +16,7 @@ from typing import Any
 
 from loguru import logger
 
-from backend.outils.contrat import ContexteExecution, DescriptionOutil, Outil, ResultatOutil
+from backend.outils.contrat import ContexteExecution, DescriptionOutil, EchecOutil, Outil, ResultatOutil
 from backend.outils.executer_python import OUTIL as OUTIL_PYTHON
 from backend.outils.fichiers_bac import OUTIL_ECRIRE, OUTIL_LIRE, OUTIL_MODIFIER
 from backend.outils.presenter_fichier import OUTIL as OUTIL_PRESENTER
@@ -91,8 +91,21 @@ async def executer(nom: str, arguments_bruts: object, contexte: ContexteExecutio
             arguments=arguments,
             texte=f"L'outil « {nom} » n'existe pas. Outils disponibles : {connus}.",
         )
+    # Synonymes ramenés à leur nom canonique AVANT exécution. `arguments` conserve la forme reçue
+    # pour l'affichage : l'utilisateur doit voir ce que le modèle a réellement demandé, pas ce que
+    # le harnais en a fait.
+    normalises = outil.description.normaliser(arguments)
+    if normalises != arguments:
+        logger.info(
+            "Arguments de {} normalisés : {} -> {}", nom, sorted(arguments), sorted(normalises)
+        )
     try:
-        texte = await outil.executer(arguments, contexte)
+        texte = await outil.executer(normalises, contexte)
+    except EchecOutil as exc:
+        # Échec ATTENDU : le message est déjà rédigé pour le modèle, il part sans enrobage. Le
+        # distinguer d'une panne est ce qui permet au harnais de savoir qu'un tour n'a rien produit.
+        logger.info("Outil {} en échec attendu : {}", nom, exc)
+        return ResultatOutil(nom=nom, succes=False, arguments=arguments, texte=str(exc)).tronque()
     except Exception as exc:  # noqa: BLE001 — un outil qui explose ne doit pas tuer la génération
         logger.exception("Outil {} a échoué", nom)
         return ResultatOutil(nom=nom, succes=False, arguments=arguments, texte=f"Échec de l'outil : {exc}").tronque()

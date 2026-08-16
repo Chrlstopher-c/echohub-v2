@@ -18,7 +18,6 @@ normaliser — c'est exactement le point de souplesse que ce module documente.
 
 from __future__ import annotations
 
-import re
 import time
 from collections.abc import AsyncIterator
 from typing import Any
@@ -32,6 +31,26 @@ from backend.inference.engines_adapters import (
     PartieImageChemin,
     PartieTexte,
     superviseur,
+)
+# Réexportés : `api.py` et les tests les lisent sur `backend.inference`, qui reste la surface
+# publique du domaine. Un découpage interne ne doit pas obliger les appelants à connaître le
+# sous-module — même règle que partout ici : on importe le domaine, jamais ses entrailles.
+from backend.inference.harnais_outils import (
+    BALISE_ENTREE_FERMANTE,
+    BALISE_ENTREE_OUVRANTE,
+    BALISE_FIN_ETAPE,
+    BALISE_OUTIL_FERMANTE,
+    BALISE_OUTIL_OUVRANTE,
+    BALISE_SORTIE_FERMANTE,
+    BALISE_SORTIE_OUVRANTE,
+    CARACTERES_APERCU_LIGNE,
+    LIGNES_APERCU_ARGUMENT,
+    LIGNES_BLOC_HISTORIQUE,
+    _annonce,
+    _apercu_valeur,
+    _compacter_blocs_outils,
+    _compacter_corps,
+    _sans_appels_outils,
 )
 from backend.inference.planner import (
     DemandeDeChargement,
@@ -92,7 +111,7 @@ def _messages_depuis(messages: object) -> list[MessageChat]:
             logger.warning("Message ignoré, forme inattendue : {}", type(message).__name__)
             continue
         if isinstance(contenu, str):
-            contenu = _compacter_blocs_outils(contenu)
+            contenu = _compacter_blocs_outils(_sans_appels_outils(contenu))
         pieces = getattr(message, "pieces", None) or ()
         convertis.append(MessageChat(role=role, content=_contenu_moteur(contenu, pieces)))
     return convertis
@@ -119,6 +138,20 @@ def _contenu_moteur(contenu: str, pieces: object) -> str | list[PartieContenu]:
 # Tours d'outils avant de rendre la main au modèle pour de bon. Un modèle peut légitimement
 # enchaîner deux recherches ; au-delà, il boucle. La borne est là pour ça, et l'atteindre est
 # journalisé — un plafond silencieux ressemblerait à une réponse normale.
+#
+# DEUX notions gouvernent la boucle, et les confondre a produit deux régressions distinctes :
+#
+# - les outils DÉCLARÉS, c'est-à-dire ce qu'on montre au moteur. Transmis au premier tour
+#   seulement : dès qu'un tour a produit des résultats, on cesse de les montrer, sinon le modèle
+#   voit encore les mêmes outils après les avoir déjà reçus et n'a aucune raison d'arrêter d'en
+#   redemander (plan d'exécution, L10-b) ;
+# - l'EXISTENCE du registre, qui ne bouge pas et qui seule autorise l'exécution.
+#
+# La sortie de boucle ne dépend que des appels réellement demandés. Mesuré le 2026-08-16 : le
+# modèle demandait `presenter_fichier` au second tour, l'appel était bien détecté, mais la
+# condition portait aussi sur les outils déclarés — devenus nuls — donc la boucle sortait SANS
+# exécuter, et le `<tool_call>` restait affiché en XML brut. Ne plus déclarer un outil n'est pas
+# refuser de faire ce que le modèle demande ; c'est cette borne-ci qui borne, pas cette condition.
 TOURS_OUTILS_MAX = 3
 
 
@@ -130,108 +163,6 @@ def _texte_appel(appel: dict[str, Any]) -> tuple[str, Any]:
     return str(appel.get("name", "")), appel.get("arguments", "")
 
 
-"""Balises du flux annonçant un outil. Elles voyagent dans le texte de la réponse, comme celles du
-raisonnement, et l'interface les replie de la même façon : l'utilisateur voit la recherche se
-faire, sans que le résultat brut n'écrase la réponse.
-
-Passer par le texte plutôt que par un type d'événement dédié n'est pas un raccourci : c'est ce qui
-rend l'information PERSISTANTE. Un événement de flux disparaît au rechargement de la page, alors
-qu'un message enregistré garde la trace de ce qui a été cherché — et c'est justement ce qui permet
-de vérifier une réponse plus tard."""
-BALISE_OUTIL_OUVRANTE = "<outil>"
-BALISE_OUTIL_FERMANTE = "</outil>"
-
-# Le bloc porte deux parties distinctes : ce que le modèle a DEMANDÉ, puis ce que l'outil a RENDU.
-# Les séparer n'est pas cosmétique — juger une réponse suppose de voir la requête qui l'a produite,
-# et une recherche mal formulée explique souvent un résultat hors sujet. L'entrée part avant
-# l'exécution, la sortie après : l'utilisateur voit donc la demande pendant que l'outil travaille.
-BALISE_ENTREE_OUVRANTE = "<entree>"
-BALISE_ENTREE_FERMANTE = "</entree>"
-BALISE_SORTIE_OUVRANTE = "<sortie>"
-BALISE_SORTIE_FERMANTE = "</sortie>"
-
-# Marqueur de fin d'étape, posé quand le tour qui vient de s'achever a demandé un outil.
-#
-# Un modèle commente son travail avant d'appeler : « je vais chercher », « j'ai obtenu 6 résultats,
-# je synthétise ». Ce commentaire n'est pas la réponse, et le laisser dans le flux le fait passer
-# pour telle — parfois affiché en clair, parfois avalé dans un bloc de raisonnement selon que le
-# modèle a balisé ou non. Le même contenu changeait donc de traitement d'un tour à l'autre.
-#
-# Le marqueur est posé APRÈS coup plutôt qu'une balise ouverte à l'avance : au début d'un tour, rien
-# ne dit encore s'il produira un appel d'outil ou la réponse finale. Ouvrir une balise « au cas où »
-# replierait la réponse quand aucun outil n'est demandé — c'est-à-dire la plupart du temps.
-# Le streaming reste donc intact : l'utilisateur voit le texte arriver, et il est reclassé une fois
-# l'appel connu.
-BALISE_FIN_ETAPE = "<etape-fin/>"
-
-# Compaction des blocs d'outils des tours PASSÉS, dans ce qui repart au modèle.
-#
-# Le contenu d'un outil n'a de valeur pleine que pendant le tour qui l'a demandé : c'est là qu'on
-# relit un fichier pour le corriger. Aux tours suivants, seul son EXISTENCE compte encore — savoir
-# qu'on a lu `app.py` et à quoi il ressemblait en gros. Garder 200 lignes de fichier dans
-# l'historique de chaque tour suivant remplit la fenêtre avec ce que le modèle peut relire à la
-# demande, et c'est l'historique de conversation qui en paie le prix.
-#
-# La compaction ne touche QUE ce qui part au moteur. Le message enregistré et ce que l'utilisateur
-# voit à l'écran restent entiers : c'est une économie de contexte, pas une perte d'information.
-LIGNES_BLOC_HISTORIQUE = 8
-
-_MOTIF_BLOC_OUTIL = re.compile(
-    f"({re.escape(BALISE_ENTREE_OUVRANTE)}|{re.escape(BALISE_SORTIE_OUVRANTE)})"
-    r"(?P<corps>.*?)"
-    f"({re.escape(BALISE_ENTREE_FERMANTE)}|{re.escape(BALISE_SORTIE_FERMANTE)})",
-    re.DOTALL,
-)
-
-
-def _compacter_corps(corps: str) -> str:
-    """Garde les premières lignes d'un bloc et DIT ce qui a été retiré, plutôt que de couper net."""
-    lignes = corps.splitlines()
-    if len(lignes) <= LIGNES_BLOC_HISTORIQUE:
-        return corps
-    gardees = lignes[:LIGNES_BLOC_HISTORIQUE]
-    reste = len(lignes) - len(gardees)
-    return "\n".join([*gardees, f"[… {reste} lignes retirées de l'historique — relire le fichier si besoin]"])
-
-
-def _compacter_blocs_outils(texte: str) -> str:
-    """Réduit entrées et sorties d'outils d'un message d'historique. Le reste du texte est intact."""
-    if BALISE_OUTIL_OUVRANTE not in texte:
-        return texte
-    return _MOTIF_BLOC_OUTIL.sub(
-        lambda trouve: f"{trouve.group(1)}{_compacter_corps(trouve.group('corps'))}{trouve.group(3)}",
-        texte,
-    )
-
-
-# Aperçu d'un argument long dans le bloc d'appel affiché. Écrire un fichier passe son contenu
-# ENTIER en argument : sans aperçu, le bloc « Appel d'outil » pesait 7 261 caractères pour une page
-# HTML (mesuré le 2026-08-16) et l'utilisateur devait le dérouler pour retrouver quoi que ce soit.
-# Cinq lignes suffisent à reconnaître ce qui a été écrit ; le fichier lui-même reste consultable en
-# artefact, en entier, où il a sa place.
-LIGNES_APERCU_ARGUMENT = 5
-CARACTERES_APERCU_LIGNE = 160
-
-
-def _apercu_valeur(valeur: object) -> str:
-    """Valeur d'argument ramenée à un aperçu lisible — jamais tronquée en silence."""
-    texte = str(valeur)
-    lignes = texte.splitlines()
-    if len(lignes) <= LIGNES_APERCU_ARGUMENT and len(texte) <= CARACTERES_APERCU_LIGNE:
-        return texte
-    gardees = [ligne[:CARACTERES_APERCU_LIGNE] for ligne in lignes[:LIGNES_APERCU_ARGUMENT]]
-    reste = len(lignes) - len(gardees)
-    suite = f"… (+{reste} lignes, {len(texte)} caractères)" if reste > 0 else f"… ({len(texte)} caractères)"
-    return "\n".join([*gardees, suite])
-
-
-def _annonce(nom: str, arguments: object) -> str:
-    """Ligne lisible d'un appel, montrée telle quelle dans le bloc replié."""
-    if isinstance(arguments, dict):
-        detail = ", ".join(f"{cle} : {_apercu_valeur(valeur)}" for cle, valeur in arguments.items())
-    else:
-        detail = _apercu_valeur(arguments) if arguments else ""
-    return f"{nom}({detail})" if detail else nom
 
 
 def _appels_demandes(texte: str) -> list[dict[str, Any]]:
@@ -247,12 +178,49 @@ def _appels_demandes(texte: str) -> list[dict[str, Any]]:
     return _appels_dans_le_texte(texte)
 
 
+def _signature(nom: str, arguments: Any) -> str:
+    """Identité d'un appel, pour reconnaître une redite exacte. Jamais montrée au modèle."""
+    return f"{nom}\x00{arguments!r}"
+
+
+# Rendu à la place d'une exécution quand le modèle rejoue un appel qui a DÉJÀ ÉCHOUÉ à l'identique,
+# sans que rien n'ait abouti entre-temps. C'est la boucle observée le 2026-08-16 : trois tours
+# identiques, puis une réponse annonçant un fichier qui n'existait pas.
+#
+# Seuls les ÉCHECS sont bornés, et le premier succès efface l'ardoise. Un appel réussi peut
+# légitimement se répéter — relire un fichier après l'avoir modifié rend un autre contenu —, et un
+# appel échoué peut légitimement réussir au second essai si l'état a changé depuis : `lire_fichier`
+# sur un fichier absent, puis `ecrire_fichier`, puis la même lecture. Borner la répétition tout
+# court aurait cassé exactement la boucle de travail que ces outils existent pour permettre.
+_REDITE = (
+    "Failed: this exact call was already made in this turn and gave the same result. "
+    "Repeating it changes nothing. Either send it with the arguments that were missing, or stop "
+    "calling tools and answer with what you actually have."
+)
+
+# Injecté avant le tour de clôture quand AUCUN appel du tour n'a abouti. Sans lui, le modèle
+# terminait sur « Voici le nouveau fichier […] vous pouvez l'ouvrir en cliquant sur la carte
+# ci-dessus » alors que rien n'avait été écrit et qu'aucune carte n'existait (message 145 en base,
+# 2026-08-16). Un harnais qui laisse annoncer un résultat inexistant est pire qu'un harnais qui
+# échoue : l'utilisateur ne peut même pas savoir que ça a raté.
+_AUCUN_OUTIL_ABOUTI = (
+    "None of the tool calls in this turn succeeded: no file was written, read, or shown. "
+    "Answer the user now, in French, using only what you actually have. Say plainly that the "
+    "operation failed. Do NOT claim a file was created, and do NOT refer to a card or an attachment."
+)
+
+
 async def _executer_appels(
     appels: list[dict[str, Any]],
     messages: list[MessageChat],
     contexte: ContexteExecution,
+    echecs_vus: set[str],
 ) -> AsyncIterator[dict[str, Any]]:
-    """Exécute les appels demandés, en annonçant chacun dans le flux, et enrichit la conversation."""
+    """Exécute les appels demandés, en annonçant chacun dans le flux, et enrichit la conversation.
+
+    `echecs_vus` porte les appels déjà échoués sans qu'aucun autre n'ait abouti depuis ; voir
+    `_REDITE`. Rend `succes` au fil de l'eau, pour que l'appelant sache si quoi que ce soit a abouti.
+    """
     from backend.outils import executer
 
     for appel in appels:
@@ -260,59 +228,23 @@ async def _executer_appels(
         # L'entrée part AVANT l'exécution : c'est ce qui rend l'attente lisible plutôt que muette.
         entree = f"{BALISE_ENTREE_OUVRANTE}{_annonce(nom, arguments)}{BALISE_ENTREE_FERMANTE}"
         yield {"texte": f"{BALISE_OUTIL_OUVRANTE}{entree}{BALISE_SORTIE_OUVRANTE}"}
-        resultat = await executer(nom, arguments, contexte)
-        yield {"texte": f"{resultat.texte}{BALISE_SORTIE_FERMANTE}{BALISE_OUTIL_FERMANTE}\n\n"}
+        signature = _signature(nom, arguments)
+        if signature in echecs_vus:
+            logger.warning("Appel {} déjà échoué à l'identique : non réexécuté.", nom)
+            texte, succes = _REDITE, False
+        else:
+            resultat = await executer(nom, arguments, contexte)
+            texte, succes = resultat.texte, resultat.succes
+            if succes:
+                echecs_vus.clear()
+            else:
+                echecs_vus.add(signature)
+        yield {"texte": f"{texte}{BALISE_SORTIE_FERMANTE}{BALISE_OUTIL_FERMANTE}\n\n", "succes": succes}
         # Rôle `tool`, contenu NU. Le gabarit l'enveloppe lui-même dans `<tool_response>` : c'est
         # le canal que le modèle a appris à l'entraînement, et il ne le confond pas avec sa propre
         # prose. L'ancienne forme — rôle `assistant` préfixé « [outil nom — résultat] » — était un
         # format inventé par nous, et le modèle a fini par l'imiter au lieu d'appeler l'outil.
-        messages.append(MessageChat(role="tool", content=resultat.texte))
-
-
-async def _resoudre_outils(
-    messages: list[MessageChat],
-    options: OptionsGeneration,
-    contexte: ContexteExecution,
-) -> AsyncIterator[dict[str, Any]]:
-    """Exécute les outils demandés, en annonçant chaque étape dans le flux au fur et à mesure.
-
-    Rend des fragments à afficher ET, en dernier lieu, la conversation enrichie sous la clé
-    `messages` — l'appelant s'en sert pour la génération finale. Un générateur plutôt qu'une
-    fonction : sans cela, l'utilisateur reste devant un écran figé pendant toute la recherche, sans
-    savoir si quelque chose se passe.
-
-    Le résultat d'un outil est réinjecté avec le rôle `tool`, que les gabarits des modèles présents
-    gèrent tous (vérifié dans leurs en-têtes GGUF le 2026-08-16) et enveloppent dans
-    `<tool_response>`. Il l'était auparavant comme un tour d'`assistant` préfixé — un format
-    inventé, que le modèle a fini par imiter en prose au lieu d'appeler l'outil.
-
-    Tout échec rend la conversation d'origine : le harnais ne doit jamais empêcher une réponse.
-    """
-    from backend.outils import executer, format_moteur
-
-    outils = format_moteur()
-    enrichis = list(messages)
-    if not outils:
-        yield {"messages": enrichis}
-        return
-
-    for tour in range(TOURS_OUTILS_MAX):
-        try:
-            appels = await superviseur.proposer_outils(enrichis, options, outils)
-        except Exception as exc:  # noqa: BLE001 — frontière moteur : jamais fatale pour la réponse
-            logger.warning("Proposition d'outils abandonnée au tour {} : {}", tour + 1, exc)
-            break
-        if not appels:
-            break
-        for appel in appels:
-            nom, arguments = _texte_appel(appel)
-            yield {"texte": f"{BALISE_OUTIL_OUVRANTE}{_annonce(nom, arguments)}\n"}
-            resultat = await executer(nom, arguments, contexte)
-            yield {"texte": f"{resultat.texte}{BALISE_OUTIL_FERMANTE}\n\n"}
-            enrichis.append(MessageChat(role="tool", content=resultat.texte))
-    else:
-        logger.warning("Borne de {} tours d'outils atteinte : la réponse suit avec ce qui existe.", TOURS_OUTILS_MAX)
-    yield {"messages": enrichis}
+        messages.append(MessageChat(role="tool", content=texte))
 
 
 class MoteurChat:
@@ -328,93 +260,19 @@ class MoteurChat:
         return self._flux(requete)
 
     async def _flux(self, requete: object) -> AsyncIterator[dict[str, Any]]:
-        from backend.fichiers.stockage import racine_conversations
+        """Assemble le tour complet : contexte d'exécution, boucle d'outils, mesure du débit."""
         from backend.outils import format_moteur
-        from backend.outils.contrat import ContexteExecution
 
         messages = _messages_depuis(getattr(requete, "messages", None))
         options = _options_depuis(getattr(requete, "parametres", None))
-        outils = format_moteur()
-
-        # L'identité de la conversation doit atteindre l'exécution d'un outil (plan d'exécution,
-        # section 2.5) : sans elle, un outil confiné écrirait dans le bac de n'importe qui. Elle est
-        # obligatoire sur `RequeteGeneration` ; son absence ici signalerait un appelant qui viole le
-        # contrat du port, pas un cas normal à dégrader silencieusement.
-        conversation_id = getattr(requete, "conversation_id", None)
-        if not conversation_id:
-            raise ValueError("RequeteGeneration sans conversation_id : contrat du port violé.")
-        contexte = ContexteExecution(
-            conversation_id=conversation_id,
-            racine_bac=racine_conversations() / conversation_id / "bac",
-        )
+        contexte = _contexte_execution(requete)
         debut = time.monotonic()
         tokens = 0
 
-        # UN SEUL appel au moteur par tour, outils déclarés dedans. Le tour suivant n'a lieu que si
-        # le modèle a réellement demandé un outil ; sinon la boucle s'arrête au premier passage.
-        #
-        # DEUX notions distinctes, et les confondre a coûté cher :
-        #
-        # - `outils_declares` : ce qu'on montre au moteur. Transmis AU PREMIER TOUR SEULEMENT. Dès
-        #   qu'un tour a produit des résultats, il repasse à `None` — sinon le modèle voit encore
-        #   les mêmes outils après les avoir déjà reçus et n'a aucune raison d'arrêter d'en
-        #   redemander (plan d'exécution, L10-b).
-        # - `outils` : le fait qu'un registre existe. Il ne bouge pas de la boucle, et c'est lui
-        #   qui autorise l'EXÉCUTION.
-        #
-        # La sortie de boucle ne doit dépendre que des appels réellement demandés. Mesuré le
-        # 2026-08-16 en conditions réelles : le modèle demandait `presenter_fichier` au second
-        # tour, l'appel était bien détecté, mais la condition portait aussi sur les outils déclarés
-        # — devenus `None` — donc la boucle sortait SANS exécuter, et le `<tool_call>` restait
-        # affiché en XML brut dans la réponse. Ne plus déclarer un outil n'est pas la même chose
-        # que refuser de faire ce que le modèle demande ; c'est `TOURS_OUTILS_MAX` qui borne, pas
-        # cette condition.
-        outils_declares = outils or None
-        for tour in range(TOURS_OUTILS_MAX):
-            recu: list[str] = []
-            async for morceau in superviseur.generer(messages, options, outils_declares):
-                if morceau.type == "token" and morceau.contenu:
-                    tokens += 1
-                    recu.append(morceau.contenu)
-                    yield {"texte": morceau.contenu}
-                elif morceau.type == "erreur":
-                    # Le flux HTTP est déjà ouvert : signaler dedans est la seule façon d'informer.
-                    logger.error("Génération interrompue par le moteur : {}", morceau.contenu)
-                    raise RuntimeError(morceau.contenu or "Le moteur a interrompu la génération.")
-            # Sans registre, un `<tool_call>` écrit par le modèle est une hallucination : l'exécuter
-            # produirait un bloc « outil inconnu » là où il n'y a simplement aucun outil.
-            appels = _appels_demandes("".join(recu)) if outils else []
-            if not appels:
-                break
-            # Ce tour appelait un outil : ce qui vient d'être écrit était donc du commentaire de
-            # travail, pas la réponse. On le signale au lieu de le laisser passer pour une réponse.
-            yield {"texte": BALISE_FIN_ETAPE}
-            messages = list(messages) + [MessageChat(role="assistant", content="".join(recu))]
-            async for etape in _executer_appels(appels, messages, contexte):
-                texte = etape.get("texte")
-                if isinstance(texte, str):
-                    yield {"texte": texte}
-            # Résultats rendus : le tour suivant ne reverra plus les outils déclarés.
-            outils_declares = None
-        else:
-            # Borne atteinte : les trois tours ont TOUS demandé un outil, donc aucun n'a produit de
-            # réponse. Sortir ici laissait la conversation sans un mot — l'interface affichait
-            # « le modèle n'a rien écrit en dehors de son raisonnement » sous une pile de blocs
-            # d'outils. Mesuré le 2026-08-16 sur un modèle qui réémettait un appel vide en boucle.
-            #
-            # Un tour de plus, sans outil déclaré et sans droit d'en appeler, garantit qu'il reste
-            # une réponse. Ce n'est pas une quatrième chance donnée à l'outil : c'est la clôture.
-            logger.warning(
-                "Borne de {} tours d'outils atteinte : tour de clôture sans outil.", TOURS_OUTILS_MAX
-            )
-            yield {"texte": BALISE_FIN_ETAPE}
-            async for morceau in superviseur.generer(messages, options, None):
-                if morceau.type == "token" and morceau.contenu:
-                    tokens += 1
-                    yield {"texte": morceau.contenu}
-                elif morceau.type == "erreur":
-                    logger.error("Tour de clôture interrompu par le moteur : {}", morceau.contenu)
-                    raise RuntimeError(morceau.contenu or "Le moteur a interrompu la génération.")
+        async for etape in self._boucle_outils(messages, options, format_moteur(), contexte):
+            tokens += int(etape.pop("tokens", 0) or 0)
+            if "texte" in etape:
+                yield {"texte": etape["texte"]}
 
         ecoule = time.monotonic() - debut
         # Le compte de tokens est celui des morceaux réellement reçus, et le débit en découle. Si
@@ -423,6 +281,116 @@ class MoteurChat:
             "tokens_generes": tokens or None,
             "tokens_par_seconde": (tokens / ecoule) if tokens and ecoule > 0 else None,
         }
+
+    async def _diffuser(
+        self,
+        messages: list[MessageChat],
+        options: OptionsGeneration,
+        outils: list[dict[str, Any]] | None,
+        recu: list[str],
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Un tour de moteur, diffusé token par token, en accumulant le texte reçu dans `recu`.
+
+        `recu` sert deux fois : il porte le texte où chercher les appels d'outils, et sa longueur
+        EST le compte de tokens du tour — un seul endroit qui compte, donc pas de divergence
+        possible entre ce qui est affiché et ce qui est mesuré.
+        """
+        async for morceau in superviseur.generer(messages, options, outils):
+            if morceau.type == "token" and morceau.contenu:
+                recu.append(morceau.contenu)
+                yield {"texte": morceau.contenu}
+            elif morceau.type == "erreur":
+                # Le flux HTTP est déjà ouvert : signaler dedans est la seule façon d'informer.
+                logger.error("Génération interrompue par le moteur : {}", morceau.contenu)
+                raise RuntimeError(morceau.contenu or "Le moteur a interrompu la génération.")
+
+    async def _boucle_outils(
+        self,
+        messages: list[MessageChat],
+        options: OptionsGeneration,
+        outils: list[dict[str, Any]],
+        contexte: ContexteExecution,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Les tours d'outils, puis la clôture si la borne est atteinte. Rend aussi `tokens` par tour.
+
+        Un seul appel au moteur par tour, outils déclarés dedans ; le tour suivant n'a lieu que si
+        le modèle a réellement demandé un outil. La distinction entre les outils DÉCLARÉS et
+        l'existence du registre est expliquée sur `TOURS_OUTILS_MAX` : les confondre a produit deux
+        régressions distinctes, l'une bavarde, l'autre muette.
+        """
+        outils_declares = outils or None
+        # Appels échoués sans succès depuis, et compte de ce qui a abouti. Portés par la boucle et
+        # non par le module : deux conversations n'ont rien à partager. `aboutis` cumule sur TOUS les
+        # tours — un fichier écrit au premier reste écrit même si les suivants échouent.
+        echecs_vus: set[str] = set()
+        aboutis = 0
+        for _ in range(TOURS_OUTILS_MAX):
+            recu: list[str] = []
+            async for morceau in self._diffuser(messages, options, outils_declares, recu):
+                yield morceau
+            yield {"tokens": len(recu)}
+            # Sans registre, un `<tool_call>` écrit par le modèle est une hallucination : l'exécuter
+            # produirait un bloc « outil inconnu » là où il n'y a simplement aucun outil.
+            appels = _appels_demandes("".join(recu)) if outils else []
+            if not appels:
+                return
+            # Ce tour appelait un outil : ce qui vient d'être écrit était du commentaire de travail,
+            # pas la réponse. On le signale au lieu de le laisser passer pour telle. Le balisage de
+            # l'appel, lui, ne repart PAS au moteur — sinon il lui sert de modèle à recopier.
+            yield {"texte": BALISE_FIN_ETAPE}
+            messages = list(messages) + [
+                MessageChat(role="assistant", content=_sans_appels_outils("".join(recu)))
+            ]
+            async for etape in _executer_appels(appels, messages, contexte, echecs_vus):
+                if isinstance(etape.get("texte"), str):
+                    yield {"texte": etape["texte"]}
+                aboutis += 1 if etape.get("succes") else 0
+            outils_declares = None  # le tour suivant ne reverra plus les outils déclarés
+        async for morceau in self._cloturer(messages, options, aboutis):
+            yield morceau
+
+    async def _cloturer(
+        self, messages: list[MessageChat], options: OptionsGeneration, aboutis: int
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Tour final sans outil, quand les trois tours ont tous demandé un outil.
+
+        Aucun d'eux n'a donc produit de réponse : sortir ici laissait la conversation sans un mot,
+        et l'interface affichait « le modèle n'a rien écrit en dehors de son raisonnement » sous une
+        pile de blocs d'outils. Ce n'est pas une quatrième chance donnée à l'outil, c'est la clôture.
+
+        Quand RIEN n'a abouti, le modèle est prévenu explicitement. Sans ce rappel, il terminait sur
+        « Voici le nouveau fichier, ouvrez la carte ci-dessus » alors qu'aucun fichier n'existait et
+        qu'aucune carte n'était affichée (mesuré le 2026-08-16). Laisser annoncer un résultat
+        inexistant est pire qu'échouer : l'utilisateur ne peut même pas savoir que ça a raté.
+        """
+        logger.warning("Borne de {} tours d'outils atteinte : tour de clôture sans outil.", TOURS_OUTILS_MAX)
+        if aboutis == 0:
+            logger.warning("Aucun outil abouti sur ce tour : clôture avec consigne explicite.")
+            messages = list(messages) + [MessageChat(role="tool", content=_AUCUN_OUTIL_ABOUTI)]
+        yield {"texte": BALISE_FIN_ETAPE}
+        recu: list[str] = []
+        async for morceau in self._diffuser(messages, options, None, recu):
+            yield morceau
+        yield {"tokens": len(recu)}
+
+
+def _contexte_execution(requete: object) -> ContexteExecution:
+    """Identité de la conversation et racine de son bac, pour l'exécution des outils.
+
+    L'identité doit atteindre l'exécution (plan d'exécution, 2.5) : sans elle, un outil confiné
+    écrirait dans le bac de n'importe qui. Elle est obligatoire sur `RequeteGeneration` ; son
+    absence signale un appelant qui viole le contrat du port, pas un cas à dégrader en silence.
+    """
+    from backend.fichiers.stockage import racine_conversations
+    from backend.outils.contrat import ContexteExecution
+
+    conversation_id = getattr(requete, "conversation_id", None)
+    if not conversation_id:
+        raise ValueError("RequeteGeneration sans conversation_id : contrat du port violé.")
+    return ContexteExecution(
+        conversation_id=conversation_id,
+        racine_bac=racine_conversations() / conversation_id / "bac",
+    )
 
 
 def creer_moteur_chat() -> MoteurChat:

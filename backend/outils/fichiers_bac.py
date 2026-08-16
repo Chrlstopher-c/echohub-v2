@@ -35,7 +35,7 @@ from loguru import logger
 from backend.core import EchoHubError
 from backend.fichiers import deposer_fichier
 from backend.outils.bac_a_sable import CheminHorsBac, adopter_par_le_bac, preparer_bac, resoudre_dans_bac
-from backend.outils.contrat import ContexteExecution, DescriptionOutil, Outil
+from backend.outils.contrat import ContexteExecution, DescriptionOutil, EchecOutil, Outil
 
 # Un fichier relu repart dans le contexte du modèle. Au-delà, la fenêtre se remplit d'un seul
 # fichier et l'historique de la conversation disparaît. `ResultatOutil.tronque()` s'applique de
@@ -50,6 +50,37 @@ _CHEMIN = {
         "refused."
     ),
 }
+
+# Synonymes constatés ou attendus pour le chemin. `nom` n'est pas une hypothèse : c'est le nom que
+# le modèle a réellement employé le 2026-08-16 en accompagnant un contenu de 12 173 caractères, que
+# le harnais a jeté pour ce seul motif. Voir `DescriptionOutil.normaliser`.
+_ALIAS_CHEMIN = {
+    alias: "chemin"
+    for alias in ("nom", "nom_fichier", "fichier", "name", "filename", "file", "file_path", "path")
+}
+
+
+def _echec_arguments(outil: str, requis: dict[str, str], recus: dict[str, Any]) -> str:
+    """Échec d'un appel incomplet, rédigé pour être ACTIONNABLE plutôt que seulement exact.
+
+    Trois informations, parce que les trois manquaient dans la formulation précédente et que le
+    modèle a rejoué le même appel raté trois tours de suite : ce qui est attendu, ce qu'il a envoyé,
+    et le fait que tout doit tenir dans le MÊME appel.
+
+    Rédigé en anglais, comme le socle et pour la même raison mesurée : ces modèles raisonnent en
+    anglais (visible dans chaque bloc de raisonnement du transcript) et suivent mieux une consigne
+    de forme dans cette langue. Aucune syntaxe de balise n'est montrée — les deux dialectes d'appel
+    cohabitent selon le modèle, et imposer celui de l'autre famille casserait un appel qui marchait.
+    """
+    attendus = "\n".join(f"  {cle} = {aide}" for cle, aide in requis.items())
+    envoyes = ", ".join(sorted(recus)) if recus else "nothing"
+    return (
+        f"Failed: `{outil}` was called without everything it needs.\n"
+        f"Required arguments, all in the SAME call:\n{attendus}\n"
+        f"You sent: {envoyes}.\n"
+        "Re-send the call once, with every argument and its full value inline. There is no way to "
+        "supply an argument afterwards, and repeating the same incomplete call will fail again."
+    )
 
 
 def _enregistrer(contexte: ContexteExecution, chemin_relatif: str, cible: Path) -> str:
@@ -103,18 +134,27 @@ DESCRIPTION_ECRIRE = DescriptionOutil(
         },
         "required": ["chemin", "contenu"],
     },
+    alias={**_ALIAS_CHEMIN, "content": "contenu", "texte": "contenu", "text": "contenu", "body": "contenu"},
 )
+
+_REQUIS_ECRIRE = {
+    "chemin": "the file name, e.g. page.html",
+    "contenu": "the full text of the file",
+}
 
 
 async def _ecrire(arguments: dict[str, Any], contexte: ContexteExecution) -> str:
     chemin_demande = str(arguments.get("chemin", "")).strip()
     contenu = arguments.get("contenu")
-    if contenu is None:
-        return "Échec : aucun « contenu » fourni. Rappeler l'outil avec le texte complet du fichier."
+    # Les deux manques sont signalés par le MÊME message, qui liste les deux arguments. Auparavant
+    # chacun avait le sien : le modèle corrigeait celui qu'on lui nommait et omettait l'autre, ce
+    # qui produisait deux échecs successifs là où un seul appel complet suffisait.
+    if contenu is None or not chemin_demande:
+        raise EchecOutil(_echec_arguments("ecrire_fichier", _REQUIS_ECRIRE, arguments))
     try:
         cible = _preparer_cible(contexte, chemin_demande)
     except CheminHorsBac as exc:
-        return f"Échec : {exc}"
+        raise EchecOutil(f"Échec : {exc}") from exc
     octets = str(contenu).encode("utf-8")
     cible.write_bytes(octets)
     adopter_par_le_bac(cible)
@@ -134,21 +174,24 @@ DESCRIPTION_LIRE = DescriptionOutil(
         "guessing."
     ),
     parametres={"type": "object", "properties": {"chemin": _CHEMIN}, "required": ["chemin"]},
+    alias=dict(_ALIAS_CHEMIN),
 )
 
 
 async def _lire(arguments: dict[str, Any], contexte: ContexteExecution) -> str:
     chemin_demande = str(arguments.get("chemin", "")).strip()
+    if not chemin_demande:
+        raise EchecOutil(_echec_arguments("lire_fichier", {"chemin": "the file name to read back"}, arguments))
     try:
         cible = resoudre_dans_bac(contexte.racine_bac, chemin_demande)
     except CheminHorsBac as exc:
-        return f"Échec : {exc}"
+        raise EchecOutil(f"Échec : {exc}") from exc
     if not cible.is_file():
-        return f"Échec : « {chemin_demande} » n'existe pas dans le bac de cette conversation."
+        raise EchecOutil(f"Échec : « {chemin_demande} » n'existe pas dans le bac de cette conversation.")
     try:
         texte = cible.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
-        return f"Échec : « {chemin_demande} » illisible en texte ({exc})."
+        raise EchecOutil(f"Échec : « {chemin_demande} » illisible en texte ({exc}).") from exc
     if len(texte) > LONGUEUR_LECTURE_MAX:
         coupe = texte[:LONGUEUR_LECTURE_MAX]
         return f"{coupe}\n\n[lecture tronquée à {LONGUEUR_LECTURE_MAX} caractères sur {len(texte)}]"
@@ -183,7 +226,23 @@ DESCRIPTION_MODIFIER = DescriptionOutil(
         },
         "required": ["chemin", "ancien", "nouveau"],
     },
+    alias={
+        **_ALIAS_CHEMIN,
+        "old": "ancien",
+        "old_string": "ancien",
+        "ancien_texte": "ancien",
+        "new": "nouveau",
+        "new_string": "nouveau",
+        "nouveau_texte": "nouveau",
+        "remplacement": "nouveau",
+    },
 )
+
+_REQUIS_MODIFIER = {
+    "chemin": "the file to edit",
+    "ancien": "the exact text to replace, copied verbatim from the file",
+    "nouveau": "the text to put in its place (empty string to delete)",
+}
 
 
 def _verdict_occurrences(nombre: int, ancien: str) -> str | None:
@@ -207,23 +266,21 @@ async def _modifier(arguments: dict[str, Any], contexte: ContexteExecution) -> s
     chemin_demande = str(arguments.get("chemin", "")).strip()
     ancien = arguments.get("ancien")
     nouveau = arguments.get("nouveau")
-    if not ancien:
-        return "Échec : aucun « ancien » fourni. Rappeler l'outil avec le texte exact à remplacer."
-    if nouveau is None:
-        return "Échec : aucun « nouveau » fourni. Utiliser une chaîne vide pour supprimer le fragment."
+    if not ancien or nouveau is None or not chemin_demande:
+        raise EchecOutil(_echec_arguments("modifier_fichier", _REQUIS_MODIFIER, arguments))
     try:
         cible = resoudre_dans_bac(contexte.racine_bac, chemin_demande)
     except CheminHorsBac as exc:
-        return f"Échec : {exc}"
+        raise EchecOutil(f"Échec : {exc}") from exc
     if not cible.is_file():
-        return f"Échec : « {chemin_demande} » n'existe pas. Le créer d'abord avec `ecrire_fichier`."
+        raise EchecOutil(f"Échec : « {chemin_demande} » n'existe pas. Le créer d'abord avec `ecrire_fichier`.")
     try:
         texte = cible.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
-        return f"Échec : « {chemin_demande} » illisible en texte ({exc})."
+        raise EchecOutil(f"Échec : « {chemin_demande} » illisible en texte ({exc}).") from exc
     refus = _verdict_occurrences(texte.count(str(ancien)), str(ancien))
     if refus is not None:
-        return refus
+        raise EchecOutil(refus)
     cible.write_text(texte.replace(str(ancien), str(nouveau), 1), encoding="utf-8")
     adopter_par_le_bac(cible)
     mention = _enregistrer(contexte, chemin_demande, cible)
