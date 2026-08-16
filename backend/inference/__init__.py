@@ -18,6 +18,7 @@ normaliser — c'est exactement le point de souplesse que ce module documente.
 
 from __future__ import annotations
 
+import re
 import time
 from collections.abc import AsyncIterator
 from typing import Any
@@ -76,6 +77,10 @@ def _messages_depuis(messages: object) -> list[MessageChat]:
     lot. Un message AVEC pièces devient une liste de parties (texte, puis images). Aucune image
     n'est encodée ici : `content` porte encore des CHEMINS disque (`PartieImageChemin`), jamais du
     base64 — c'est l'adaptateur moteur qui encode, au tout dernier moment (plan d'exécution, 2.2.4).
+
+    Les blocs d'outils des tours PASSÉS y sont compactés (`_compacter_blocs_outils`). Ce qui arrive
+    ici vient de l'historique, par définition : les résultats du tour EN COURS sont ajoutés plus
+    loin, en entier, par la boucle de `MoteurChat._flux`.
     """
     convertis: list[MessageChat] = []
     for message in messages or ():
@@ -86,6 +91,8 @@ def _messages_depuis(messages: object) -> list[MessageChat]:
         if role is None or contenu is None:
             logger.warning("Message ignoré, forme inattendue : {}", type(message).__name__)
             continue
+        if isinstance(contenu, str):
+            contenu = _compacter_blocs_outils(contenu)
         pieces = getattr(message, "pieces", None) or ()
         convertis.append(MessageChat(role=role, content=_contenu_moteur(contenu, pieces)))
     return convertis
@@ -157,13 +164,73 @@ BALISE_SORTIE_FERMANTE = "</sortie>"
 # l'appel connu.
 BALISE_FIN_ETAPE = "<etape-fin/>"
 
+# Compaction des blocs d'outils des tours PASSÉS, dans ce qui repart au modèle.
+#
+# Le contenu d'un outil n'a de valeur pleine que pendant le tour qui l'a demandé : c'est là qu'on
+# relit un fichier pour le corriger. Aux tours suivants, seul son EXISTENCE compte encore — savoir
+# qu'on a lu `app.py` et à quoi il ressemblait en gros. Garder 200 lignes de fichier dans
+# l'historique de chaque tour suivant remplit la fenêtre avec ce que le modèle peut relire à la
+# demande, et c'est l'historique de conversation qui en paie le prix.
+#
+# La compaction ne touche QUE ce qui part au moteur. Le message enregistré et ce que l'utilisateur
+# voit à l'écran restent entiers : c'est une économie de contexte, pas une perte d'information.
+LIGNES_BLOC_HISTORIQUE = 8
+
+_MOTIF_BLOC_OUTIL = re.compile(
+    f"({re.escape(BALISE_ENTREE_OUVRANTE)}|{re.escape(BALISE_SORTIE_OUVRANTE)})"
+    r"(?P<corps>.*?)"
+    f"({re.escape(BALISE_ENTREE_FERMANTE)}|{re.escape(BALISE_SORTIE_FERMANTE)})",
+    re.DOTALL,
+)
+
+
+def _compacter_corps(corps: str) -> str:
+    """Garde les premières lignes d'un bloc et DIT ce qui a été retiré, plutôt que de couper net."""
+    lignes = corps.splitlines()
+    if len(lignes) <= LIGNES_BLOC_HISTORIQUE:
+        return corps
+    gardees = lignes[:LIGNES_BLOC_HISTORIQUE]
+    reste = len(lignes) - len(gardees)
+    return "\n".join([*gardees, f"[… {reste} lignes retirées de l'historique — relire le fichier si besoin]"])
+
+
+def _compacter_blocs_outils(texte: str) -> str:
+    """Réduit entrées et sorties d'outils d'un message d'historique. Le reste du texte est intact."""
+    if BALISE_OUTIL_OUVRANTE not in texte:
+        return texte
+    return _MOTIF_BLOC_OUTIL.sub(
+        lambda trouve: f"{trouve.group(1)}{_compacter_corps(trouve.group('corps'))}{trouve.group(3)}",
+        texte,
+    )
+
+
+# Aperçu d'un argument long dans le bloc d'appel affiché. Écrire un fichier passe son contenu
+# ENTIER en argument : sans aperçu, le bloc « Appel d'outil » pesait 7 261 caractères pour une page
+# HTML (mesuré le 2026-08-16) et l'utilisateur devait le dérouler pour retrouver quoi que ce soit.
+# Cinq lignes suffisent à reconnaître ce qui a été écrit ; le fichier lui-même reste consultable en
+# artefact, en entier, où il a sa place.
+LIGNES_APERCU_ARGUMENT = 5
+CARACTERES_APERCU_LIGNE = 160
+
+
+def _apercu_valeur(valeur: object) -> str:
+    """Valeur d'argument ramenée à un aperçu lisible — jamais tronquée en silence."""
+    texte = str(valeur)
+    lignes = texte.splitlines()
+    if len(lignes) <= LIGNES_APERCU_ARGUMENT and len(texte) <= CARACTERES_APERCU_LIGNE:
+        return texte
+    gardees = [ligne[:CARACTERES_APERCU_LIGNE] for ligne in lignes[:LIGNES_APERCU_ARGUMENT]]
+    reste = len(lignes) - len(gardees)
+    suite = f"… (+{reste} lignes, {len(texte)} caractères)" if reste > 0 else f"… ({len(texte)} caractères)"
+    return "\n".join([*gardees, suite])
+
 
 def _annonce(nom: str, arguments: object) -> str:
     """Ligne lisible d'un appel, montrée telle quelle dans le bloc replié."""
     if isinstance(arguments, dict):
-        detail = ", ".join(f"{cle} : {valeur}" for cle, valeur in arguments.items())
+        detail = ", ".join(f"{cle} : {_apercu_valeur(valeur)}" for cle, valeur in arguments.items())
     else:
-        detail = str(arguments or "")
+        detail = _apercu_valeur(arguments) if arguments else ""
     return f"{nom}({detail})" if detail else nom
 
 
