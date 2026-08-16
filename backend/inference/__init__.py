@@ -52,6 +52,12 @@ from backend.inference.harnais_outils import (
     _compacter_corps,
     _sans_appels_outils,
 )
+from backend.inference.reprise import (
+    AVERTISSEMENT_FENETRE_PLEINE,
+    CONSIGNE_REPRISE,
+    CONTINUATIONS_MAX,
+    MARGE_CONTINUATION_TOKENS,
+)
 from backend.inference.planner import (
     DemandeDeChargement,
     MetadonneesModele,
@@ -155,14 +161,25 @@ def _contenu_moteur(contenu: str, pieces: object) -> str | list[PartieContenu]:
 TOURS_OUTILS_MAX = 3
 
 
+def _prompt_de_reprise(messages: list[MessageChat], recu: list[str]) -> list[MessageChat]:
+    """Conversation à repasser au moteur pour qu'il CONTINUE au lieu de recommencer.
+
+    Le partiel devient un tour d'assistant, suivi d'une consigne de reprise. Cette forme marche avec
+    tous les gabarits présents, là où un pré-remplissage de tour dépendrait de l'un d'eux — et un
+    gabarit qui refermerait le tour d'assistant ferait tout reprendre depuis le début.
+    """
+    return list(messages) + [
+        MessageChat(role="assistant", content="".join(recu)),
+        MessageChat(role="user", content=CONSIGNE_REPRISE),
+    ]
+
+
 def _texte_appel(appel: dict[str, Any]) -> tuple[str, Any]:
     """Nom et arguments d'un appel, quelle que soit la forme rendue par le gabarit du modèle."""
     fonction = appel.get("function")
     if isinstance(fonction, dict):
         return str(fonction.get("name", "")), fonction.get("arguments", "")
     return str(appel.get("name", "")), appel.get("arguments", "")
-
-
 
 
 def _appels_demandes(texte: str) -> list[dict[str, Any]]:
@@ -288,12 +305,16 @@ class MoteurChat:
         options: OptionsGeneration,
         outils: list[dict[str, Any]] | None,
         recu: list[str],
+        raisons: list[str | None],
     ) -> AsyncIterator[dict[str, Any]]:
         """Un tour de moteur, diffusé token par token, en accumulant le texte reçu dans `recu`.
 
         `recu` sert deux fois : il porte le texte où chercher les appels d'outils, et sa longueur
         EST le compte de tokens du tour — un seul endroit qui compte, donc pas de divergence
         possible entre ce qui est affiché et ce qui est mesuré.
+
+        `raisons` recueille la raison d'arrêt du moteur. Elle existait déjà sur le morceau de fin et
+        n'était lue par personne : c'est elle qui dit si la réponse est complète ou tronquée.
         """
         async for morceau in superviseur.generer(messages, options, outils):
             if morceau.type == "token" and morceau.contenu:
@@ -303,6 +324,67 @@ class MoteurChat:
                 # Le flux HTTP est déjà ouvert : signaler dedans est la seule façon d'informer.
                 logger.error("Génération interrompue par le moteur : {}", morceau.contenu)
                 raise RuntimeError(morceau.contenu or "Le moteur a interrompu la génération.")
+            elif morceau.type == "fin":
+                raisons.append(morceau.raison_arret)
+
+    async def _diffuser_complet(
+        self,
+        messages: list[MessageChat],
+        options: OptionsGeneration,
+        outils: list[dict[str, Any]] | None,
+        recu: list[str],
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Diffuse un tour et le REPREND tant que le moteur l'a coupé faute de place.
+
+        Le seul objectif : une réponse ne s'arrête jamais avant d'être complète. La reprise passe
+        par un tour d'assistant portant ce qui a déjà été écrit, suivi d'une consigne de reprise —
+        forme qui marche avec tous les gabarits présents, là où un pré-remplissage de tour dépendrait
+        de l'un d'eux. `recu` continue de s'accumuler, donc les appels d'outils sont cherchés dans le
+        texte ENTIER, appel coupé en deux compris.
+
+        Les outils restent déclarés pendant la reprise : la coupure survient justement souvent au
+        milieu d'un appel, et c'est le cas qu'il faut pouvoir réparer.
+        """
+        raisons: list[str | None] = []
+        async for morceau in self._diffuser(messages, options, outils, recu, raisons):
+            yield morceau
+        # `length` recouvre DEUX causes que le moteur ne distingue pas : la fenêtre est pleine, ou
+        # le plafond demandé est atteint. Reprendre dans le second cas reviendrait à passer outre un
+        # réglage que l'utilisateur a posé exprès. `max_tokens` absent veut dire « aucun plafond » :
+        # c'est le seul cas où une coupure est subie et non voulue.
+        if options.max_tokens is not None:
+            if raisons and raisons[-1] == "length":
+                logger.info("Réponse arrêtée au plafond demandé ({} tokens) : pas de reprise.", options.max_tokens)
+            return
+        for essai in range(CONTINUATIONS_MAX):
+            if not raisons or raisons[-1] != "length":
+                return
+            suite = _prompt_de_reprise(messages, recu)
+            libres = await self._tokens_libres(suite)
+            if libres is not None and libres < MARGE_CONTINUATION_TOKENS:
+                logger.warning("Reprise impossible : {} tokens libres dans la fenêtre.", libres)
+                yield {"texte": AVERTISSEMENT_FENETRE_PLEINE}
+                return
+            logger.info("Réponse coupée par la fenêtre : reprise {}/{}.", essai + 1, CONTINUATIONS_MAX)
+            raisons.clear()
+            async for morceau in self._diffuser(suite, options, outils, recu, raisons):
+                yield morceau
+        logger.warning("Borne de {} reprises atteinte : la réponse reste incomplète.", CONTINUATIONS_MAX)
+        yield {"texte": AVERTISSEMENT_FENETRE_PLEINE}
+
+    async def _tokens_libres(self, messages: list[MessageChat]) -> int | None:
+        """Place restante dans la fenêtre, ou `None` si elle n'est pas mesurable.
+
+        `None` n'autorise pas à supposer qu'il reste de la place : il laisse simplement la reprise
+        se tenter, bornée par `CONTINUATIONS_MAX`. Un comptage indisponible — moteur occupé, pas de
+        tokenizer — ne doit pas décider à la place du moteur qu'une réponse est finie.
+        """
+        try:
+            occupation = await superviseur.compter_contexte("", messages)
+        except Exception as exc:  # noqa: BLE001 — une mesure absente ne doit jamais couper la réponse
+            logger.warning("Place restante non mesurable ({}) : reprise tentée quand même.", exc)
+            return None
+        return occupation.tokens_libres if occupation.mesurable else None
 
     async def _boucle_outils(
         self,
@@ -326,7 +408,7 @@ class MoteurChat:
         aboutis = 0
         for _ in range(TOURS_OUTILS_MAX):
             recu: list[str] = []
-            async for morceau in self._diffuser(messages, options, outils_declares, recu):
+            async for morceau in self._diffuser_complet(messages, options, outils_declares, recu):
                 yield morceau
             yield {"tokens": len(recu)}
             # Sans registre, un `<tool_call>` écrit par le modèle est une hallucination : l'exécuter
@@ -369,7 +451,7 @@ class MoteurChat:
             messages = list(messages) + [MessageChat(role="tool", content=_AUCUN_OUTIL_ABOUTI)]
         yield {"texte": BALISE_FIN_ETAPE}
         recu: list[str] = []
-        async for morceau in self._diffuser(messages, options, None, recu):
+        async for morceau in self._diffuser_complet(messages, options, None, recu):
             yield morceau
         yield {"tokens": len(recu)}
 

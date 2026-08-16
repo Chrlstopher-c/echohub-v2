@@ -8,7 +8,7 @@ L'application tourne, en Docker, sur RTX 5080 16 Go / WSL2. On charge un modèle
 calculé, on discute avec, il appelle réellement des outils, exécute du Python confiné, écrit et
 édite des fichiers dans son bac, et les présente dans le fil en artefacts cliquables.
 
-**8 domaines backend montés**, **382 tests Python verts**, typage TypeScript strict sans `any`.
+**8 domaines backend montés**, **396 tests Python verts**, typage TypeScript strict sans `any`.
 Accès local et LAN sur `http://10.0.0.6:37820`. L'interface est utilisable au téléphone depuis
 le 2026-08-15.
 
@@ -71,6 +71,18 @@ cascade. Règle qui en découle : quand l'intention d'un appel est lisible, le h
 **Tout format que le harnais laisse dans le contexte finit imité.** Deux fois : le préfixe
 `[outil nom — résultat]`, puis le balisage `<function=…>` d'un appel raté. Ce qui revient au modèle
 comme étant son propre texte lui sert d'exemple de ce qu'il a « bien » fait.
+
+**La fenêtre saturait, et c'était la cause.** MESURÉ le 2026-08-16 sur la conversation réelle :
+48 461 tokens d'historique brut pour une fenêtre de 32 768 — un dépassement de 15 000 tokens, donc
+presque aucune place pour répondre. La compaction livrée le même jour ramène ce même historique à
+9 562 tokens, soit 23 000 tokens libres. C'est le correctif décisif du symptôme « ça coupe ».
+
+**Une réponse coupée par la fenêtre est désormais reprise.** `finish_reason` existait sur le morceau
+de fin de l'adaptateur et n'était lu par personne : la chaîne ne rendait que `texte`,
+`tokens_generes` et `tokens_par_seconde`. Mesuré à 1 973 tokens puis `length` sur un contexte de
+2 048. La reprise repart du texte déjà produit, bornée à quatre essais, et annonce la fenêtre pleine
+quand elle ne peut plus rien produire. Un plafond `max_tokens` demandé par l'utilisateur, lui, est
+respecté : `length` recouvre les deux causes, et le moteur ne les distingue pas.
 
 **Les réponses courtes ne viennent pas de l'application.** Mesuré le 2026-08-16 sur quatre cellules :
 6 389 à 7 904 caractères, la chaîne complète avec harnais donnant la plus longue. Rien dans le code

@@ -54,6 +54,7 @@ reprise, parts multiples · `api.py` routes.
 | `engines_adapters/` | Application réelle : adaptateurs llama.cpp et vLLM, superviseur (un modèle à la fois), diagnostic qualifié, journal, mesure VRAM, pont flux bloquant → asynchrone |
 | `__init__.py` | Interface publique **et boucle d'outils** — tours, redites bornées, clôture honnête |
 | `harnais_outils.py` | Mise en forme du flux d'outils : balises affichées, aperçus d'arguments, compaction de l'historique, retrait du balisage d'appel avant renvoi au moteur |
+| `reprise.py` | Ce qui gouverne la reprise d'une réponse coupée : bornes, marge, consignes, avertissement |
 | `api.py` | Routes — dont `/contexte`, qui compacte avant de compter |
 
 ### `chat/` (19) — conversations, branches, génération
@@ -112,7 +113,7 @@ lance uvicorn et nginx, neutralise la mémoire unifiée sous WSL2, **appose une 
 aux assets** · `preuves_bac_a_sable.py` preuves d'isolation exécutées en conteneur ·
 `searxng/settings.yml` configuration de la recherche.
 
-## Tests — 382 verts, sans GPU ni réseau
+## Tests — 396 verts, sans GPU ni réseau
 
 `backend/inference/planner/tests/` · `backend/inference/tests/` (contexte d'exécution, pièces
 jointes, réémission d'outils, compaction de l'historique, **boucle d'appels ratés**) ·
