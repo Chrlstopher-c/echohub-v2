@@ -33,11 +33,20 @@ class FormatModele(str, Enum):
 
 
 class TypeCacheKV(str, Enum):
-    """Quantification du cache KV. Ordre de compression croissante : F16 > Q8_0 > Q4_0."""
+    """Quantification du cache KV. Compression croissante : F16 > Q8_0 > Q4_0 > Q2_0 > Q1_0.
+
+    `q2_0` et `q1_0` sont les caches très basse précision servis par les llama.cpp récents (vérifié
+    le 2026-08-16 sur llama-cpp-python 0.3.34, qui expose leurs identifiants ggml). Le planificateur
+    les refusait alors que le binaire les accepte, et c'est le poste qui grandit le plus vite avec
+    la fenêtre : sur le MoE 35B, `f16` coûte 80 Ko par token contre 12,5 Ko en `q2_0`. Les écarter
+    revenait à laisser des couches calculer sur CPU faute de VRAM, sans aucune raison technique.
+    """
 
     F16 = "f16"
     Q8_0 = "q8_0"
     Q4_0 = "q4_0"
+    Q2_0 = "q2_0"
+    Q1_0 = "q1_0"
 
 
 class Plateforme(str, Enum):
