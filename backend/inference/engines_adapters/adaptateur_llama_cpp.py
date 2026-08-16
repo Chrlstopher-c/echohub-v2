@@ -844,13 +844,55 @@ _MOTIF_APPEL_TEXTE = re.compile(
 )
 
 
+def _fermetures_manquantes(charge: str) -> str:
+    """Complète un objet JSON laissé ouvert : guillemet, accolades, crochets — dans cet ordre.
+
+    Cas MESURÉ le 2026-08-16 : le gabarit ouvre `{{"name": …, "arguments": {…` — trois accolades
+    ouvrantes — et n'en referme que deux. La réduction des accolades doublées ne suffit donc pas, le
+    JSON reste déséquilibré et l'appel est perdu ENTIER. Même forme quand la fenêtre de contexte
+    coupe la génération en plein argument : le début de l'appel est parfaitement lisible, seule la
+    fin manque.
+
+    Le comptage ignore ce qui est à l'intérieur d'une chaîne, sans quoi une accolade écrite dans le
+    contenu d'un fichier — cas courant, on écrit du code — fausserait tout le calcul.
+    """
+    dans_chaine = False
+    echappe = False
+    pile: list[str] = []
+    for caractere in charge:
+        if echappe:
+            echappe = False
+            continue
+        if caractere == "\\":
+            echappe = True
+        elif caractere == '"':
+            dans_chaine = not dans_chaine
+        elif dans_chaine:
+            continue
+        elif caractere in "{[":
+            pile.append("}" if caractere == "{" else "]")
+        elif caractere in "}]" and pile:
+            pile.pop()
+    return ('"' if dans_chaine else "") + "".join(reversed(pile))
+
+
 def _charger_json_tolerant(charge: str) -> dict[str, Any] | None:
-    for candidat in (charge, charge.replace("{{", "{").replace("}}", "}")):
+    """Objet JSON d'un appel, réparé si besoin — un appel perdu coûte tout le tour du modèle.
+
+    Les trois tentatives vont de la plus fidèle à la plus permissive : tel quel, puis accolades
+    doublées réduites, puis fermetures manquantes ajoutées. Aucune n'invente de valeur : elles ne
+    font que refermer ce que le modèle a ouvert. Un appel dont le NOM manque reste refusé plus haut.
+    """
+    reduit = charge.replace("{{", "{").replace("}}", "}")
+    candidats = (charge, reduit, charge + _fermetures_manquantes(charge), reduit + _fermetures_manquantes(reduit))
+    for candidat in candidats:
         try:
             valeur = json.loads(candidat)
         except json.JSONDecodeError:
             continue
         if isinstance(valeur, dict):
+            if candidat is not charge:
+                logger.info("Appel d'outil réparé avant lecture (JSON incomplet ou accolades doublées).")
             return valeur
     logger.warning("Appel d'outil en texte illisible : {!r}", charge[:200])
     return None
@@ -877,7 +919,8 @@ def _appels_balises(texte: str) -> list[dict[str, Any]]:
     """Appels au format balisé. Les valeurs sont rendues telles quelles, seulement détourées."""
     appels: list[dict[str, Any]] = []
     for fonction in _MOTIF_FONCTION_BALISEE.finditer(texte):
-        arguments = {p.group("cle"): p.group("valeur").strip() for p in _MOTIF_PARAMETRE.finditer(fonction.group("corps"))}
+        parametres = _MOTIF_PARAMETRE.finditer(fonction.group("corps"))
+        arguments = {p.group("cle"): p.group("valeur").strip() for p in parametres}
         appels.append({"type": "function", "function": {"name": fonction.group("nom"), "arguments": arguments}})
     return appels
 

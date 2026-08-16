@@ -8,10 +8,11 @@ Rien. Session close sur un état stable, arbre git propre, application en ligne,
 
 ## À faire (priorité)
 
-### 1. Éprouver le harnais corrigé en génération réelle
+### 1. Éprouver le harnais corrigé sur un GROS modèle
 
-Neuf lots de correctifs sont partis aujourd'hui sans qu'aucun modèle ne soit rechargé — Chris s'en
-charge lui-même. Les mécanismes sont couverts par des tests, le comportement observé ne l'est pas.
+Validé le 2026-08-16 sur Qwen2.5-0.5B, par l'API réelle : 236 événements SSE, appel d'outil détecté
+et exécuté, réponse close sur une ponctuation. Reste à confirmer sur un modèle de production, dont
+la conversation est longue.
 
 - [ ] Reprendre le scénario exact qui a échoué : « écris-moi une page HTML avec un simulateur »,
       puis « ça ne rend pas bien, corrige ». Ce que la correction doit produire :
@@ -38,6 +39,7 @@ Mesuré : **rien dans l'application ne raccourcit les réponses** (quatre cellul
 caractères, la chaîne complète avec harnais donnant la plus longue). Les hypothèses « c'est
 l'échantillonnage » puis « c'est le harnais » ont toutes deux été réfutées par la mesure.
 
+- [x] Reprise d'une réponse coupée par la fenêtre — `finish_reason` était perdu par la chaîne
 - [ ] Aligner l'échantillonnage par défaut sur les recommandations Qwen3 (temp 0.6 / top_p 0.95 /
       top_k 20, sans pénalité de répétition) — **+14 % mesuré**, modeste mais gratuit.
 - [ ] Regarder le prompt système de la conversation : c'est le levier non mesuré qui reste.
