@@ -68,6 +68,13 @@ DESCRIPTION = DescriptionOutil(
         "anything you may need to correct — OR `code` for a one-off snippet."
     ),
     parametres=_SCHEMA,
+    # `chemin` en tête, et ce n'est pas un hasard : c'est le nom que les trois outils de fichier
+    # emploient, donc celui que le modèle a sous les yeux juste avant d'appeler celui-ci. Refuser
+    # l'appel pour cette seule cohérence de vocabulaire serait absurde.
+    alias={
+        **{a: "fichier" for a in ("chemin", "nom", "nom_fichier", "path", "file", "filename", "file_path")},
+        **{a: "code" for a in ("source", "script", "python", "programme")},
+    },
 )
 
 

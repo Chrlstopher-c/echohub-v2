@@ -11,11 +11,24 @@ import asyncio
 import json
 from pathlib import Path
 
+import pytest
+
 from backend.chat.depot import creer_conversation
 from backend.chat.modeles import ReglagesConversation, ResumeConversation
 from backend.fichiers import deposer_fichier
 from backend.outils import presenter_fichier
-from backend.outils.contrat import ContexteExecution
+from backend.outils.contrat import ContexteExecution, EchecOutil
+
+
+def _refus(arguments: dict, contexte: ContexteExecution) -> str:
+    """Message d'un refus attendu : `presenter_fichier` lève `EchecOutil` depuis le 2026-08-16.
+
+    C'est le type qui porte l'échec, plus le préfixe du texte. Le harnais sait ainsi qu'un tour n'a
+    rien produit, et cesse de laisser le modèle annoncer une carte qui n'existe pas.
+    """
+    with pytest.raises(EchecOutil) as capture:
+        asyncio.run(presenter_fichier.executer(arguments, contexte))
+    return str(capture.value)
 
 
 def _deposer(conversation_id: str) -> str:
@@ -46,17 +59,15 @@ def test_presenter_rend_une_reference_json_du_fichier(conversation: ResumeConver
 def test_presenter_refuse_un_identifiant_inconnu(conversation: ResumeConversation, racine_bac: Path) -> None:
     contexte = ContexteExecution(conversation_id=conversation.id, racine_bac=racine_bac)
 
-    texte = asyncio.run(presenter_fichier.executer({"fichier_id": "inexistant"}, contexte))
-
-    assert "Échec" in texte
+    assert "Échec" in _refus({"fichier_id": "inexistant"}, contexte)
 
 
 def test_presenter_refuse_labsence_didentifiant(conversation: ResumeConversation, racine_bac: Path) -> None:
     contexte = ContexteExecution(conversation_id=conversation.id, racine_bac=racine_bac)
 
-    texte = asyncio.run(presenter_fichier.executer({}, contexte))
+    refus = _refus({}, contexte)
 
-    assert "Échec" in texte
+    assert "fichier_id" in refus and "SAME call" in refus
 
 
 def test_presenter_refuse_un_fichier_dune_autre_conversation(
@@ -68,7 +79,7 @@ def test_presenter_refuse_un_fichier_dune_autre_conversation(
     fichier_id = _deposer(autre.id)
     contexte = ContexteExecution(conversation_id=conversation.id, racine_bac=racine_bac)
 
-    texte = asyncio.run(presenter_fichier.executer({"fichier_id": fichier_id}, contexte))
+    texte = _refus({"fichier_id": fichier_id}, contexte)
 
     # L'identifiant redonné n'est pas une fuite : c'est celui que l'appelant a lui-même fourni.
     # Ce qui doit rester absent, c'est le CONTENU du fichier d'autrui — son nom, son type MIME.

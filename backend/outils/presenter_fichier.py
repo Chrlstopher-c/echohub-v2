@@ -19,7 +19,7 @@ from typing import Any
 from loguru import logger
 
 from backend.fichiers import FichierIntrouvable, resoudre_reference
-from backend.outils.contrat import ContexteExecution, DescriptionOutil, Outil
+from backend.outils.contrat import ContexteExecution, DescriptionOutil, EchecOutil, Outil
 
 NOM = "presenter_fichier"
 
@@ -50,6 +50,13 @@ DESCRIPTION = DescriptionOutil(
         "receiving a file worth showing, not for a purely textual result."
     ),
     parametres=_SCHEMA,
+    # Le modèle désigne un fichier par le nom qu'il lui a donné, et nomme l'argument comme il vient
+    # — `nom`, `fichier`, `chemin`. Refuser l'appel pour ce motif reviendrait à perdre une
+    # présentation dont la cible est parfaitement identifiée. Voir `DescriptionOutil.normaliser`.
+    alias={
+        alias: "fichier_id"
+        for alias in ("nom", "nom_fichier", "fichier", "chemin", "name", "filename", "file", "path", "id")
+    },
 )
 
 
@@ -64,16 +71,21 @@ async def executer(arguments: dict[str, Any], contexte: ContexteExecution) -> st
     """
     reference = str(arguments.get("fichier_id", "")).strip()
     if not reference:
-        return "Échec : aucun « fichier_id » fourni. Rappeler l'outil avec le nom ou l'identifiant du fichier."
+        raise EchecOutil(
+            "Failed: `presenter_fichier` was called without `fichier_id`.\n"
+            "Required argument, in the SAME call:\n"
+            "  fichier_id = the file name you created, or the id returned when it was written\n"
+            "Re-send the call once, with the value inline."
+        )
     try:
         fichier = resoudre_reference(contexte.conversation_id, reference)
-    except FichierIntrouvable:
+    except FichierIntrouvable as exc:
         logger.warning("presenter_fichier : « {} » introuvable dans {}", reference, contexte.conversation_id)
-        return (
+        raise EchecOutil(
             f"Échec : aucun fichier « {reference} » dans cette conversation. "
-            "Les fichiers disponibles sont ceux produits par `executer_python` ou joints par "
-            "l'utilisateur ; un fichier écrit dans le bac n'existe qu'une fois l'exécution terminée."
-        )
+            "Les fichiers disponibles sont ceux écrits avec `ecrire_fichier` ou produits par "
+            "`executer_python`, et ceux joints par l'utilisateur. Écrire le fichier d'abord."
+        ) from exc
     return json.dumps(
         {
             "fichier_id": fichier.id,

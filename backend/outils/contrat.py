@@ -31,9 +31,16 @@ class DescriptionOutil(BaseModel):
     description: str = Field(min_length=1)
     # Schéma JSON des arguments. Rendu tel quel au modèle : c'est lui qui contraint ce qu'il émet.
     parametres: dict[str, Any]
+    # Synonymes acceptés pour un argument : `alias_reçu -> nom_canonique`. Voir `normaliser`.
+    alias: dict[str, str] = Field(default_factory=dict)
 
     def vers_format_moteur(self) -> dict[str, Any]:
-        """Forme exacte attendue dans `tools=` par `create_chat_completion`."""
+        """Forme exacte attendue dans `tools=` par `create_chat_completion`.
+
+        Les alias ne sont PAS déclarés au modèle : le schéma doit rester une consigne unique, sinon
+        on lui apprend qu'il existe plusieurs façons d'écrire la même chose. Ils ne servent qu'à
+        rattraper ce qu'il émet malgré la consigne.
+        """
         return {
             "type": "function",
             "function": {
@@ -42,6 +49,38 @@ class DescriptionOutil(BaseModel):
                 "parameters": self.parametres,
             },
         }
+
+    def normaliser(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Ramène les synonymes d'arguments à leur nom canonique, sans jamais écraser ce dernier.
+
+        Constaté en conditions réelles le 2026-08-16, et c'est le gaspillage le plus cher relevé
+        dans ce transcript : le modèle a émis `ecrire_fichier` avec le contenu ENTIER du fichier
+        (12 173 caractères de HTML, corrects) et un argument `nom` au lieu de `chemin`. Le harnais a
+        répondu « Aucun chemin fourni » et jeté le travail. Le modèle a alors réémis l'appel — vide
+        cette fois — trois tours de suite.
+
+        Refuser un appel pour un synonyme est un choix du harnais, pas une contrainte : l'intention
+        est parfaitement lisible, il y a exactement un argument manquant et exactement un argument
+        inconnu. Un alias déclaré est une correspondance EXPLICITE et testée, pas une devinette sur
+        les arguments inattendus — un appariement automatique aurait pu placer un contenu dans un
+        chemin.
+
+        Le nom canonique déjà présent gagne toujours : si le modèle envoie `chemin` ET `nom`, c'est
+        `chemin` qui compte, et l'alias est ignoré plutôt que de remplacer une valeur explicite.
+        """
+        if not self.alias:
+            return arguments
+        normalises = dict(arguments)
+        for recu, canonique in self.alias.items():
+            if recu not in normalises:
+                continue
+            valeur = normalises.pop(recu)
+            # L'alias est toujours consommé, même quand le canonique est déjà là : le laisser
+            # traînerait un doublon dans les arguments passés à l'outil, avec deux valeurs
+            # concurrentes pour la même chose.
+            if canonique not in normalises:
+                normalises[canonique] = valeur
+        return normalises
 
 
 class ContexteExecution(BaseModel):
@@ -62,6 +101,21 @@ class ContexteExecution(BaseModel):
 
     conversation_id: str
     racine_bac: Path
+
+
+class EchecOutil(Exception):
+    """Échec attendu d'un outil, dont le message part TEL QUEL au modèle.
+
+    Un outil signalait jusqu'ici son échec en rendant un texte commençant par « Échec : », et
+    `ResultatOutil.succes` valait donc `True` même quand rien n'avait abouti. Personne ne s'en
+    servait, jusqu'à ce que le harnais ait besoin de savoir si un tour avait produit quoi que ce
+    soit — pour éviter d'annoncer un fichier inexistant (2026-08-16). Deviner l'échec en relisant
+    le préfixe du texte aurait marché jusqu'au premier message reformulé ou traduit.
+
+    Ce n'est pas une erreur de programme : c'est un résultat, et il est rendu au modèle sans
+    enrobage. `registre.executer` l'attrape avant le filet à `Exception`, qui reste réservé aux
+    pannes imprévues.
+    """
 
 
 class ResultatOutil(BaseModel):

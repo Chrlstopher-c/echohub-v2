@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 from backend.chat.modeles import ResumeConversation
-from backend.outils.contrat import ContexteExecution
+from backend.outils.contrat import ContexteExecution, EchecOutil
 from backend.outils.fichiers_bac import OUTIL_ECRIRE, OUTIL_LIRE, OUTIL_MODIFIER
 
 
@@ -32,6 +32,19 @@ def _executer(outil, arguments: dict, contexte: ContexteExecution) -> str:
 
 def _ecrire(contexte: ContexteExecution, chemin: str, contenu: str) -> str:
     return _executer(OUTIL_ECRIRE, {"chemin": chemin, "contenu": contenu}, contexte)
+
+
+def _echec(outil, arguments: dict, contexte: ContexteExecution) -> str:
+    """Message d'un échec ATTENDU, levé en `EchecOutil` plutôt que rendu comme un texte ordinaire.
+
+    Changement du 2026-08-16 : un outil rendait auparavant « Échec : … » avec `succes=True`, si
+    bien que le harnais ne pouvait pas savoir qu'un tour n'avait rien produit — et laissait le
+    modèle annoncer un fichier inexistant. L'échec est maintenant porté par le type, pas deviné
+    en relisant le préfixe du texte.
+    """
+    with pytest.raises(EchecOutil) as capture:
+        _executer(outil, arguments, contexte)
+    return str(capture.value)
 
 
 def test_ecrire_puis_relire_rend_le_contenu_exact(contexte: ContexteExecution) -> None:
@@ -60,7 +73,7 @@ def test_modifier_ne_touche_que_le_fragment_vise(contexte: ContexteExecution) ->
 
 def test_modifier_avec_un_fragment_absent_refuse_et_dit_quoi_faire(contexte: ContexteExecution) -> None:
     _ecrire(contexte, "app.py", "a = 1\n")
-    resultat = _executer(OUTIL_MODIFIER, {"chemin": "app.py", "ancien": "z = 9", "nouveau": "z = 0"}, contexte)
+    resultat = _echec(OUTIL_MODIFIER, {"chemin": "app.py", "ancien": "z = 9", "nouveau": "z = 0"}, contexte)
     assert "n'apparaît pas" in resultat
     assert "lire_fichier" in resultat
     assert _executer(OUTIL_LIRE, {"chemin": "app.py"}, contexte) == "a = 1\n", "fichier inchangé après refus"
@@ -69,31 +82,31 @@ def test_modifier_avec_un_fragment_absent_refuse_et_dit_quoi_faire(contexte: Con
 def test_modifier_avec_un_fragment_ambigu_refuse(contexte: ContexteExecution) -> None:
     """Choisir l'occurrence à la place du modèle produirait une édition silencieuse au mauvais endroit."""
     _ecrire(contexte, "app.py", "x = 1\nx = 1\n")
-    resultat = _executer(OUTIL_MODIFIER, {"chemin": "app.py", "ancien": "x = 1", "nouveau": "x = 2"}, contexte)
+    resultat = _echec(OUTIL_MODIFIER, {"chemin": "app.py", "ancien": "x = 1", "nouveau": "x = 2"}, contexte)
     assert "2 fois" in resultat
     assert _executer(OUTIL_LIRE, {"chemin": "app.py"}, contexte) == "x = 1\nx = 1\n", "fichier inchangé"
 
 
 def test_modifier_un_fichier_absent_oriente_vers_l_ecriture(contexte: ContexteExecution) -> None:
-    resultat = _executer(OUTIL_MODIFIER, {"chemin": "absent.py", "ancien": "a", "nouveau": "b"}, contexte)
+    resultat = _echec(OUTIL_MODIFIER, {"chemin": "absent.py", "ancien": "a", "nouveau": "b"}, contexte)
     assert "ecrire_fichier" in resultat
 
 
 def test_lire_un_fichier_absent_le_dit(contexte: ContexteExecution) -> None:
-    assert "n'existe pas" in _executer(OUTIL_LIRE, {"chemin": "absent.py"}, contexte)
+    assert "n'existe pas" in _echec(OUTIL_LIRE, {"chemin": "absent.py"}, contexte)
 
 
 @pytest.mark.parametrize("chemin", ["../evade.txt", "../../evade.txt", "sous/../../evade.txt", "/etc/passwd"])
 def test_aucune_ecriture_hors_du_bac(contexte: ContexteExecution, chemin: str, tmp_path: Path) -> None:
     """La faute grave de ce module : un chemin du modèle qui sort de son bac."""
-    resultat = _ecrire(contexte, chemin, "contenu")
+    resultat = _echec(OUTIL_ECRIRE, {"chemin": chemin, "contenu": "contenu"}, contexte)
     assert resultat.startswith("Échec"), f"« {chemin} » aurait dû être refusé"
     assert not (contexte.racine_bac.parent / "evade.txt").exists()
 
 
 @pytest.mark.parametrize("chemin", ["../evade.txt", "/etc/passwd"])
 def test_aucune_lecture_hors_du_bac(contexte: ContexteExecution, chemin: str) -> None:
-    assert _executer(OUTIL_LIRE, {"chemin": chemin}, contexte).startswith("Échec")
+    assert _echec(OUTIL_LIRE, {"chemin": chemin}, contexte).startswith("Échec")
 
 
 def test_un_lien_symbolique_vers_l_exterieur_est_refuse(contexte: ContexteExecution, tmp_path: Path) -> None:
@@ -102,10 +115,11 @@ def test_un_lien_symbolique_vers_l_exterieur_est_refuse(contexte: ContexteExecut
     dehors.write_text("secret", encoding="utf-8")
     contexte.racine_bac.mkdir(parents=True, exist_ok=True)
     (contexte.racine_bac / "lien.txt").symlink_to(dehors)
-    assert _executer(OUTIL_LIRE, {"chemin": "lien.txt"}, contexte).startswith("Échec")
+    assert _echec(OUTIL_LIRE, {"chemin": "lien.txt"}, contexte).startswith("Échec")
 
 
 def test_appel_sans_contenu_refuse_sans_ecrire(contexte: ContexteExecution) -> None:
     """L'appel incomplet observé en conditions réelles : il doit échouer proprement, pas créer un vide."""
-    assert _executer(OUTIL_ECRIRE, {"chemin": "vide.py"}, contexte).startswith("Échec")
+    refus = _echec(OUTIL_ECRIRE, {"chemin": "vide.py"}, contexte)
+    assert "contenu" in refus and "SAME call" in refus, "l'échec dit quoi renvoyer, et en un seul appel"
     assert not (contexte.racine_bac / "vide.py").exists()
