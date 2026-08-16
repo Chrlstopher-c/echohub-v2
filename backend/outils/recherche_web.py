@@ -24,17 +24,22 @@ NOM = "recherche_web"
 # les premiers résultats portent l'essentiel. Borne assumée, pas une limite du moteur.
 RESULTATS_MAX = 6
 
+# Descriptions et schémas EN ANGLAIS : ils sont rendus tels quels dans le gabarit du modèle, à côté
+# d'exemples d'appel eux-mêmes anglais. C'est le texte qui décide de la qualité de l'appel émis.
 _SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "requete": {
             "type": "string",
-            "description": "Les mots-clés à chercher. Formuler comme dans un moteur de recherche, "
-            "pas comme une question complète.",
+            "description": (
+                "The search keywords. Required — a call without it does nothing. Write them as you "
+                "would type them into a search engine, not as a full sentence or question. Use the "
+                "language the answer is most likely written in."
+            ),
         },
         "nombre_resultats": {
             "type": "integer",
-            "description": f"Nombre de résultats souhaités, de 1 à {RESULTATS_MAX}.",
+            "description": f"How many results to return, from 1 to {RESULTATS_MAX}. Optional.",
             "minimum": 1,
             "maximum": RESULTATS_MAX,
         },
@@ -45,9 +50,10 @@ _SCHEMA: dict[str, Any] = {
 DESCRIPTION = DescriptionOutil(
     nom=NOM,
     description=(
-        "Cherche sur le web et rend des résultats réels avec leurs URL. À utiliser dès que la "
-        "question porte sur l'actualité, sur des faits postérieurs à l'entraînement, sur des "
-        "chiffres précis, ou sur quoi que ce soit qui doive être vérifiable."
+        "Searches the web and returns real results with their URLs. Use it whenever the question "
+        "involves current events, facts dated after your training, precise figures, or anything "
+        "that must be verifiable. One call per distinct question — refine the keywords rather "
+        "than repeating the same search."
     ),
     parametres=_SCHEMA,
 )
