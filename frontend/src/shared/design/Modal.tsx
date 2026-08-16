@@ -38,14 +38,10 @@ const SIZE: Record<ModalSize, string> = {
   xl: 'lg:max-w-5xl',
 };
 
-/* Seul le mode agrandi contraint une hauteur SUR GRAND ÉCRAN : les autres tailles restent la
- * hauteur de leur contenu. Sous le seuil, c'est le panneau lui-même qui borne la hauteur. */
-const HAUTEUR_CORPS: Record<ModalSize, string> = {
-  sm: '',
-  md: '',
-  lg: '',
-  xl: 'lg:max-h-[70vh]',
-};
+/* La hauteur n'est plus réglée par taille : le PANNEAU la borne, pour toutes les tailles et sur
+ * tous les écrans, et le corps défile dedans. Une table par taille en plus du plafond du panneau
+ * donnait deux sources de vérité pour une seule contrainte — et celle du mode agrandi (70vh)
+ * contredisait déjà le plafond du panneau. */
 
 /* Échap ferme, et le fond ne défile plus tant que la modale est ouverte. */
 function useModalEffects(open: boolean, onClose: () => void): void {
@@ -174,9 +170,19 @@ function ModalPanel({
       animate="visible"
       exit="exit"
       className={cn(
-        'relative flex w-full max-w-none flex-col rounded-lg border border-border-strong bg-overlay shadow-3',
+        'relative flex flex-col rounded-lg border border-border-strong bg-overlay shadow-3',
+        // `min-w-0` est indispensable, pas décoratif : ce panneau est un élément flex, et un
+        // élément flex a `min-width: auto` — sa largeur minimale est celle de son CONTENU. Sans
+        // lui, un artefact de code à lignes longues élargissait le panneau au-delà de l'écran, et
+        // l'`overflow-x-auto` du bloc de code ne servait à rien puisque son conteneur avait déjà
+        // cédé. Mesuré le 2026-08-16 sur une page HTML générée.
+        'w-full min-w-0 max-w-full',
         // Le panneau ne dépasse jamais l'écran visible ; c'est le corps qui défile, pas la page.
-        'eh-marge-sure-bas max-h-[85dvh] lg:max-h-none',
+        // Le plafond vaut AUSSI sur grand écran : `lg:max-h-none` laissait une modale non agrandie
+        // grandir sans fin avec son contenu, et un fichier de trois cents lignes sortait de l'écran
+        // par le bas. Une petite modale reste plus courte que ce plafond, donc rien ne change pour
+        // elle — seules les grandes sont bornées.
+        'eh-marge-sure-bas max-h-[85dvh] lg:max-h-[85vh]',
         SIZE[size],
       )}
     >
@@ -188,9 +194,9 @@ function ModalPanel({
         onBasculerAgrandi={onBasculerAgrandi}
         onClose={onClose}
       />
-      <div className={cn('min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-4', HAUTEUR_CORPS[size])}>
-        {children}
-      </div>
+      {/* `min-w-0` pour la même raison que sur le panneau : sans lui, ce corps réclame la largeur
+          de son contenu et repousse le panneau, quel que soit le plafond posé au-dessus. */}
+      <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-4">{children}</div>
       {footer !== undefined && (
         <footer className="flex shrink-0 justify-end gap-2 border-t border-border px-4 py-3">{footer}</footer>
       )}
