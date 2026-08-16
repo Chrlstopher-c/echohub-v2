@@ -54,9 +54,12 @@ from backend.inference.harnais_outils import (
 )
 from backend.inference.reprise import (
     AVERTISSEMENT_FENETRE_PLEINE,
+    CONSIGNE_PROMESSE,
     CONSIGNE_REPRISE,
     CONTINUATIONS_MAX,
     MARGE_CONTINUATION_TOKENS,
+    RELANCES_PROMESSE_MAX,
+    promesse_non_tenue,
 )
 from backend.inference.planner import (
     DemandeDeChargement,
@@ -409,6 +412,7 @@ class MoteurChat:
         # tours — un fichier écrit au premier reste écrit même si les suivants échouent.
         echecs_vus: set[str] = set()
         aboutis = 0
+        relances = 0
         for _ in range(TOURS_OUTILS_MAX):
             recu: list[str] = []
             async for morceau in self._diffuser_complet(messages, options, outils_declares, recu):
@@ -418,6 +422,17 @@ class MoteurChat:
             # produirait un bloc « outil inconnu » là où il n'y a simplement aucun outil.
             appels = _appels_demandes("".join(recu)) if outils else []
             if not appels:
+                # Aucun appel : soit la réponse est finie, soit elle s'arrête sur une promesse que
+                # rien ne vient tenir. Le second cas se relance une fois, outils sous les yeux.
+                if relances < RELANCES_PROMESSE_MAX and outils and promesse_non_tenue("".join(recu)):
+                    relances += 1
+                    logger.warning("Réponse close sur une annonce sans appel : relance {}.", relances)
+                    yield {"texte": BALISE_FIN_ETAPE}
+                    messages = list(messages) + [
+                        MessageChat(role="assistant", content=_sans_appels_outils("".join(recu))),
+                        MessageChat(role="user", content=CONSIGNE_PROMESSE),
+                    ]
+                    continue
                 return
             # Ce tour appelait un outil : ce qui vient d'être écrit était du commentaire de travail,
             # pas la réponse. On le signale au lieu de le laisser passer pour telle. Le balisage de
