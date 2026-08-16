@@ -1,44 +1,151 @@
 # STATE — EchoHub v2
 
-*Dernière mise à jour : 2026-08-15*
+*Dernière mise à jour : 2026-08-16*
 
 ## Résumé de l'état actuel
 
-L'application tourne, en Docker, sur RTX 5080 / WSL2. On charge un modèle GGUF depuis un plan
-calculé, on discute avec, le modèle appelle réellement des outils (recherche web via SearXNG
-local), et l'interface montre son raisonnement, ses appels d'outils et l'occupation du contexte.
+L'application tourne, en Docker, sur RTX 5080 16 Go / WSL2. On charge un modèle GGUF depuis un plan
+calculé, on discute avec, il appelle réellement des outils, exécute du Python confiné, écrit et
+édite des fichiers dans son bac, et les présente dans le fil en artefacts cliquables.
 
-Six domaines backend montés, **53 opérations HTTP**, **280 tests Python verts**, typage TypeScript
-strict sans `any`. Accès local et LAN (`http://10.0.0.6:37920`).
+**8 domaines backend montés**, **382 tests Python verts**, typage TypeScript strict sans `any`.
+Accès local et LAN sur `http://10.0.0.6:37820`. L'interface est utilisable au téléphone depuis
+le 2026-08-15.
 
-Le socle est solide. Le modèle exécute maintenant réellement du code Python, confiné (lot L2,
-2026-08-15) : utilisateur non privilégié, bornes CPU/mémoire/taille de fichier/processus, un bac par
-conversation balayé vers le magasin de fichiers après chaque exécution. Le réseau du processus
-confiné n'est PAS coupé — mesuré impossible sans capacité supplémentaire, voir
-`backend/outils/bac_a_sable.py::LIMITES_REELLES_TEXTE`. Reste à faire : la présentation des
-artefacts dans le fil (L3, prochain lot).
+Six outils sont déclarés au modèle, dans l'ordre de la boucle de travail : `recherche_web`,
+`ecrire_fichier`, `lire_fichier`, `modifier_fichier`, `executer_python`, `presenter_fichier`.
 
-## Ce qui a été fait — session du 2026-08-14 au 2026-08-15
+## Ce qui a été fait — session du 2026-08-16
 
-**Reconstruction complète.** La v1 (`../echohub-master`) a été abandonnée après plusieurs heures
-de correctifs : ses constantes étaient calibrées pour une RTX 3060 sur Linux natif et chacune se
-retournait contre cette machine. La v2 a été bâtie par un workflow de 15 agents, puis assemblée et
-corrigée à la main.
+**Le sujet de la journée : le harnais d'outils, corrigé sur transcripts réels.** Chaque correctif
+part d'une conversation relue en base, jamais d'une hypothèse. Deux fois dans la session, une
+hypothèse documentée mais non mesurée a été réfutée par un test contrôlé — l'échantillonnage
+d'abord, les outils ensuite.
 
-**Livré et vérifié en réel :**
+- **Fins de ligne forcées en LF** (`.gitattributes`). Un `git pull` sous Windows réécrivait
+  `docker/entrypoint.sh` en CRLF et le conteneur sortait en 127 à chaque démarrage.
+- **Interface mobile** : composeur, tiroirs, écran Modèles. La carte de modèle débordait de 629 px,
+  cause réelle `min-width: auto` sur les enfants de grille.
+- **Le harnais n'abandonne plus un appel ni la réponse.** La condition de sortie de boucle portait
+  aussi sur les outils *déclarés*, devenus nuls au second tour : l'appel était détecté puis jamais
+  exécuté, et le `<tool_call>` restait affiché en XML brut. Et quand les trois tours demandaient un
+  outil, la conversation restait sans un mot — il y a désormais un tour de clôture.
+- **Socle et schémas d'outils réécrits en anglais**, parsing des deux dialectes rendu tolérant aux
+  balises fermantes manquantes.
+- **Modale d'artefact** : ne déborde plus, ni en largeur ni en hauteur. Même cause que la carte de
+  modèle.
+- **Trois outils de fichier** (`ecrire_fichier`, `lire_fichier`, `modifier_fichier`). Avant, le seul
+  moyen de produire un fichier était `executer_python` : le modèle emballait son contenu dans du
+  source Python, doublement échappé, et **réécrivait tout à la moindre erreur**.
+- **Les résultats d'outils repartent en rôle `tool`**, contenu nu. L'ancienne forme — rôle
+  `assistant` préfixé `[outil nom — résultat]` — était un format inventé par nous, que le modèle a
+  fini par imiter en prose au lieu d'appeler l'outil.
+- **Aperçu des appels et compaction de l'historique.** Écrire un fichier passe son contenu entier en
+  argument : le bloc affiché pesait 7 261 caractères. Cinq lignes à l'affichage, huit lignes pour
+  les blocs d'outils des tours passés qui repartent au moteur.
+- **Un synonyme d'argument ne fait plus jeter le travail du modèle** (voir « Contexte non-évident »).
 
-- Chargement piloté par un planificateur : plan affiché avec ses justifications avant application,
-  dégradation strictement plus conservatrice après échec.
-- Chat complet — Markdown natif, raisonnement repliable, actions au survol (copier, éditer,
-  rejouer en sous-branche), réglages par conversation, branches de messages.
-- Harnais d'outils : socle de prompt système, recherche web SearXNG, appels affichés en direct
-  avec entrée et sortie distinctes.
-- Panneau d'occupation du contexte, mesuré par le tokenizer du modèle chargé.
-- Écran Modèles : recherche Hub avec filtres de capacités, registre local, transferts, favoris,
-  inventaire du disque, menu contextuel.
-- Clic droit sur conversations et modèles, renommage en place.
+## Décisions prises — 2026-08-16
 
-**Mesures de référence sur cette machine :**
+| Décision | Raison | Date |
+|---|---|---|
+| Alias d'arguments déclarés par outil | Le modèle a envoyé 12 173 caractères de HTML valide avec `nom` au lieu de `chemin` : tout a été jeté. Une correspondance déclarée et testée, jamais un appariement au jugé des arguments inattendus | 2026-08-16 |
+| L'échec d'un outil porté par le TYPE (`EchecOutil`) | Un outil rendait « Échec : … » avec `succes=True` ; le harnais ne pouvait pas savoir qu'un tour n'avait rien produit, et laissait annoncer un fichier inexistant. Le deviner sur le préfixe du texte cassait au premier message reformulé | 2026-08-16 |
+| Le balisage d'appel du modèle ne repart pas au moteur | Un appel raté qu'on lui remontre est un gabarit qu'on lui propose : l'appel vide se rejouait à l'identique, y compris au premier tour du message suivant | 2026-08-16 |
+| Anti-redite sur les ÉCHECS seulement, effacée par le premier succès | Borner toute répétition aurait cassé `lire → modifier → relire`, c'est-à-dire la boucle que ces outils existent pour permettre. Attrapé par les tests existants | 2026-08-16 |
+| Résultats d'outils en rôle `tool`, contenu nu | Canal natif des gabarits (`<tool_response>`), que le modèle ne confond pas avec sa propre prose. Vérifié dans les en-têtes GGUF des 8 modèles présents | 2026-08-16 |
+| Socle et schémas d'outils rédigés en anglais | Ces modèles raisonnent en anglais — visible dans chaque bloc de raisonnement — et suivent mieux une consigne de forme dans cette langue. La sortie reste en français, la première ligne du socle l'exige | 2026-08-16 |
+| Écrire dans un fichier plutôt que dans `code` | Le fichier survit à l'appel : une erreur se corrige avec `modifier_fichier` au lieu de tout retaper | 2026-08-16 |
+| Compaction des blocs d'outils dans le seul flux vers le moteur | Le contenu d'un outil n'a de valeur pleine que pendant le tour qui l'a demandé. L'affiché et l'enregistré restent entiers : économie de contexte, pas perte d'information | 2026-08-16 |
+| `.gitattributes` avec `* text=auto eol=lf` | Sans lui, chaque checkout Windows recasse l'entrypoint du conteneur. `git add --renormalize` ne corrige que l'index | 2026-08-16 |
+
+## Contexte non-évident
+
+**Le harnais peut coûter plus cher que le modèle.** Mesure du 2026-08-16 : le modèle émet
+`ecrire_fichier` avec le contenu entier du fichier — 12 173 caractères de HTML valide — et un
+argument `nom` au lieu de `chemin`. Le harnais répond « Aucun chemin fourni » et jette tout. Le
+modèle réémet alors un appel VIDE, trois tours de suite, puis annonce à l'utilisateur un fichier
+inexistant et une carte qui n'est pas affichée. Un seul refus de synonyme a produit toute la
+cascade. Règle qui en découle : quand l'intention d'un appel est lisible, le harnais la sert.
+
+**Tout format que le harnais laisse dans le contexte finit imité.** Deux fois : le préfixe
+`[outil nom — résultat]`, puis le balisage `<function=…>` d'un appel raté. Ce qui revient au modèle
+comme étant son propre texte lui sert d'exemple de ce qu'il a « bien » fait.
+
+**Les réponses courtes ne viennent pas de l'application.** Mesuré le 2026-08-16 sur quatre cellules :
+6 389 à 7 904 caractères, la chaîne complète avec harnais donnant la plus longue. Rien dans le code
+ne raccourcit. Les leviers restants sont le prompt système de la conversation, l'échantillonnage
+Qwen3 (+14 % mesuré, non appliqué) et la quantification Q3_K_S du modèle chargé.
+
+**La v1 était calibrée pour une autre machine.** RTX 3060, Linux natif. Nombre de couches codé en
+dur, heuristique de 150 Mo par couche (436 Mo mesurés), et mémoire unifiée CUDA — inutilisable sous
+WSL2, qui laisse les poids en RAM hôte avec la VRAM figée à 2 Go. Première hypothèse à tester devant
+tout symptôme mémoire inexpliqué.
+
+**`GGML_CUDA_FORCE_CUBLAS=ON` n'est pas cosmétique.** Sans lui, nvcc de CUDA 12.8 segfaute en
+compilant les kernels MMQ de ggml pour `compute_120a`. Bug du compilateur. Détail dans
+COMPATIBILITE-GPU.md.
+
+**La syntaxe GPU de Docker est inversée entre plateformes.** `deploy.resources.reservations` sur
+Windows/WSL2, CDI `nvidia.com/gpu=all` sur Linux natif. Les deux formes sont dans
+docker-compose.yml, une seule active — **`main` porte aujourd'hui la forme Windows.**
+
+**Le port réel est 37820, pas celui du compose.** Le défaut du compose est 37920 ; un `.env` non
+suivi par git le surcharge. Lire le `.env`, pas le compose.
+
+**Les identifiants contiennent des `/`.** `<depot>::<fichier>`, encodé `%2F` par le navigateur :
+toute route les recevant a besoin de `:path`, routes suffixées déclarées **avant** la route nue.
+
+**Pydantic ne sérialise pas les `@property`.** `computed_field` est obligatoire dès qu'une valeur
+dérivée doit voyager. C'est ce qui bloquait tous les MoE.
+
+**Aucune authentification.** Le port 37820 est ouvert sur le LAN : n'importe qui sur le réseau peut
+lire les conversations, charger ou éjecter un modèle, et désormais **exécuter du Python dans le bac**.
+À traiter avant toute exposition hors du réseau domestique.
+
+**Sécurité, à ne pas perdre de vue.** Un jeton GitHub `ghp_…` collé en clair le 2026-08-14 doit être
+considéré comme compromis et révoqué (https://github.com/settings/tokens). Le jeton OAuth de
+`gh auth login --web` est dans le gestionnaire d'identifiants Windows de cette machine — qui n'est
+pas celle de Chris. `gh auth logout` avant de la rendre.
+
+## Prochaines étapes
+
+Ordonnées dans TODO.md. En tête : **valider le harnais corrigé sur une vraie conversation**, puis
+les deux défauts moteur mesurés (verrou retenu, plantage au déchargement).
+
+## Points en suspens
+
+- **Le harnais corrigé n'a pas encore été éprouvé en génération réelle.** 382 tests couvrent les
+  mécanismes ; aucun modèle n'a été chargé depuis (Chris s'en charge lui-même).
+- **Le MoE n'a jamais été chargé en conditions réelles.** Planifiable depuis le 2026-08-15, aucune
+  mesure. C'est le test qui dira si les 6 Go de VRAM inutilisés sont récupérés.
+- **Qwen3-Coder-30B en plusieurs parts** : correctif écrit, jamais éprouvé sur un vrai
+  téléchargement découpé.
+- **Compose par plateforme** : un découpage `docker-compose.windows.yml` / `.linux.yml` piloté par
+  `COMPOSE_FILE` dans le `.env` a été proposé, non tranché. En attendant, le va-et-vient reste sur
+  `main`.
+- **ccremote** (`../ccremote`, branche `local-models`) : l'orchestrateur exige des identifiants
+  Claude. Trois voies proposées, aucune tranchée.
+
+## Historique
+
+**2026-08-15 — Lots L2 à L10.** Exécution Python confinée avec un bac par conversation ; artefacts
+dans le fil (présentation, modale agrandissable, aperçu HTML cloisonné) ; coût en tokens d'une image
+mesuré via mtmd et repli sans tour de vision ; correction d'un plantage natif SIGABRT au premier
+comptage d'image ; réglage de désactivation des CUDA graphs ; arrêt de la réémission des outils
+après un tour avec résultats.
+
+**2026-08-14 au 2026-08-15 — Reconstruction complète.** La v1 (`../echohub-master`) abandonnée après
+plusieurs heures de correctifs, ses constantes étant calibrées pour une RTX 3060 sur Linux natif. La
+v2 bâtie par un workflow de 15 agents, puis assemblée et corrigée à la main : planificateur de
+chargement, chat complet avec branches, harnais d'outils et recherche web SearXNG, panneau
+d'occupation du contexte, écran Modèles.
+
+**2026-08-14 — Journée v1.** Lancement sous Windows, Docker Desktop et WSL2, quatre correctifs pour
+démarrer. Puis diagnostic du MoE : plusieurs heures perdues à supposer un manque de VRAM avant de
+tester un modèle connu-bon de 490 Mo, qui a généré immédiatement et disculpé toute la chaîne.
+
+## Mesures de référence sur cette machine
 
 | Modèle | Contexte | Débit |
 |---|---|---|
@@ -46,76 +153,4 @@ corrigée à la main.
 | Qwen3.6-27B PHILADELPHIA Q3_K_M | 32 768 | ~72 tok/s |
 | Qwen3.6-35B-A3B IQ4_XS (29/41 couches GPU) | 32 768 | 41 tok/s |
 | idem | 57 344 | 19,6 tok/s |
-
-## Décisions prises
-
-| Décision | Raison | Date |
-|---|---|---|
-| Un seul appel moteur par tour, outils déclarés dedans | Deux appels aux prompts différents invalident le cache de prompt de llama.cpp : deux évaluations complètes avant le premier token, des dizaines de secondes sur un 27B partiellement en RAM | 2026-08-15 |
-| Socle de prompt système avant celui de la conversation | Sans outils déclarés, les modèles annoncent savoir chercher sur le web puis fabriquent des résultats | 2026-08-14 |
-| Accepter deux dialectes d'appel d'outil | Les gabarits GGUF émettent soit du JSON dans `<tool_call>`, soit du balisage `<function=…>`. Aucun n'est devinable à l'avance | 2026-08-15 |
-| Résultats d'outils en balises textuelles, pas en événements de flux | Un événement disparaît au rechargement ; une balise persiste avec le message et garde la réponse vérifiable | 2026-08-15 |
-| Marge de libération VRAM à 768 Mo | Mesurée : 305 puis 384 Mo de résidu (contexte CUDA du processus, jamais rendu tant qu'il vit). À 256 Mo, aucun second chargement n'était possible | 2026-08-15 |
-| Favoris en base, pas dans le navigateur | La bibliothèque est la même depuis le poste et depuis le téléphone | 2026-08-15 |
-| Inventaire du disque distinct du registre | Le registre n'expose que le chargeable ; les dossiers refusés étaient invisibles ET indestructibles — 15,7 Go inaccessibles | 2026-08-15 |
-| Marqueur de fin d'étape posé après coup | Au début d'un tour, rien ne dit s'il produira un appel ou la réponse : ouvrir une balise « au cas où » replierait la réponse dans le cas le plus fréquent | 2026-08-15 |
-
-## Contexte non-évident
-
-**La v1 était calibrée pour une autre machine.** RTX 3060, Linux natif. Trois de ses constantes se
-sont retournées contre celle-ci : nombre de couches codé en dur, heuristique de 150 Mo par couche
-(436 Mo mesurés), et mémoire unifiée CUDA — inutilisable sous WSL2, qui ne supporte pas
-l'oversubscription et laisse les poids en RAM hôte avec la VRAM figée à 2 Go. C'est la première
-hypothèse à tester devant tout symptôme mémoire inexpliqué.
-
-**`GGML_CUDA_FORCE_CUBLAS=ON` n'est pas cosmétique.** Sans lui, nvcc de CUDA 12.8 segfaute en
-compilant les kernels MMQ de ggml pour `compute_120a`. Bug du compilateur, pas du code. Le retirer
-« pour gagner de la perf » casse le build. Détail dans COMPATIBILITE-GPU.md.
-
-**La syntaxe GPU de Docker est inversée entre plateformes.** `deploy.resources.reservations`
-sur Windows/WSL2, CDI `nvidia.com/gpu=all` sur Linux natif. Les deux formes sont dans
-docker-compose.yml, une seule active.
-
-**Les identifiants contiennent des `/`.** Un identifiant de registre ou de transfert vaut
-`<depot>::<fichier>` et le dépôt porte un `/`. Le navigateur l'encode en `%2F`, le serveur le
-décode avant le routage : toute route les recevant a besoin de `:path`, avec les routes suffixées
-déclarées **avant** la route nue, `:path` étant glouton. Ce défaut a frappé deux fois — registre,
-puis transferts — parce que la première correction n'avait pas été généralisée.
-
-**Pydantic ne sérialise pas les `@property`.** Une valeur calculée côté backend et exposée par une
-propriété simple n'atteint jamais le navigateur. C'est ce qui bloquait tous les MoE : la largeur
-FFN active existait et était juste, mais invisible. `computed_field` est obligatoire dès qu'une
-dérivée doit voyager.
-
-**Aucune authentification.** Le port 37920 est ouvert sur le LAN : n'importe qui sur le réseau peut
-charger, éjecter et interroger un modèle. Acceptable en usage domestique, à traiter avant toute
-exposition.
-
-**Sécurité, à ne pas perdre de vue.** Un jeton GitHub `ghp_…` a été collé en clair dans une
-conversation le 2026-08-14 : il doit être considéré comme compromis et révoqué
-(https://github.com/settings/tokens). L'authentification se fait désormais par `gh auth login --web`,
-et le jeton OAuth qui en résulte est dans le gestionnaire d'identifiants Windows de cette machine —
-qui n'est pas celle de Chris. `gh auth logout` avant de la rendre.
-
-## Prochaines étapes
-
-Ordonnées dans TODO.md. En tête : **bac à sable d'exécution de code et artefacts** — le script de
-workflow est prêt et les faits d'isolation déjà mesurés.
-
-## Points en suspens
-
-- **Le MoE n'a jamais été chargé en conditions réelles.** Il est planifiable depuis le 2026-08-15,
-  mais aucune mesure. C'est le test qui dira si les 6 Go de VRAM inutilisés sont récupérés.
-- **Qwen3-Coder-30B en plusieurs parts** : le correctif est écrit, jamais éprouvé sur un vrai
-  téléchargement découpé.
-- **ccremote** (`../ccremote`, branche `local-models`) : adapté aux modèles locaux via API
-  compatible OpenAI, pile Docker en place, mais l'orchestrateur exige des identifiants Claude.
-  Trois voies avaient été proposées, aucune tranchée.
-
-## Historique
-
-**2026-08-14 — Journée v1.** Lancement sous Windows, installation de Docker Desktop et WSL2,
-quatre correctifs pour démarrer (import absent du dépôt amont, `start.ps1` tué par stderr sous
-PowerShell 5.1, syntaxe GPU CDI rejetée, `mcp_server.py` inexistant). Puis diagnostic du MoE :
-plusieurs heures perdues à supposer un manque de VRAM avant de tester un modèle connu-bon de
-490 Mo, qui a généré immédiatement et disculpé toute la chaîne. Décision de reconstruire.
+| Huihui-Qwen3.6-35B-A3B-Claude-4.7-Opus-abliterated Q3_K_S | — | 10–20 tok/s |

@@ -1,107 +1,67 @@
 # TODO — EchoHub v2
 
-*Dernière mise à jour : 2026-08-15*
+*Dernière mise à jour : 2026-08-16*
 
 ## En cours
 
-Rien. Session close sur un état stable, arbre git propre, application en ligne.
+Rien. Session close sur un état stable, arbre git propre, application en ligne, 382 tests verts.
 
 ## À faire (priorité)
 
-### 1. URGENT — bac à sable et artefacts
+### 1. Éprouver le harnais corrigé en génération réelle
 
-Workflow préparé et **arrêté avant exécution** le 2026-08-15, à relancer tel quel :
-`.claude/projects/…/workflows/scripts/echohub-bac-artefacts-wf_0f08b6c0-b5a.js`
+Neuf lots de correctifs sont partis aujourd'hui sans qu'aucun modèle ne soit rechargé — Chris s'en
+charge lui-même. Les mécanismes sont couverts par des tests, le comportement observé ne l'est pas.
 
-- [x] Interpréteur Python accessible au modèle depuis la conversation, avec exécution réelle — L2,
-      2026-08-15 : outil `executer_python` (`backend/outils/`), lanceur confiné (`bac_a_sable.py`,
-      rlimits → setgid → setuid), balayage du bac (`balayage_bac.py`). Réseau NON coupé — mesuré
-      EPERM (`CAP_SYS_ADMIN` absent du conteneur par défaut), documenté dans
-      `bac_a_sable.LIMITES_REELLES_TEXTE`. Cinq preuves passées en conteneur
-      (`docker/preuves_bac_a_sable.py`) + génération réelle (Qwen3.5-9B) ayant produit un fichier
-      retrouvé dans le magasin.
-- [x] Un bac à sable par conversation : fichiers et dossiers, taille max par fichier ET par bac — le
-      bac lui-même est créé par L2 ; les quotas par fichier/bac viennent de L0 (`fichiers/politique.py`)
-- [ ] Outil de présentation : le modèle désigne un fichier, l'utilisateur le voit
-- [ ] Artefact au clic — modale **agrandissable**, en-tête avec interrupteur à **deux icônes**
-      (code source / aperçu)
-- [ ] Langages : Python (exécuté), JavaScript, TypeScript, HTML, CSS, texte brut
+- [ ] Reprendre le scénario exact qui a échoué : « écris-moi une page HTML avec un simulateur »,
+      puis « ça ne rend pas bien, corrige ». Ce que la correction doit produire :
+      l'appel avec `nom` au lieu de `chemin` **écrit le fichier** ; l'erreur suivante est corrigée
+      par `modifier_fichier` et non par une réécriture complète ; aucune annonce de fichier ou de
+      carte qui n'existe pas.
+- [ ] Vérifier que le bloc « Appel d'outil » affiche un aperçu de cinq lignes et non 12 000 caractères.
+- [ ] Si un appel vide réapparaît malgré tout : le journal dit maintenant ce qui a été normalisé et
+      ce qui a été refusé comme redite (`logger.info` dans `registre.executer`, `logger.warning` dans
+      `_executer_appels`). Lire le journal AVANT de toucher au code.
 
-**Faits MESURÉS dans le conteneur — ne pas les redécouvrir :**
+### 2. Deux défauts moteur mesurés le 2026-08-16
 
-```
-python3   3.10.12        présent
-bun       1.3.14         présent — seul chemin pour JS et TS
-node, tsc, deno          ABSENTS
-utilisateur              root (uid 0)   ← le point dangereux du sujet
-cgroups v2               cpuset cpu io memory hugetlb pids rdma
-unshare                  présent
-nsjail, bubblewrap       absents
-module python resource   fonctionne (setrlimit)
-espace libre             837 Go
-```
+- [ ] **Le verrou du moteur reste tenu après déconnexion du client** — mesuré à plus de 12 minutes.
+      Une génération abandonnée côté navigateur continue d'occuper l'instance `Llama`, et tout
+      comptage de contexte ou toute nouvelle génération attend derrière.
+- [ ] **`/inference/decharger` pendant une génération active fait tomber le backend**, et 15,4 Go de
+      VRAM ne sont pas rendus. Récupéré par `wsl --shutdown`. Le déchargement doit refuser tant
+      qu'une génération tient le verrou, ou l'interrompre proprement — jamais planter.
 
-**Décisions déjà arbitrées, à tenir :**
+### 3. Longueur des réponses — leviers restants
 
-- **Abandonner root** pour l'exécution : utilisateur non privilégié créé dans le Dockerfile,
-  bascule par `preexec_fn` + `setuid`. C'est la mesure qui compte le plus.
-- Limites par `setrlimit` : temps CPU, mémoire adressable, taille de fichier, nombre de processus,
-  descripteurs. `unshare --net` pour couper le réseau si le coût est acceptable.
-- Sans namespaces de montage, l'isolation du système de fichiers a des limites RÉELLES : les
-  écrire honnêtement plutôt qu'annoncer une garantie fausse.
-- HTML produit par un modèle = contenu non fiable → iframe `sandbox` **sans** `allow-same-origin`,
-  via `srcdoc`. Raison commentée à l'endroit même de l'attribut.
-- Coloration syntaxique écrite à la main, pas de dépendance lourde ajoutée au bundle.
-- Langage sans aperçu sensé (Python) : interrupteur **désactivé avec sa raison**, pas absent —
-  sinon on croit à un bug.
-- Le harnais d'outils existe (`backend/outils/`) : suivre son contrat, ne pas le réécrire.
-  **À résoudre** : le registre exécute un outil sans savoir de quelle conversation il vient, or le
-  bac est par conversation.
-- **Assemblage à la main après le workflow.** Le lot précédent avait livré six domaines corrects
-  branchés nulle part : les périmètres cloisonnés évitent les conflits, mais personne ne monte le
-  résultat.
+Mesuré : **rien dans l'application ne raccourcit les réponses** (quatre cellules, 6 389 à 7 904
+caractères, la chaîne complète avec harnais donnant la plus longue). Les hypothèses « c'est
+l'échantillonnage » puis « c'est le harnais » ont toutes deux été réfutées par la mesure.
 
-### 2. Captures d'écran et fichiers dans les conversations
+- [ ] Aligner l'échantillonnage par défaut sur les recommandations Qwen3 (temp 0.6 / top_p 0.95 /
+      top_k 20, sans pénalité de répétition) — **+14 % mesuré**, modeste mais gratuit.
+- [ ] Regarder le prompt système de la conversation : c'est le levier non mesuré qui reste.
+- [ ] Considérer une quantification supérieure à Q3_K_S pour le modèle utilisé.
 
-- [ ] Joindre une image (capture collée, glissée, ou choisie) à un message
-- [ ] Joindre un fichier
+### 4. Captures d'écran et fichiers dans les conversations
+
+- [ ] Joindre un fichier non-image à un message (les images passent depuis le 2026-08-15)
 - [ ] Transmettre au modèle chargé dès qu'il sait les lire, quel que soit le modèle
 
 **La règle demandée, et elle est structurante** : l'application **ne bloque pas** et **n'affiche
-aucun message générique** du type « ce modèle ne prend pas en charge les images ». Elle transmet.
-Si le modèle chargé n'a pas de tour de vision, c'est **lui** qui répond qu'il ne voit rien, avec
-ses mots. On laisse l'agent faire — une interface qui refuse à sa place se trompera tôt ou tard
-sur ce dont le modèle est capable, et retirera à l'utilisateur une réponse qui aurait pu venir.
+aucun message générique** du type « ce modèle ne prend pas en charge les images ». Elle transmet. Si
+le modèle chargé n'a pas de tour de vision, c'est **lui** qui répond qu'il ne voit rien, avec ses
+mots. Une interface qui refuse à sa place se trompera tôt ou tard sur ce dont le modèle est capable.
 
-**Ce qui existe déjà, à ne pas réécrire :**
-
-- `backend/models/storage.py` → `fichiers_projecteurs()` détecte les `mmproj*.gguf`, seule trace
-  lisible d'une tour de vision sans ouvrir un octet.
-- `backend/models/capacites.py` → capacité `VISION` déjà déduite des annonces du Hub (étiquettes
-  `vision`, `multimodal`, `vlm`, `image-text-to-text`), avec sa provenance tracée.
-- Les filtres de capacités de l'écran Modèles savent déjà la présenter.
-
-**Le vrai chantier est le contrat de message.** `MessageChat.content` est aujourd'hui un `str`
-(`backend/inference/engines_adapters/contrat.py`). Le rendre multimodal touche toute la chaîne :
-contrat moteur, persistance du domaine `chat`, comptage du contexte (une image coûte des tokens
-qu'il faudra mesurer et non estimer), et l'affichage dans le fil. Côté llama.cpp, la vision passe
-par un gestionnaire de conversation dédié et le projecteur `mmproj` chargé à côté des poids —
-vérifier ce que `llama-cpp-python` 0.3.34 expose réellement AVANT de concevoir, comme pour les
-outils.
-
-**À croiser avec le bac à sable** : un fichier joint par l'utilisateur et un fichier produit par le
-modèle veulent tous deux vivre quelque part et s'afficher en artefact. Les deux sujets partagent le
-stockage et la présentation — les traiter d'affilée évite de bâtir deux mécanismes concurrents.
-
-### 3. Charger un MoE en conditions réelles
+### 5. Charger un MoE en conditions réelles
 
 - [ ] Charger le 35B-A3B et mesurer : VRAM occupée, RAM, débit
 - [ ] Comparer au plan calculé — le déport des experts récupère-t-il les 6 Go inutilisés ?
 
-Il est planifiable depuis le 2026-08-15 (`largeur_ffn_active` sérialisée), mais **jamais chargé**.
-Tout le code de déport existe et est couvert par des tests unitaires ; aucune mesure ne l'a validé.
+Planifiable depuis le 2026-08-15 (`largeur_ffn_active` sérialisée), **jamais chargé**. Tout le code
+de déport existe et est couvert par des tests unitaires ; aucune mesure ne l'a validé.
 
-### 4. Vérifications restées en suspens
+### 6. Vérifications restées en suspens
 
 - [ ] GGUF en plusieurs parts : correctif écrit et poussé, **jamais éprouvé** sur un vrai
       téléchargement découpé
@@ -109,30 +69,41 @@ Tout le code de déport existe et est couvert par des tests unitaires ; aucune m
 
 ## Backlog
 
-- [ ] Option de désactivation des CUDA graphs dans les réglages de chargement. Ils sont **actifs
-      par défaut** (vérifié dans `libggml-cuda.so`) et seule la désactivation est exposée par
-      llama.cpp : utile uniquement en cas de bug de capture sur Blackwell.
-- [ ] Le modèle ré-émet parfois un appel d'outil après avoir reçu les résultats. Piste : retirer
-      les outils du prompt au second tour, il n'a plus de raison d'en redemander.
-- [ ] Le socle est en français mais les modèles répondent parfois en anglais. Imposer la langue.
-- [ ] **Aucune authentification** : le port 37920 est ouvert sur le LAN. À traiter avant toute
-      exposition hors du réseau domestique.
+- [ ] **Compose par plateforme** : `docker-compose.windows.yml` / `docker-compose.linux.yml` choisis
+      par `COMPOSE_FILE` dans le `.env` non suivi. Proposé, non tranché — en attendant, la syntaxe
+      GPU fait le va-et-vient sur `main` à chaque pull, et `main` porte la forme Windows.
+- [ ] **Aucune authentification** : le port 37820 est ouvert sur le LAN, et le bac exécute désormais
+      du Python. À traiter avant toute exposition hors du réseau domestique.
+- [ ] `_boucle_outils` fait 44 lignes au lieu des 35 de la norme. La découper imposerait de faire
+      transiter trois valeurs à travers un générateur ; écart assumé, à revoir si la fonction grossit.
+- [ ] Option de désactivation des CUDA graphs : livrée le 2026-08-15, jamais utilisée en pratique.
 - [ ] ccremote (`../ccremote`, branche `local-models`) : l'orchestrateur exige des identifiants
       Claude. Trois voies proposées, aucune tranchée.
-- [ ] Nettoyage disque : ~57 Go récupérables (image v1, volumes, venv vLLM 0.21.0 non
-      transposable — ses shebangs portent des chemins absolus).
+- [ ] Nettoyage disque : ~57 Go récupérables (image v1, volumes, venv vLLM 0.21.0 non transposable —
+      ses shebangs portent des chemins absolus).
 
-## Terminé — session du 2026-08-14 au 2026-08-15
+## Terminé — session du 2026-08-16
 
-- [x] Reconstruction complète de l'application (v1 abandonnée)
-- [x] Planificateur de chargement, budget mémoire mesuré, dégradation conservatrice
-- [x] Chat : Markdown natif, raisonnement repliable, actions au survol, branches, réglages
-- [x] Harnais d'outils : socle de prompt système, recherche web SearXNG, deux dialectes d'appel
-- [x] Panneau d'occupation du contexte, compté par le tokenizer du modèle chargé
-- [x] Écran Modèles : filtres de capacités, favoris, inventaire du disque, menu contextuel
-- [x] Clic droit sur conversations et modèles, renommage en place
-- [x] MoE débloqués (`computed_field` — pydantic ne sérialise pas les `@property`)
-- [x] Verrou du moteur rendu sans délai (le fil restait bloqué 30 s après déconnexion)
-- [x] Routes `:path` sur registre **et** transferts (identifiants contenant un `/`)
-- [x] Suppression réelle des transferts terminés ou échoués
-- [x] Ordre et étiquetage corrects des blocs : étape, appel, outil, raisonnement, réponse
+- [x] Fins de ligne forcées en LF (`.gitattributes`) — un pull Windows cassait le conteneur
+- [x] Interface utilisable au téléphone : composeur, tiroirs, écran Modèles
+- [x] Le harnais n'abandonne plus un appel d'outil détecté au second tour
+- [x] Un tour de clôture garantit une réponse quand les trois tours ont demandé un outil
+- [x] Socle et schémas d'outils en anglais ; parsing tolérant aux balises fermantes manquantes
+- [x] Modale d'artefact : plus de débordement, en largeur comme en hauteur
+- [x] Trois outils de fichier — écrire, lire, modifier — au lieu de tout passer par `executer_python`
+- [x] Résultats d'outils en rôle `tool`, contenu nu, au lieu d'un préfixe inventé et imitable
+- [x] Aperçu de cinq lignes à l'écriture, compaction à huit lignes dans l'historique renvoyé au moteur
+- [x] Alias d'arguments : un synonyme ne fait plus jeter le travail du modèle
+- [x] `EchecOutil` : l'échec d'un outil est porté par le type, plus deviné sur un préfixe de texte
+- [x] Le balisage d'appel du modèle ne repart plus au moteur dans son propre texte
+- [x] Un appel déjà échoué n'est pas rejoué à l'identique tant que rien d'autre n'a abouti
+- [x] `harnais_outils.py` extrait, `_resoudre_outils` (code mort, 44 lignes) supprimé
+
+## Terminé — sessions précédentes
+
+- [x] L2 : exécution Python confinée, un bac à sable par conversation (2026-08-15)
+- [x] L3 : artefacts dans le fil — présentation, modale agrandissable, aperçu HTML cloisonné
+- [x] L5+L6 : coût en tokens d'une image mesuré via mtmd, repli sans tour de vision
+- [x] L10 : outils cessés d'être repassés au moteur après un tour avec résultats ; langue imposée
+- [x] Reconstruction complète de l'application (v1 abandonnée), planificateur, chat, harnais,
+      panneau de contexte, écran Modèles (2026-08-14 au 2026-08-15)
