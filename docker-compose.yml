@@ -46,7 +46,12 @@ services:
       # Distincts de la v1 (37820/37821) : les deux versions peuvent tourner en même temps sur
       # le même hôte sans se disputer un port (mesuré : bind KO côté v2, servi par la v1).
       - "${ECHOHUB_PORT_WEB:-37920}:80"          # interface web (nginx)
-      - "${ECHOHUB_PORT_API:-37921}:37921"       # API FastAPI directe, pour le débogage
+      # Liée à 127.0.0.1 : ce port court-circuite nginx, donc l'authentification HTTP posée
+      # devant l'interface. Sans cette liaison, toute machine du réseau local pilotait l'API
+      # sans le moindre identifiant (vérifié : /models/registre répondait en clair). Le tunnel ne la
+      # routait déjà pas, mais le LAN, lui, l'atteignait. Reste joignable en débogage depuis
+      # cette machine (curl 127.0.0.1:37921), injoignable depuis toute autre origine.
+      - "127.0.0.1:${ECHOHUB_PORT_API:-37921}:37921"  # API FastAPI directe, débogage local uniquement
 
     volumes:
       # Volumes nommés : MODELS_DIR et XDG_DATA_HOME pointent DEDANS (cf. Dockerfile). Tout ce
