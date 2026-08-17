@@ -22,20 +22,20 @@ services:
     container_name: echohub-v2
     restart: unless-stopped
 
-    # --- GPU : forme Windows/WSL2, ACTIVE — cette machine est Windows 11 + Docker Desktop ---
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+    # --- GPU : forme Windows/WSL2, inactive ici — cette machine est Linux natif (Arch), CDI ---
+    # `--gpus all` (équivalent de la forme deploy.resources ci-dessous) échoue sur cette machine :
+    # "AMD CDI spec not found" (COMPATIBILITE-GPU.md, confirmé MESURES-MOE.md 2026-08-15).
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
 
-    # --- GPU : forme Linux natif + CDI, inactive ici ----------------------------------------
-    # Docker Desktop/WSL2 la refuse : "unresolvable CDI devices". Ne l'activer que sur une
-    # machine Linux native.
-    # devices:
-    #   - nvidia.com/gpu=all
+    # --- GPU : forme Linux natif + CDI, ACTIVE sur cette machine ----------------------------
+    devices:
+      - nvidia.com/gpu=all
 
     # torch (vLLM) alloue en mémoire partagée. Le défaut Docker est de 64 Mo, insuffisant dès
     # qu'un worker démarre : l'échec se présente comme un plantage obscur, pas comme un manque
