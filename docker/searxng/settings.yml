@@ -72,3 +72,21 @@ outgoing:
   pool_connections: 50
   pool_maxsize: 10
   enable_http2: true
+
+# --- Moteurs : NE PAS déclarer de section `engines` ici ------------------------------------------
+#
+# ESSAYÉ ET ANNULÉ le 2026-08-26. Ajouter une liste `engines` (mojeek, wikipedia, wikidata…) pour
+# gagner de la redondance a fait passer les résultats de « quelques-uns » à ZÉRO : avec
+# `use_default_settings: true`, une liste `engines` REMPLACE le catalogue par défaut au lieu de le
+# compléter, et des entrées réduites à `name`/`disabled` ne suffisent pas à définir un moteur.
+# Mesuré : mojeek et wikipedia répondaient sans être « muets », et rendaient zéro résultat.
+#
+# Le défaut de SearXNG est donc conservé. Pour n'activer que certains moteurs, la forme correcte
+# est `use_default_settings: {engines: {keep_only: [...]}}` — à éprouver avant de la poser.
+#
+# CE QUI A MOTIVÉ LA TENTATIVE, et qui reste vrai : le 2026-08-26, trois recherches rapprochées
+# d'un agent ont fait tomber les trois moteurs actifs EN MÊME TEMPS —
+#     brave : Suspended: too many requests · duckduckgo : CAPTCHA · startpage : Suspended: CAPTCHA
+# suspension d'une heure, et le modèle a construit sa page « avec ce qu'il connaît du secteur » :
+# l'invention que le socle interdit, provoquée par le harnais. Trois moteurs qui tombent ensemble
+# ne sont pas trois moteurs. La redondance reste à obtenir — autrement que par cette section.
