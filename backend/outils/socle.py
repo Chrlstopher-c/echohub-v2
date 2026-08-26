@@ -57,6 +57,26 @@ _HONNETETE = """Above everything else, three rules on what you are allowed to AS
 
 Being contradicted is not a failure. Being wrong while sounding certain is."""
 
+# Identité du modèle. Demandée le 2026-08-26 après une réponse mesurée : à « présente-toi », le
+# modèle a répondu « je fonctionne sur un modèle d'inférence générique — pas le tien en
+# particulier ». Il ignorait ce qu'il était, alors que l'application le sait et l'affiche à l'écran.
+#
+# C'est un cas d'application directe de la règle d'honnêteté qui précède : à la question la plus
+# fréquente qu'on lui pose, un modèle sans identité ne dit pas « je ne sais pas », il invente. Lui
+# donner le fait supprime l'invention à sa source, là où aucune consigne morale n'y parvient.
+#
+# Le nom transmis est l'identifiant réel du modèle chargé (`_modele_charge()`), jamais un nom
+# choisi : si l'utilisateur change de modèle en cours de conversation, l'identité suit.
+_IDENTITE = """You are running LOCALLY, on the user's own machine, inside an application called
+EchoHub. Nothing you do here goes through a remote provider.
+
+The model serving this conversation is: {modele}
+
+When asked which model you are, give that name. It is what is actually loaded — not a guess. Do not
+claim to be a different model, and do not claim you cannot know: the answer is right above. If the
+name means little to you, say what it says (family, size, quantisation) rather than inventing a
+lineage you cannot verify."""
+
 _SANS_OUTIL = """You run locally with no outside access: no web, no files, no code execution.
 You cannot search, open a link, read a document, or verify anything.
 When a request would require that, say so plainly instead of pretending otherwise.
@@ -141,7 +161,7 @@ Finishing your answer:
 Available tools:"""
 
 
-def construire(outils: Sequence[DescriptionOutil]) -> str:
+def construire(outils: Sequence[DescriptionOutil], modele: str = "") -> str:
     """Texte du socle, fonction des outils réellement branchés à cet instant.
 
     Fonction pure : elle décrit ce qu'on lui donne. Un outil déclaré ici mais absent du registre
@@ -165,12 +185,13 @@ def construire(outils: Sequence[DescriptionOutil]) -> str:
     partie qui vaut dans les deux cas, avec outils comme sans. Un modèle qui décrit ce qu'il sait
     faire avant qu'on lui ait dit ce qu'il a le droit d'affirmer a déjà commencé à promettre.
     """
+    identite = [_IDENTITE.format(modele=modele.strip()), ""] if modele.strip() else []
     if not outils:
-        return f"{_LANGUE}\n\n{_HONNETETE}\n\n{_SANS_OUTIL}"
+        return "\n".join([_LANGUE, "", _HONNETETE, "", *identite, _SANS_OUTIL])
     # `nom: description` sans espace avant le deux-points : le socle est anglais, l'espace fine
     # française y détonnerait au milieu d'un texte que le modèle lit comme de l'anglais.
     lignes = [f"- {outil.nom}: {outil.description}" for outil in outils]
-    return "\n".join([_LANGUE, "", _HONNETETE, "", _AVEC_OUTILS, *lignes])
+    return "\n".join([_LANGUE, "", _HONNETETE, "", *identite, _AVEC_OUTILS, *lignes])
 
 
 def composer(socle: str, prompt_conversation: str) -> str:

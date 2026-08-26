@@ -295,7 +295,7 @@ def _construire_contexte(
     try:
         from backend.outils import prompt_systeme
 
-        entete = prompt_systeme(reglages.prompt_systeme)
+        entete = prompt_systeme(reglages.prompt_systeme, _modele_charge() or "")
     except Exception as exc:  # noqa: BLE001 — le socle est un plus, jamais une condition
         logger.warning("Socle d'outils indisponible ({}) : prompt de conversation seul.", exc)
         entete = reglages.prompt_systeme
