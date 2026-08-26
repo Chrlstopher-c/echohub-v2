@@ -35,6 +35,7 @@ from typing import IO, Any, AsyncIterator, ClassVar, Sequence
 
 import httpx
 from loguru import logger
+from pydantic import BaseModel, Field
 
 from backend.inference.engines_adapters import processus_llama_server as serveur
 from backend.inference.engines_adapters.base import (
@@ -198,10 +199,14 @@ class AdaptateurLlamaServer(AdaptateurMoteur):
         options: OptionsGeneration,
         outils: Sequence[dict[str, object]] | None,
     ) -> AsyncIterator[MorceauGeneration]:
-        """Relaie le flux SSE, borné par le nombre de tokens : un flux sans fin est un défaut."""
+        """Relaie le flux SSE, borné par le nombre de tokens : un flux sans fin est un défaut.
+
+        Les appels d'outils ne sont émis qu'À LA CLÔTURE, une fois leurs arguments complets — voir
+        `_Accumulateur` pour le défaut que cela corrige.
+        """
         charge = self._charge_utile(messages, options, outils)
         plafond = options.max_tokens or (self._etat.contexte if self._etat else 0)
-        emis = 0
+        appels = _Accumulateur()
         raison: str | None = None
         try:
             async with httpx.AsyncClient(timeout=DELAI_GENERATION_S) as client:
@@ -209,22 +214,15 @@ class AdaptateurLlamaServer(AdaptateurMoteur):
                     "POST", f"{serveur.url_base()}/v1/chat/completions", json=charge
                 ) as reponse:
                     await _verifier_reponse(reponse)
-                    async for ligne in reponse.aiter_lines():
-                        morceau = _decoder_evenement(ligne)
-                        if morceau is None:
-                            continue
-                        raison = morceau.raison_arret or raison
-                        if morceau.type == "fin":
-                            break
-                        if morceau.contenu:
-                            emis += 1
+                    async for morceau, arret in _lire_flux(reponse, appels, plafond):
+                        raison = arret or raison
+                        if morceau is not None:
                             yield morceau
-                        if emis >= plafond > 0:
-                            logger.warning("Flux llama-server borné à {} tokens : arrêt", plafond)
-                            break
         except httpx.HTTPError as exc:
             logger.error("Flux llama-server interrompu : {}", exc)
             yield MorceauGeneration(type="erreur", contenu=f"Le moteur a coupé la génération : {exc}")
+        if not appels.vide():
+            yield MorceauGeneration(type="token", contenu=appels.en_texte())
         yield MorceauGeneration(type="fin", raison_arret=raison)
 
     def _charge_utile(self, messages: Sequence[MessageChat], options: OptionsGeneration,
@@ -285,6 +283,33 @@ def _lire_journal(chemin: Path) -> str:
         return ""
 
 
+async def _lire_flux(
+    reponse: httpx.Response, appels: "_Accumulateur", plafond: int
+) -> AsyncIterator[tuple[MorceauGeneration | None, str | None]]:
+    """Parcourt les lignes SSE, nourrit l'accumulateur, rend le texte au fil de l'eau.
+
+    Rend des couples (morceau, raison d'arrêt) : la raison arrive souvent sur un événement qui ne
+    porte aucun texte, et la perdre ferait attribuer un arrêt sur plafond à une fin naturelle.
+    """
+    emis = 0
+    async for ligne in reponse.aiter_lines():
+        delta = _decoder_evenement(ligne)
+        if delta is None:
+            continue
+        if delta.fin:
+            yield None, delta.raison_arret
+            return
+        appels.ajouter(delta.fragments)
+        if delta.contenu:
+            emis += 1
+            yield MorceauGeneration(type="token", contenu=delta.contenu), delta.raison_arret
+        else:
+            yield None, delta.raison_arret
+        if emis >= plafond > 0:
+            logger.warning("Flux llama-server borné à {} tokens : arrêt", plafond)
+            return
+
+
 async def _verifier_reponse(reponse: httpx.Response) -> None:
     """Un 4xx/5xx porte la vraie cause dans son corps : le lire avant de lever."""
     if reponse.status_code < 400:
@@ -295,41 +320,28 @@ async def _verifier_reponse(reponse: httpx.Response) -> None:
                           details={"statut": reponse.status_code})
 
 
-def _appels_en_texte(appels: list[dict[str, Any]]) -> str:
-    """Rend les appels d'outils dans la forme que la boucle d'outils sait lire.
+class _Delta(BaseModel):
+    """Ce qu'un événement SSE apporte : du texte, et/ou des FRAGMENTS d'appels d'outils."""
 
-    llama-server les extrait du texte et les place dans `delta.tool_calls` ; la boucle, elle, les
-    cherche dans le texte parce que c'est là qu'ils arrivent par le chemin bindings. On restitue
-    donc la forme d'origine plutôt que d'enseigner un second format au harnais — deux lectures
-    concurrentes du même signal finiraient par diverger, et c'est le harnais qui doit rester
-    identique d'un moteur à l'autre pour que la comparaison ait un sens.
+    contenu: str = ""
+    fragments: list[dict[str, Any]] = Field(default_factory=list)
+    raison_arret: str | None = None
+    fin: bool = False
+
+
+def _decoder_evenement(ligne: str) -> _Delta | None:
+    """Traduit une ligne SSE en delta. `None` pour tout ce qui n'est pas un événement.
+
+    Fonction PURE et sans état : elle ne sait pas ce qui a précédé, donc elle ne peut pas
+    reconstituer un appel d'outil. C'est `_Accumulateur` qui le fait — la séparation est
+    délibérée, et c'est exactement ce qui manquait dans la version qui a produit le défaut décrit
+    sur `_Accumulateur`.
     """
-    morceaux: list[str] = []
-    for appel in appels:
-        fonction = appel.get("function") or {}
-        nom = fonction.get("name")
-        if not nom:
-            continue
-        brut = fonction.get("arguments")
-        if isinstance(brut, str):
-            try:
-                arguments = json.loads(brut) if brut.strip() else {}
-            except json.JSONDecodeError:
-                arguments = {}
-        else:
-            arguments = brut if isinstance(brut, dict) else {}
-        charge = json.dumps({"name": nom, "arguments": arguments}, ensure_ascii=False)
-        morceaux.append(f"<tool_call>{charge}</tool_call>")
-    return "".join(morceaux)
-
-
-def _decoder_evenement(ligne: str) -> MorceauGeneration | None:
-    """Traduit une ligne SSE en morceau. `None` pour tout ce qui n'est pas un événement."""
     if not ligne or not ligne.startswith(PREFIXE_SSE):
         return None
     charge = ligne[len(PREFIXE_SSE):].strip()
     if charge == MARQUEUR_FIN_SSE:
-        return MorceauGeneration(type="fin")
+        return _Delta(fin=True)
     try:
         evenement = json.loads(charge)
     except json.JSONDecodeError:
@@ -337,18 +349,83 @@ def _decoder_evenement(ligne: str) -> MorceauGeneration | None:
         return None
     choix = (evenement.get("choices") or [{}])[0]
     delta = choix.get("delta") or {}
-    contenu = delta.get("content") or ""
-    # `reasoning_content` est délibérément IGNORÉ : le serveur est lancé avec
-    # `--reasoning-format none`, qui laisse les balises de réflexion dans `content`. Le lire ici en
-    # plus dupliquerait la réflexion — une fois balisée dans le contenu, une fois nue à côté.
-    # La version précédente le concaténait SANS balise : la réflexion coulait alors dans la réponse
-    # visible, en anglais, sans séparation (constaté en production le 2026-08-26).
-    appels = delta.get("tool_calls") or []
-    if appels:
-        contenu += _appels_en_texte(appels)
-    return MorceauGeneration(
-        type="token", contenu=contenu, raison_arret=choix.get("finish_reason")
+    # `reasoning_content` est délibérément IGNORÉ : le serveur tourne avec `--reasoning-format
+    # none`, qui laisse les balises de réflexion dans `content`. Le lire en plus dupliquerait la
+    # réflexion — une fois balisée dans le contenu, une fois nue à côté.
+    return _Delta(
+        contenu=delta.get("content") or "",
+        fragments=list(delta.get("tool_calls") or []),
+        raison_arret=choix.get("finish_reason"),
     )
+
+
+class _Accumulateur:
+    """Recompose les appels d'outils émis en morceaux par le flux SSE.
+
+    LE DÉFAUT QU'IL CORRIGE, mesuré en production le 2026-08-26. llama-server envoie les arguments
+    d'un appel caractère par caractère :
+
+        {"name":"recherche_web","arguments":"{"}   {"arguments":"\"requete\":\""}
+        {"arguments":"met"}   {"arguments":"eo"}   {"arguments":" Paris"}   {"arguments":"}"}
+
+    La première version de cet adaptateur tentait de lire CHAQUE fragment comme un JSON complet.
+    `json.loads("{")` lève, le code retombait sur `{}`, et un `<tool_call>` VIDE était émis à
+    chaque fragment. Le modèle recevait alors « aucune requête fournie », réessayait, et
+    recommençait — six tours identiques observés, tous imputés à tort au modèle alors qu'il avait
+    parfaitement produit `{"requete": "meteo Paris demain"}`. Un harnais qui détruit l'appel puis
+    reproche son absence est pire qu'un harnais qui échoue : il accuse.
+
+    Les fragments s'accumulent donc par `index` — le flux peut entrelacer plusieurs appels — et ne
+    sont lus qu'une fois le flux clos.
+    """
+
+    def __init__(self) -> None:
+        self._noms: dict[int, str] = {}
+        self._arguments: dict[int, list[str]] = {}
+
+    def ajouter(self, fragments: list[dict[str, Any]]) -> None:
+        for fragment in fragments:
+            index = fragment.get("index")
+            if not isinstance(index, int):
+                index = 0
+            fonction = fragment.get("function") or {}
+            nom = fonction.get("name")
+            if isinstance(nom, str) and nom:
+                self._noms[index] = nom
+            morceau = fonction.get("arguments")
+            if isinstance(morceau, str) and morceau:
+                self._arguments.setdefault(index, []).append(morceau)
+
+    def vide(self) -> bool:
+        return not self._noms
+
+    def en_texte(self) -> str:
+        """Appels complets, dans la forme `<tool_call>` que la boucle d'outils sait lire.
+
+        Un JSON d'arguments illisible n'est PAS remplacé par `{}` : il repart tel quel au modèle,
+        qui verra sa propre production et pourra la corriger. Le remplacer silencieusement était
+        précisément le geste qui rendait le défaut invisible.
+        """
+        morceaux: list[str] = []
+        for index in sorted(self._noms):
+            brut = "".join(self._arguments.get(index, []))
+            charge = json.dumps(
+                {"name": self._noms[index], "arguments": _arguments_lus(brut)},
+                ensure_ascii=False)
+            morceaux.append(f"<tool_call>{charge}</tool_call>")
+        return "".join(morceaux)
+
+
+def _arguments_lus(brut: str) -> Any:
+    """Arguments désérialisés, ou la chaîne brute si elle n'est pas du JSON valide."""
+    texte = brut.strip()
+    if not texte:
+        return {}
+    try:
+        return json.loads(texte)
+    except json.JSONDecodeError:
+        logger.warning("Arguments d'appel illisibles, transmis tels quels : {}", texte[:160])
+        return texte
 
 
 __all__ = ["AdaptateurLlamaServer"]
