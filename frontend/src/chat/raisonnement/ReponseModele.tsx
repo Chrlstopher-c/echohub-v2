@@ -49,9 +49,45 @@ interface SegmentProps {
   segment: SegmentRaisonnement;
   rang: number | null;
   actif: boolean;
+  /** `true` dès qu'un outil a été appelé plus haut dans la réponse. Voir `SegmentRendu`. */
+  apresOutil: boolean;
 }
 
-function SegmentRendu({ segment, rang, actif }: SegmentProps): ReactElement {
+/*
+ * Commentaire intermédiaire : ce que le modèle écrit ENTRE deux actions.
+ *
+ * Rendu en clair, sans surface ni chevron, parce que ce n'est pas du raisonnement à replier — c'est
+ * le fil de la réponse. « J'ai les résultats, je synthétise », « la recherche a échoué, je change
+ * d'approche » : le lecteur a besoin de le voir pour suivre, exactement comme il suit un
+ * collaborateur qui commente ce qu'il fait.
+ *
+ * La distinction est POSITIONNELLE et non textuelle : le premier bloc, avant tout appel, est une
+ * délibération privée — le modèle pèse sa décision, et cela se replie. Ceux qui suivent un appel
+ * commentent un travail en cours, et cela se lit.
+ */
+function CommentaireIntermediaire({ texte }: { texte: string }): ReactElement | null {
+  const propre = texte.trim();
+  if (propre === '') {
+    return null;
+  }
+  return (
+    <div className="min-w-0 border-l-2 border-border pl-3 text-text-2">
+      <RenduMarkdown source={propre} />
+    </div>
+  );
+}
+
+function SegmentRendu({ segment, rang, actif, apresOutil }: SegmentProps): ReactElement | null {
+  // L'appel émis par le modèle n'est plus montré : il n'apprend rien au lecteur, qui voit déjà
+  // l'outil et son résultat juste après. Il doublait chaque action d'une ligne « Appel du modèle »
+  // sans contenu utile — et sur un tour à quatre outils, cela faisait huit blocs pour quatre gestes.
+  // Le texte reste dans le message enregistré : c'est l'AFFICHAGE qui change, pas la trace.
+  if (segment.convention === 'appel') {
+    return null;
+  }
+  if (apresOutil && segment.convention !== 'outil') {
+    return <CommentaireIntermediaire texte={segment.texte} />;
+  }
   if (segment.convention === 'outil') {
     // L'ordre compte : la forme la plus spécifique d'abord. Un artefact créé porte aussi la forme
     // d'un appel réussi — le tester après `lireAppel` le ferait retomber en carte générique.
@@ -87,10 +123,20 @@ export function ReponseModele({ source, actif = false }: ReponseModeleProps): Re
   // portent rien : les retirer distingue une réponse vide d'une réponse faite de deux retours.
   const visible = segmentee.visible.trim();
   const multiples = segmentee.raisonnements.length > 1;
+  // Rang du premier appel d'outil : c'est lui qui sépare la délibération initiale — repliée — des
+  // commentaires de travail qui suivent, affichés en clair. `-1` quand aucun outil n'a été appelé,
+  // auquel cas tout reste replié : une réponse sans action n'a pas de « pendant ».
+  const premierOutil = segmentee.raisonnements.findIndex((s) => s.convention === 'outil');
   return (
     <div className="min-w-0 space-y-1.5">
       {segmentee.raisonnements.map((segment, index) => (
-        <SegmentRendu key={index} segment={segment} rang={multiples ? index + 1 : null} actif={actif} />
+        <SegmentRendu
+          key={index}
+          segment={segment}
+          rang={multiples ? index + 1 : null}
+          actif={actif}
+          apresOutil={index > premierOutil && premierOutil >= 0}
+        />
       ))}
       {visible !== '' ? (
         <RenduMarkdown source={visible} />
