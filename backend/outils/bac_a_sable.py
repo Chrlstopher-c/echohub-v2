@@ -34,6 +34,7 @@ import os
 import resource
 import subprocess
 import time
+from functools import partial
 from pathlib import Path
 
 from loguru import logger
@@ -61,6 +62,15 @@ LIMITE_PROCESSUS = 32
 # Descripteurs ouverts : large pour l'interpréteur lui-même (imports, stdio) et les fichiers que
 # le script ouvre légitimement, borné pour qu'un `while True: open(...)` échoue vite.
 LIMITE_DESCRIPTEURS = 64
+
+# Limites de la COMMANDE shell, distinctes de celles du code Python et pour une raison mesurée :
+# une commande utile ici compile (`gcc`, `as`, `ld`) ou attend le réseau (`curl`). Le temps
+# processeur d'un `curl` est quasi nul — il attend —, mais son temps RÉEL peut atteindre plusieurs
+# dizaines de secondes sur un envoi de fichier. Garder les 20 s du filet Python aurait tué l'envoi
+# qui a servi de cas de référence (compilation assembleur puis dépôt sur un service de fichiers,
+# 2026-08-26). Le temps processeur, lui, reste borné : c'est ce qui empêche une boucle de calcul.
+LIMITE_CPU_COMMANDE_SECONDES = 20
+TIMEOUT_COMMANDE_SECONDES = 90
 
 # Filet de sécurité du côté appelant, distinct de RLIMIT_CPU : une boucle qui dort (`time.sleep`)
 # ne consomme aucun temps processeur et échapperait donc à RLIMIT_CPU seul. Ce timeout mesure le
@@ -98,14 +108,19 @@ class ResultatExecution(BaseModel):
     tue_par_filet_securite: bool
 
 
-def _preexec() -> None:
+def _preexec(limite_cpu: int = LIMITE_CPU_SECONDES) -> None:
     """Exécuté dans l'enfant, entre le `fork` et l'`exec` — jamais dans le processus appelant.
 
     Ordre imposé par le plan d'exécution (2.6) : rlimits, puis `setgid`, puis `setuid`. `setuid`
     est irréversible, il vient donc en dernier — inverser l'ordre laisserait une fenêtre où le
     processus est root ET déjà limité en rien.
+
+    `limite_cpu` est le SEUL réglage variable : une commande shell qui compile a besoin de plus de
+    temps processeur qu'un extrait Python. Tout le reste — mémoire, taille de fichier, processus,
+    descripteurs, bascule d'utilisateur — est identique quelle que soit la nature du lancement.
+    Une limite affaiblie par appelant serait une porte dérobée dans le confinement.
     """
-    resource.setrlimit(resource.RLIMIT_CPU, (LIMITE_CPU_SECONDES, LIMITE_CPU_SECONDES))
+    resource.setrlimit(resource.RLIMIT_CPU, (limite_cpu, limite_cpu))
     resource.setrlimit(resource.RLIMIT_AS, (LIMITE_MEMOIRE_OCTETS, LIMITE_MEMOIRE_OCTETS))
     resource.setrlimit(resource.RLIMIT_FSIZE, (LIMITE_TAILLE_FICHIER_OCTETS, LIMITE_TAILLE_FICHIER_OCTETS))
     resource.setrlimit(resource.RLIMIT_NPROC, (LIMITE_PROCESSUS, LIMITE_PROCESSUS))
@@ -172,6 +187,61 @@ def adopter_par_le_bac(chemin: Path) -> None:
         os.chown(chemin, SANDBOX_UID, SANDBOX_GID)
 
 
+def _lancer_confine(argv: list[str], racine_bac: Path, timeout_s: int,
+                    limite_cpu: int) -> ResultatExecution:
+    """Lance `argv` dans le bac, confiné, et rend ce qui a été produit. Ne lève jamais.
+
+    Cœur commun à l'exécution de code Python et à l'exécution d'une commande : le confinement ne
+    doit exister qu'à un seul endroit. Une seconde copie divergerait au premier réglage ajouté
+    d'un côté seulement, et c'est la copie la plus permissive qui deviendrait la vraie surface.
+    """
+    preparer_bac(racine_bac)
+    debut = time.monotonic()
+    try:
+        processus = subprocess.run(
+            argv,
+            cwd=racine_bac,
+            env=_ENVIRONNEMENT_CONFINE,
+            preexec_fn=partial(_preexec, limite_cpu),
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+        )
+    except subprocess.TimeoutExpired as exc:
+        logger.warning("Lancement confiné tué par le filet de sécurité ({} s) : {}", timeout_s, argv[0])
+        return _tue(exc.stdout, exc.stderr, timeout_s, time.monotonic() - debut)
+    except OSError as exc:
+        logger.error("Lancement confiné impossible ({}) : {}", argv[0], exc)
+        return ResultatExecution(sortie="", erreur=f"Lancement impossible : {exc}", code_retour=-1,
+                                 duree_s=time.monotonic() - debut, tue_par_filet_securite=False)
+    return ResultatExecution(
+        sortie=processus.stdout,
+        erreur=processus.stderr,
+        code_retour=processus.returncode,
+        duree_s=time.monotonic() - debut,
+        tue_par_filet_securite=False,
+    )
+
+
+def _tue(sortie: str | bytes | None, erreur: str | bytes | None,
+         timeout_s: int, duree: float) -> ResultatExecution:
+    """Résultat d'un processus tué par le filet : ce qu'il avait produit est conservé."""
+    return ResultatExecution(
+        sortie=_texte(sortie),
+        erreur=f"{_texte(erreur)}\n[Processus tué : dépassement du filet de sécurité de {timeout_s}s]",
+        code_retour=-1,
+        duree_s=duree,
+        tue_par_filet_securite=True,
+    )
+
+
+def _texte(flux: str | bytes | None) -> str:
+    """Sortie d'un processus tué, dont le type varie selon le moment de l'interruption."""
+    if isinstance(flux, str):
+        return flux
+    return (flux or b"").decode("utf-8", "replace")
+
+
 def executer_code_confine(code: str, racine_bac: Path) -> ResultatExecution:
     """Lance `python3 -I -c <code>` dans le bac, confiné, et rend ce qui a été produit.
 
@@ -179,35 +249,20 @@ def executer_code_confine(code: str, racine_bac: Path) -> ResultatExecution:
     pas geler la boucle asyncio pendant l'exécution. `-I` (mode isolé) ignore `PYTHONPATH` et le
     site-packages utilisateur — un script d'un modèle ne doit dépendre d'aucun état ambiant.
     """
-    preparer_bac(racine_bac)
-    debut = time.monotonic()
-    try:
-        processus = subprocess.run(
-            ["python3", "-I", "-c", code],
-            cwd=racine_bac,
-            env=_ENVIRONNEMENT_CONFINE,
-            preexec_fn=_preexec,
-            capture_output=True,
-            text=True,
-            timeout=TIMEOUT_SECURITE_SECONDES,
-        )
-    except subprocess.TimeoutExpired as exc:
-        duree = time.monotonic() - debut
-        logger.warning("Exécution Python confinée tuée par le filet de sécurité ({} s).", TIMEOUT_SECURITE_SECONDES)
-        sortie = exc.stdout if isinstance(exc.stdout, str) else (exc.stdout or b"").decode("utf-8", "replace")
-        erreur = exc.stderr if isinstance(exc.stderr, str) else (exc.stderr or b"").decode("utf-8", "replace")
-        return ResultatExecution(
-            sortie=sortie,
-            erreur=f"{erreur}\n[Processus tué : dépassement du filet de sécurité de {TIMEOUT_SECURITE_SECONDES}s]",
-            code_retour=-1,
-            duree_s=duree,
-            tue_par_filet_securite=True,
-        )
-    duree = time.monotonic() - debut
-    return ResultatExecution(
-        sortie=processus.stdout,
-        erreur=processus.stderr,
-        code_retour=processus.returncode,
-        duree_s=duree,
-        tue_par_filet_securite=False,
-    )
+    return _lancer_confine(["python3", "-I", "-c", code], racine_bac,
+                           TIMEOUT_SECURITE_SECONDES, LIMITE_CPU_SECONDES)
+
+
+def executer_commande_confinee(commande: str, racine_bac: Path) -> ResultatExecution:
+    """Lance une commande shell dans le bac, sous le même confinement que le code Python.
+
+    `bash -lc` et non `sh` : les commandes qu'un modèle écrit spontanément emploient des formes
+    bash (`&&`, substitution, redirections combinées), et `sh` est `dash` dans cette image. Une
+    commande refusée pour une incompatibilité de shell serait attribuée au harnais.
+
+    Le shell hérite du bac comme répertoire de travail, du PATH minimal et de l'utilisateur non
+    privilégié : il voit `gcc`, `as`, `ld`, `curl`, `git`, `python3` — vérifié dans l'image —, et
+    il écrit uniquement là où le code Python confiné écrit déjà.
+    """
+    return _lancer_confine(["bash", "-lc", commande], racine_bac,
+                           TIMEOUT_COMMANDE_SECONDES, LIMITE_CPU_COMMANDE_SECONDES)
