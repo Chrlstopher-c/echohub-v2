@@ -109,6 +109,18 @@ de déport existe et est couvert par des tests unitaires ; aucune mesure ne l'a 
       téléchargement découpé
 - [ ] Sondage du profil machine ramené de 2 s à 10–15 s (appel NVML à chaque passage)
 
+### 9. Dette de style relevée par le linter
+
+- [ ] **`superviseur.compter_contexte` fait 43 lignes** (max 35) —
+      `backend/inference/engines_adapters/superviseur.py:306`. Relevé le 2026-08-26 en linterant le
+      fichier pour une autre raison ; la fonction est antérieure et n'a pas été touchée depuis, donc
+      ce n'est pas une régression. Extraire les helpers plutôt que relever la borne.
+- [ ] **`inference/__init__.py` fait 524 lignes** (max 500), avec `_diffuser_complet` à 44 lignes et
+      `_boucle_outils` à 62. Le fichier porte la boucle d'outils, qui est le cœur du harnais :
+      le découper demande de décider ce qui appartient à la conduite et ce qui appartient au
+      transport — c'est le préalable au branchement de `inference/harnais.py`, écrit et testé le
+      2026-08-26 mais délibérément pas encore câblé pour cette raison.
+
 ## Backlog
 
 - [ ] **Compose par plateforme** : `docker-compose.windows.yml` / `docker-compose.linux.yml` choisis

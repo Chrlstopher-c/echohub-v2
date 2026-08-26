@@ -33,6 +33,26 @@ export interface MetadonneesModele {
   taille_vocabulaire: number;
   quantification: string | null;
   est_moe: boolean;
+
+  /*
+   * Mélange d'experts. Tout ce bloc est facultatif côté contrat, et c'est exactement ce qui le rend
+   * dangereux à oublier : sans lui le planificateur ne REFUSE pas, il retombe silencieusement sur la
+   * coupe par couches entières — le mauvais axe pour un MoE. Mesuré le 2026-08-26 sur le 35B-A3B :
+   * ces champs étaient produits par le backend, envoyés par l'API, et jetés à l'assemblage ; le plan
+   * plaçait 3 couches sur 40 en VRAM là où le déport d'experts les garde toutes.
+   *
+   * Ne jamais transmettre partiellement : `MetadonneesModele._verifier_mesures_par_bloc` refuse une
+   * mesure dont la longueur ne fait pas `nombre_couches`, et une mesure tronquée se lirait comme un
+   * modèle plus léger qu'il n'est.
+   */
+  nombre_experts?: number | null;
+  nombre_experts_actifs?: number | null;
+  dimension_ffn_expert?: number | null;
+  dimension_ffn_expert_partage?: number | null;
+  octets_par_bloc?: readonly number[];
+  octets_experts_par_bloc?: readonly number[];
+  octets_hors_blocs?: number | null;
+  intervalle_attention_pleine?: number | null;
 }
 
 export interface ModeleCharge {
