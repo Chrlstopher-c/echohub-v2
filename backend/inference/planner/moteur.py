@@ -87,10 +87,33 @@ def ejections_requises(profil: ProfilMachine) -> tuple[EjectionRequise, ...]:
 
 
 def vram_apres_ejection(profil: ProfilMachine) -> tuple[int, tuple[EjectionRequise, ...]]:
-    """VRAM sur laquelle le plan peut compter : le libre mesuré plus ce que les éjections rendront."""
+    """VRAM sur laquelle le plan peut compter : le libre mesuré plus ce que les éjections rendront.
+
+    `☠` LE PLAFOND N'EST PAS LA VRAM TOTALE, et l'avoir cru a rendu le modèle inchargeable depuis
+    l'interface pendant toute une session.
+
+    Une carte n'héberge pas que des modèles. Sur la machine mesurée le 2026-08-26, le compositeur,
+    le shell, le fond animé et le navigateur occupent 1 453 Mio en permanence — et AUCUNE éjection
+    de modèle ne les rendra. Plafonner à `vram_totale` revient donc à promettre au planificateur une
+    VRAM qui n'existera jamais.
+
+    L'effet est brutal parce qu'il porte sur le déport d'experts, qui est un curseur : à
+    12 288 Mio annoncés, le planificateur ne déportait que 2 groupes d'experts — le plan réclamait
+    11 479 Mio pour 10 454 réellement libres, et le GPU refusait l'allocation. À la valeur honnête,
+    il en déporte 7 et le chargement passe. Aucun message n'aurait pu faire soupçonner un plafond :
+    l'erreur remontée était « VRAM insuffisante », ce qui était vrai et ne désignait pas la cause.
+
+    Ce qui n'est pas éjectable se déduit sans supposer quoi que ce soit : c'est l'occupation
+    mesurée, moins ce que les éjections rendront. Le plan ne peut pas compter dessus.
+    """
     ejections = ejections_requises(profil)
     liberee = sum(ejection.vram_liberee_octets for ejection in ejections)
-    disponible = min(profil.vram_totale_octets, profil.vram_libre_octets + liberee)
+    occupe = max(0, profil.vram_totale_octets - profil.vram_libre_octets)
+    # Une éjection ne peut pas rendre plus que ce qui est pris : un client qui rapporte la taille du
+    # FICHIER plutôt que la VRAM réelle d'un modèle ne doit pas pouvoir gonfler le budget.
+    liberee = min(liberee, occupe)
+    plafond = profil.vram_totale_octets - (occupe - liberee)
+    disponible = min(plafond, profil.vram_libre_octets + liberee)
     return disponible, ejections
 
 

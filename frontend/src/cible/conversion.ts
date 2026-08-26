@@ -88,8 +88,17 @@ export function modelesCharges(statut: StatutInference | null): ModeleCharge[] {
     {
       identifiant: moteur.modele,
       moteur: moteur.moteur,
-      // `null` signifie « non mesuré » : compter 0 ferait croire que le GPU est libre.
-      vram_octets: moteur.vram_apres_octets ?? 0,
+      // La DIFFÉRENCE entre les deux mesures, et non `vram_apres` seule.
+      //
+      // `vram_apres_octets` est la VRAM totale UTILISÉE de la carte, bureau compris — pas celle du
+      // modèle. La passer telle quelle disait au planificateur qu'éjecter ce modèle rendrait aussi
+      // les 1 453 Mio du compositeur, du shell et du navigateur. Il visait alors les 12 288 Mio de
+      // la carte entière, ne déportait que 2 groupes d'experts, et le GPU refusait l'allocation :
+      // le modèle est devenu inchargeable depuis cet écran, à TOUS les contextes, le 2026-08-26.
+      //
+      // `vram_avant` est mesurée juste avant le chargement : la soustraction isole le modèle. Sans
+      // elle, on retombe sur `vram_apres` — donc sur le défaut.
+      vram_octets: Math.max(0, (moteur.vram_apres_octets ?? 0) - (moteur.vram_avant_octets ?? 0)),
     },
   ];
 }
