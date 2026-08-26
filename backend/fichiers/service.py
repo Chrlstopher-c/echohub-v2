@@ -110,6 +110,16 @@ def resoudre_reference(conversation_id: str, reference: str) -> FichierConversat
     return max(candidats, key=lambda fichier: fichier.cree_le)
 
 
+def lister_fichiers(conversation_id: str) -> list[FichierConversation]:
+    """Fichiers d'une conversation, du plus ancien au plus récent.
+
+    Exposé le 2026-08-26 pour `creer_artefact`, qui dérive le numéro de version d'un artefact des
+    fichiers DÉJÀ déposés — le magasin est la seule source qui survive à un redémarrage, là où un
+    compteur en mémoire recommencerait à 1 en écrasant l'historique.
+    """
+    return depot.lister_fichiers(conversation_id)
+
+
 def chemin_disque(fichier: FichierConversation) -> Path:
     """Chemin absolu résolu et borné au magasin — c'est ce que la route de service ouvre."""
     return stockage.chemin_absolu(fichier.chemin_relatif)

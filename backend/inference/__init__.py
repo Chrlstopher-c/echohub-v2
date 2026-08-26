@@ -367,7 +367,9 @@ class MoteurChat:
         debut = time.monotonic()
         tokens = 0
 
-        async for etape in self._boucle_outils(messages, options, format_moteur(), contexte):
+        async for etape in self._boucle_outils(
+            messages, options, format_moteur(_outils_demandes(requete)), contexte
+        ):
             tokens += int(etape.pop("tokens", 0) or 0)
             if "texte" in etape:
                 yield {"texte": etape["texte"]}
@@ -541,6 +543,19 @@ class MoteurChat:
         async for morceau in self._diffuser_complet(messages, options, None, recu):
             yield morceau
         yield {"tokens": len(recu)}
+
+
+def _outils_demandes(requete: object) -> list[str] | None:
+    """Sélection d'outils portée par la requête, ou `None` pour tous.
+
+    Lue par `getattr` : le contrat des moteurs n'a pas à connaître un réglage de conversation, et
+    l'absence du champ reste le cas normal tant qu'aucun appelant ne le transmet. `[]` traverse
+    intact — c'est « aucun outil », pas « pas de préférence ».
+    """
+    valeur = getattr(requete, "outils_actifs", None)
+    if isinstance(valeur, list):
+        return [str(nom) for nom in valeur]
+    return None
 
 
 def _contexte_execution(requete: object) -> ContexteExecution:

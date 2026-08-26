@@ -112,6 +112,13 @@ La **conversation a été refondue** (desktop et mobile) : affichage des outils 
 qui dit tout, détail au dépliage —, artefacts versionnés avec panneau dédié, archivage et renommage
 des conversations, écran de sélection d'outils. Captures dans `frontend/captures/`.
 
+### 7. Le contrat réclamé par la refonte est tenu (matin du 26/08)
+
+`creer_artefact` (11e outil), `GET /chat/outils`, `GET`/`PATCH /chat/conversations/{id}/outils`.
+La sélection est persistée par une colonne additive et respectée par le registre, le socle et la
+déclaration au moteur. Reste côté frontend : brancher `api-outils.ts` et `outils-catalogue.ts` sur
+ces routes — ils tournent aujourd'hui en mode dégradé assumé (« sélection non persistée »).
+
 ## Résumé de l'état antérieur (2026-08-17)
 
 L'application tourne, en Docker, sur RTX 5080 16 Go / WSL2. On charge un modèle GGUF depuis un plan

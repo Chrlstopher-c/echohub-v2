@@ -96,6 +96,11 @@ _COLONNES_ADDITIVES: tuple[tuple[str, str, str], ...] = (
     # dans le navigateur parce que la bibliothèque est la même depuis le poste et depuis le
     # téléphone — un favori enregistré localement ne serait vrai que sur un seul écran.
     ("modeles", "favori", "ALTER TABLE modeles ADD COLUMN favori INTEGER NOT NULL DEFAULT 0"),
+    # Outils actifs de la conversation, en JSON. NULL signifie « tous », et ce n'est pas la même
+    # chose qu'un tableau vide, qui signifie « aucun » : la distinction porte l'intention de
+    # l'utilisateur, là où un défaut unique la perdrait. Une conversation d'avant cette colonne
+    # garde donc tous ses outils, ce qui est le comportement qu'elle avait.
+    ("chat_reglages", "outils_actifs", "ALTER TABLE chat_reglages ADD COLUMN outils_actifs TEXT"),
 )
 
 # Créé après les ALTER : sur une base existante, l'index porterait sur une colonne qui n'existe

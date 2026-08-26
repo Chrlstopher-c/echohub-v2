@@ -17,16 +17,21 @@ et son URL change à chaque relance — la retrouver dans `%LOCALAPPDATA%\cloudf
 Le frontend est écrit et attend ces trois surfaces. Tant qu'elles n'existent pas, l'écran de
 sélection d'outils affiche un mode dégradé ASSUMÉ (« sélection non persistée »), il ne simule rien.
 
-- [ ] **Outil `creer_artefact`**, distinct de `presenter_fichier` — créer n'est pas désigner. Sortie
-      JSON validée champ à champ côté front :
-      `{artefact_id: str, version: int ≥1, titre: str, type: "html"|"markdown"|"code"|"svg"|"mermaid",
-      langage: str|null, fichier_id: str, taille_octets: int}`. `artefact_id` stable à travers les
-      versions, `version` attribué par le backend, contenu servi par la route fichiers existante.
-- [ ] **`GET /chat/outils`** → `[{nom, description, groupe, tokens_definition}]`, le coût mesuré avec
-      le vrai gabarit et non estimé.
-- [ ] **`GET`/`PATCH /chat/conversations/{id}/outils`** → `{outils_actifs: string[] | null}`
-      (`null` = tous, `[]` = aucun). Le socle ne doit décrire QUE les outils réellement branchés :
-      un prompt qui annonce une capacité absente est le défaut que ce socle existe pour supprimer.
+- [x] ~~Outil `creer_artefact`~~ — **fait le 2026-08-26**. Sortie conforme au contrat. Le numéro de
+      version est attribué par le backend et dérivé du MAGASIN DE FICHIERS (`<id>-vN.<ext>`), sans
+      table d'artefacts : le magasin est la seule source qui survive à un redémarrage, là où un
+      compteur en mémoire serait reparti à 1 en écrasant l'historique. L'`artefact_id` vient du
+      modèle et finit dans un nom de fichier — il est donc normalisé avant tout usage
+      (`../../etc/passwd` → `etc-passwd`, vérifié).
+- [x] ~~`GET /chat/outils`~~ — **fait**. Coût mesuré avec le tokenizer du modèle chargé ; `null`
+      quand aucun ne l'est, jamais 0 — un zéro se lirait « cet outil ne coûte rien », alors qu'un
+      outil déclaré occupe la fenêtre à CHAQUE tour.
+- [x] ~~`GET`/`PATCH /chat/conversations/{id}/outils`~~ — **fait**, persisté en base (colonne
+      additive `chat_reglages.outils_actifs`). `null` = tous et `[]` = aucun restent distincts :
+      les confondre priverait d'outils une conversation qui n'a jamais choisi, ou en rendrait à
+      celle qui les a tous coupés. Le registre, le socle ET la déclaration au moteur respectent la
+      sélection — un prompt qui annonce une capacité absente est le défaut que ce socle existe pour
+      supprimer. Un nom inconnu est ignoré à l'usage, jamais refusé à l'enregistrement.
 - [x] ~~Porter l'issue d'un appel dans le balisage~~ — **fait le 2026-08-26**. Le harnais écrit
       `<sortie etat="echec">` quand l'appel a échoué, `<sortie>` sinon ; il tient ce fait de
       l'exécution même de l'outil. Côté frontend, l'issue déclarée PRIME et le repli par préfixe ne

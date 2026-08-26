@@ -151,6 +151,8 @@ class _LigneReglages(BaseModel):
     prompt_systeme: str
     parametres: str
     historique_max_messages: int | None = None
+    # Document JSON, ou NULL pour « tous les outils » — voir `_decoder_outils`.
+    outils_actifs: str | None = None
 
 
 class _LigneFeuille(BaseModel):
@@ -293,7 +295,8 @@ def lire_reglages(conversation_id: str) -> ReglagesConversation:
     """Réglages de la conversation, ou les valeurs par défaut si aucune ligne n'a été écrite."""
     ligne = fetch_one(
         _LigneReglages,
-        "SELECT prompt_systeme, parametres, historique_max_messages FROM chat_reglages WHERE conversation_id = ?",
+        "SELECT prompt_systeme, parametres, historique_max_messages, outils_actifs"
+        " FROM chat_reglages WHERE conversation_id = ?",
         (conversation_id,),
     )
     if ligne is None:
@@ -302,7 +305,28 @@ def lire_reglages(conversation_id: str) -> ReglagesConversation:
         prompt_systeme=ligne.prompt_systeme,
         parametres=_decoder_parametres(conversation_id, ligne.parametres),
         historique_max_messages=ligne.historique_max_messages,
+        outils_actifs=_decoder_outils(conversation_id, ligne.outils_actifs),
     )
+
+
+def _decoder_outils(conversation_id: str, document: str | None) -> list[str] | None:
+    """Sélection d'outils lue en base. `None` = tous, jamais confondu avec `[]` = aucun.
+
+    Un document illisible retombe sur `None` — tous les outils — plutôt que sur une liste vide :
+    une conversation dont le réglage serait corrompu doit rester utilisable, pas se retrouver
+    silencieusement privée de tout moyen d'agir.
+    """
+    if document is None:
+        return None
+    try:
+        valeur = json.loads(document)
+    except ValueError as exc:
+        logger.warning("Sélection d'outils illisible sur {} ({}) : tous les outils.",
+                       conversation_id, exc)
+        return None
+    if not isinstance(valeur, list):
+        return None
+    return [str(nom) for nom in valeur]
 
 
 def _decoder_parametres(conversation_id: str, document: str) -> ParametresEchantillonnage:
@@ -321,16 +345,17 @@ def ecrire_reglages(conversation_id: str, reglages: ReglagesConversation) -> Reg
     """Écrit les réglages complets de la conversation (insertion ou remplacement)."""
     exiger_conversation(conversation_id)
     execute(
-        "INSERT INTO chat_reglages (conversation_id, prompt_systeme, parametres, historique_max_messages, maj_le)"
-        " VALUES (?, ?, ?, ?, ?)"
+        "INSERT INTO chat_reglages (conversation_id, prompt_systeme, parametres,"
+        " historique_max_messages, outils_actifs, maj_le) VALUES (?, ?, ?, ?, ?, ?)"
         " ON CONFLICT(conversation_id) DO UPDATE SET prompt_systeme = excluded.prompt_systeme,"
         " parametres = excluded.parametres, historique_max_messages = excluded.historique_max_messages,"
-        " maj_le = excluded.maj_le",
+        " outils_actifs = excluded.outils_actifs, maj_le = excluded.maj_le",
         (
             conversation_id,
             reglages.prompt_systeme,
             reglages.parametres.model_dump_json(),
             reglages.historique_max_messages,
+            None if reglages.outils_actifs is None else json.dumps(reglages.outils_actifs),
             maintenant(),
         ),
     )
