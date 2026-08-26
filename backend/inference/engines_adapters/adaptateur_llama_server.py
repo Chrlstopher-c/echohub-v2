@@ -338,14 +338,16 @@ def _decoder_evenement(ligne: str) -> MorceauGeneration | None:
     choix = (evenement.get("choices") or [{}])[0]
     delta = choix.get("delta") or {}
     contenu = delta.get("content") or ""
-    # Le raisonnement arrive sur son propre canal quand le gabarit le sépare. Il est concaténé au
-    # contenu : c'est ce que fait déjà le chemin bindings, et l'interface le retrouve à sa balise.
-    raisonnement = delta.get("reasoning_content") or ""
+    # `reasoning_content` est délibérément IGNORÉ : le serveur est lancé avec
+    # `--reasoning-format none`, qui laisse les balises de réflexion dans `content`. Le lire ici en
+    # plus dupliquerait la réflexion — une fois balisée dans le contenu, une fois nue à côté.
+    # La version précédente le concaténait SANS balise : la réflexion coulait alors dans la réponse
+    # visible, en anglais, sans séparation (constaté en production le 2026-08-26).
     appels = delta.get("tool_calls") or []
     if appels:
         contenu += _appels_en_texte(appels)
     return MorceauGeneration(
-        type="token", contenu=raisonnement + contenu, raison_arret=choix.get("finish_reason")
+        type="token", contenu=contenu, raison_arret=choix.get("finish_reason")
     )
 
 

@@ -90,6 +90,18 @@ def resoudre_binaire() -> Path | None:
     return Path(trouve) if trouve else None
 
 
+# `--reasoning-format none` laisse les balises de réflexion DANS le contenu, telles que le gabarit
+# du modèle les produit. C'est le comportement exact du chemin bindings, et c'est ce que le frontend
+# sait lire (`chat/raisonnement/extraction.ts` cherche `<think>` dans le texte).
+#
+# Le défaut `auto` extrait les pensées vers `message.reasoning_content` et les RETIRE du contenu :
+# le frontend ne voit alors plus de balise, et la réflexion — en anglais — coule dans la réponse
+# sans séparation. Constaté en production le 2026-08-26, capture à l'appui, dès le premier échange
+# servi par ce chemin. Un canal séparé n'est pas une amélioration tant que les deux chemins doivent
+# produire la même chose.
+ARGUMENTS_REFLEXION = ("--reasoning-format", "none")
+
+
 def _motif_experts(blocs: list[int]) -> str:
     """Expression régulière ciblant les tenseurs d'experts des blocs déportés.
 
@@ -119,6 +131,7 @@ def construire_commande(plan: PlanChargement, binaire: Path) -> list[str]:
         "--n-gpu-layers", str(plan.couches_gpu),
         "--jinja",
         "--no-webui",
+        *ARGUMENTS_REFLEXION,
     ]
     if plan.experts_deportes:
         commande += ["--override-tensor", _motif_experts(plan.experts_deportes)]

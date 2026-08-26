@@ -89,6 +89,14 @@ services:
       # en boucle. Le fichier touché est un artefact de build, régénéré à chaque `bun run build`.
       - ./frontend/dist:/app/frontend/dist
 
+      # Binaire llama-server, compilé pour l'architecture de cette carte (sm_86). Monté depuis
+      # l'hôte plutôt que copié dans l'image pour une raison de fait : celui de
+      # `ghcr.io/ggml-org/llama.cpp` est lié à la glibc d'Ubuntu 24.04 et cette image est sur 22.04
+      # (mesuré : « GLIBC_2.38 not found »), il faut donc le compiler ici — 10 min de CUDA qu'on ne
+      # veut pas payer à chaque reconstruction d'image pendant la mise au point.
+      # Absent : le superviseur retombe seul sur les bindings Python, sans rien casser.
+      - "${ECHOHUB_LLAMA_SERVER_HOTE:-/mnt/models/echohub-bin/llama-server}:/opt/llama-server/llama-server:ro"
+
     environment:
       MODELS_DIR: /data/models
       XDG_DATA_HOME: /data/user

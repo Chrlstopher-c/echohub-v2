@@ -120,6 +120,9 @@ de déport existe et est couvert par des tests unitaires ; aucune mesure ne l'a 
       le découper demande de décider ce qui appartient à la conduite et ce qui appartient au
       transport — c'est le préalable au branchement de `inference/harnais.py`, écrit et testé le
       2026-08-26 mais délibérément pas encore câblé pour cette raison.
+- [ ] **`chat/generation.py` fait 541 lignes** (max 500), avec `preparer` et `diffuser` à 36 lignes
+      et `_construire_contexte` à 45. Relevé le 2026-08-26 en y remplaçant une seule ligne ; aucune
+      de ces fonctions n'a été touchée.
 
 ## Backlog
 
