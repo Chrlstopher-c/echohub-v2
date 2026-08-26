@@ -73,20 +73,31 @@ outgoing:
   pool_maxsize: 10
   enable_http2: true
 
-# --- Moteurs : NE PAS déclarer de section `engines` ici ------------------------------------------
+# --- Moteurs : la sélection ne vit PAS ici, et c'est la conclusion du 2026-08-26 ---------------
 #
-# ESSAYÉ ET ANNULÉ le 2026-08-26. Ajouter une liste `engines` (mojeek, wikipedia, wikidata…) pour
-# gagner de la redondance a fait passer les résultats de « quelques-uns » à ZÉRO : avec
-# `use_default_settings: true`, une liste `engines` REMPLACE le catalogue par défaut au lieu de le
-# compléter, et des entrées réduites à `name`/`disabled` ne suffisent pas à définir un moteur.
-# Mesuré : mojeek et wikipedia répondaient sans être « muets », et rendaient zéro résultat.
+# CE QUI S'EST PASSÉ. Trois recherches rapprochées d'un agent ont suspendu EN MÊME TEMPS les trois
+# seuls moteurs `general` réellement actifs du catalogue par défaut :
+#     brave : too many requests · duckduckgo : CAPTCHA · startpage : Suspended: CAPTCHA
+# Le modèle a alors écrit sa page « avec ce qu'il connaît du secteur » : l'invention que le socle
+# interdit, provoquée par le harnais.
 #
-# Le défaut de SearXNG est donc conservé. Pour n'activer que certains moteurs, la forme correcte
-# est `use_default_settings: {engines: {keep_only: [...]}}` — à éprouver avant de la poser.
+# PREMIÈRE TENTATIVE, ANNULÉE. Ajouter une liste `engines` ici pour gagner de la redondance. Les
+# résultats sont passés à zéro et la conclusion écrite ce jour-là — « avec use_default_settings,
+# une liste engines REMPLACE le catalogue » — était FAUSSE : les deux moteurs de l'essai (mojeek,
+# wikipedia) rendent zéro résultat par eux-mêmes sur la requête testée, ce qui a été vérifié depuis,
+# moteur nommé seul, hors de toute modification de ce fichier. La variable n'avait pas été isolée.
 #
-# CE QUI A MOTIVÉ LA TENTATIVE, et qui reste vrai : le 2026-08-26, trois recherches rapprochées
-# d'un agent ont fait tomber les trois moteurs actifs EN MÊME TEMPS —
-#     brave : Suspended: too many requests · duckduckgo : CAPTCHA · startpage : Suspended: CAPTCHA
-# suspension d'une heure, et le modèle a construit sa page « avec ce qu'il connaît du secteur » :
-# l'invention que le socle interdit, provoquée par le harnais. Trois moteurs qui tombent ensemble
-# ne sont pas trois moteurs. La redondance reste à obtenir — autrement que par cette section.
+# CE QUI EST FAIT À LA PLACE. Le paramètre de requête `engines=` outrepasse le champ `disabled` du
+# catalogue : baidu, yandex, seznam, gmx, bing sont désactivés ci-dessous et répondent dès qu'ils
+# sont nommés dans l'URL. La sélection vit donc dans `backend/recherche/pool_moteurs.py` — dix-sept
+# moteurs mesurés, tirés quatre par quatre à tour de rôle, un moteur qui refuse sortant du tirage
+# pour trente minutes. C'est du Python testé, pas un fichier dont une erreur de nom empêcherait le
+# conteneur de démarrer.
+#
+# `☠` PIÈGE MESURÉ, et il coûtait quatre requêtes par recherche : SearXNG **cumule** `categories`
+# et `engines` au lieu de les substituer. Tant que le backend envoyait les deux, brave, startpage,
+# duckduckgo et wikipedia étaient interrogés par la catégorie — donc sollicités alors même que le
+# pool venait de les écarter. Le client omet désormais `categories` dès que des moteurs sont nommés.
+#
+# RÉSULTAT MESURÉ : 60 recherches distinctes d'affilée, 60 avec résultats, aucune vide, aucune
+# panne, latence médiane divisée par deux. Avant, trois suffisaient à tout éteindre.

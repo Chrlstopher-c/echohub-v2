@@ -23,6 +23,7 @@ L'URL et le délai du service se lisent dans `backend.core.get_settings()` (`SEA
 """
 
 from backend.recherche.api import routeur
+from backend.recherche.cache import CacheRecherches, cache
 from backend.recherche.client_searxng import ClientSearxng
 from backend.recherche.erreurs import RechercheEchouee, RechercheIndisponible
 from backend.recherche.modeles import (
@@ -39,6 +40,7 @@ from backend.recherche.modeles import (
     ResultatRecherche,
     SanteRecherche,
 )
+from backend.recherche.pool_moteurs import POOL_GENERAL, TirageMoteurs, tirage
 from backend.recherche.service import construire_client, rechercher, sonder
 
 __all__ = [
@@ -50,6 +52,12 @@ __all__ = [
     "construire_client",
     # Client, exposé pour l'injection (tests, appelants qui pilotent une autre instance)
     "ClientSearxng",
+    # Protection contre le rate-limit : rotation des moteurs et cache, injectables comme le client
+    "TirageMoteurs",
+    "tirage",
+    "POOL_GENERAL",
+    "CacheRecherches",
+    "cache",
     # Modèles typés
     "CategorieRecherche",
     "ParametresRecherche",

@@ -57,12 +57,20 @@ class ClientSearxng:
     def url_base(self) -> str:
         return self._url_base
 
-    async def interroger(self, parametres: ParametresRecherche, page: int) -> dict[str, Any]:
-        """Interroge une page de résultats et rend la charge JSON brute, sans l'interpréter."""
+    async def interroger(
+        self, parametres: ParametresRecherche, page: int, moteurs: tuple[str, ...] = ()
+    ) -> dict[str, Any]:
+        """Interroge une page de résultats et rend la charge JSON brute, sans l'interpréter.
+
+        `moteurs` nomme explicitement qui interroger. Vide, SearXNG applique son catalogue par
+        défaut — quatre moteurs en catégorie `general`, dont trois se font suspendre ensemble.
+        """
         url = f"{self._url_base}{_CHEMIN_RECHERCHE}"
         try:
             async with httpx.AsyncClient(timeout=self._delai_s, follow_redirects=False) as client:
-                reponse = await client.get(url, params=_parametres_http(parametres, page), headers=_ENTETES_RECHERCHE)
+                reponse = await client.get(
+                    url, params=_parametres_http(parametres, page, moteurs), headers=_ENTETES_RECHERCHE
+                )
         except httpx.TimeoutException as exc:
             logger.error("SearXNG muet après {} s sur {} : {}", self._delai_s, url, exc)
             raise RechercheIndisponible(
@@ -105,18 +113,36 @@ class ClientSearxng:
         )
 
 
-def _parametres_http(parametres: ParametresRecherche, page: int) -> dict[str, str]:
-    """Chaîne de requête SearXNG. `format=json` est ce qui sépare l'API de l'interface web."""
-    return {
+def _parametres_http(
+    parametres: ParametresRecherche, page: int, moteurs: tuple[str, ...] = ()
+) -> dict[str, str]:
+    """Chaîne de requête SearXNG. `format=json` est ce qui sépare l'API de l'interface web.
+
+    `engines` outrepasse le champ `disabled` du catalogue — mesuré le 2026-08-26 : baidu, yandex,
+    seznam et gmx sont désactivés par défaut et répondent dès qu'ils sont nommés. C'est ce qui
+    permet au pool de vivre en Python (`pool_moteurs.py`) plutôt que dans `settings.yml`, où une
+    erreur de nom empêche le conteneur de démarrer et où rien ne se teste.
+    """
+    requete = {
         "q": parametres.requete,
         "format": "json",
-        "categories": parametres.categorie.value,
         "language": parametres.langue,
         "pageno": str(page),
         # Filtrage explicite plutôt qu'implicite : la valeur du fichier de configuration pourrait
         # changer sans que ce domaine le sache, et le comportement doit rester lisible ici.
         "safesearch": "0",
     }
+    if moteurs:
+        # `categories` est volontairement OMIS quand des moteurs sont nommés : SearXNG CUMULE les
+        # deux au lieu de les substituer. Mesuré le 2026-08-26 sur un banc de 24 recherches — avec
+        # `categories=general` en plus de `engines=`, brave, startpage, duckduckgo et wikipedia
+        # revenaient muets à chaque tour alors que le pool les avait écartés : ils étaient
+        # interrogés par la catégorie, pas par nous. Quatre requêtes sortantes de trop par
+        # recherche, sur exactement les moteurs qu'on cherche à ménager.
+        requete["engines"] = ",".join(moteurs)
+    else:
+        requete["categories"] = parametres.categorie.value
+    return requete
 
 
 def _charge_json(reponse: httpx.Response) -> dict[str, Any]:
