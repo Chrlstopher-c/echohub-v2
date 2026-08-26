@@ -61,6 +61,18 @@ from backend.inference.engines_adapters.vram import lire_vram
 # externe non protege dans `__init__`. L'alias porte la meme information sans le faux positif.
 Processus = subprocess.Popen  # type: ignore[type-arg]
 
+# Émis quand le flux progresse sans produire de texte visible — typiquement pendant qu'un appel
+# d'outil accumule ses arguments. Ce n'est pas un cas dégénéré, c'est un battement de cœur.
+#
+# Le garde-fou d'inactivité de `chat` arme un `asyncio.wait_for` sur CHAQUE `__anext__` (180 s). Or
+# rien n'était émis pendant que l'accumulateur collecte les arguments d'un appel — et une landing
+# page de plusieurs milliers de caractères écrite dans `contenu` prend bien plus que cela à
+# 26 tok/s. Mesuré en production le 2026-08-26 : génération coupée sur « le moteur n'a rien émis
+# depuis 180 s », alors qu'il écrivait sans discontinuer, et écran muet pendant tout ce temps.
+#
+# Un fragment vide traverse `_appliquer` sans rien afficher et réarme le délai.
+_BATTEMENT = MorceauGeneration(type="token", contenu="")
+
 PREFIXE_SSE = "data: "
 MARQUEUR_FIN_SSE = "[DONE]"
 # Une génération outillée sur un contexte long peut légitimement durer plusieurs minutes ; le flux
@@ -216,8 +228,7 @@ class AdaptateurLlamaServer(AdaptateurMoteur):
                     await _verifier_reponse(reponse)
                     async for morceau, arret in _lire_flux(reponse, appels, plafond):
                         raison = arret or raison
-                        if morceau is not None:
-                            yield morceau
+                        yield morceau if morceau is not None else _BATTEMENT
         except httpx.HTTPError as exc:
             logger.error("Flux llama-server interrompu : {}", exc)
             yield MorceauGeneration(type="erreur", contenu=f"Le moteur a coupé la génération : {exc}")
