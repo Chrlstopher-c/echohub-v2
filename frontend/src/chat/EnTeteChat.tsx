@@ -14,6 +14,7 @@ export interface EnTeteChatProps {
   readonly modele: string | null;
   readonly pret: boolean;
   readonly onReglages: () => void;
+  readonly onOutils: () => void;
   readonly onOuvrirConversations: () => void;
   readonly onOuvrirPlan: () => void;
 }
@@ -39,14 +40,32 @@ function IconePlan(): ReactElement {
   );
 }
 
-export function EnTeteChat({
-  titre,
-  modele,
-  pret,
-  onReglages,
-  onOuvrirConversations,
-  onOuvrirPlan,
-}: EnTeteChatProps): ReactElement {
+function ActionsEntete({ pret, onOutils, onReglages, onOuvrirPlan }: Pick<
+  EnTeteChatProps,
+  'pret' | 'onOutils' | 'onReglages' | 'onOuvrirPlan'
+>): ReactElement {
+  return (
+    <div className="flex shrink-0 items-center gap-1 lg:gap-2">
+      <Badge tone={pret ? 'ok' : 'neutral'} dot>
+        {pret ? 'moteur prêt' : 'moteur inactif'}
+      </Badge>
+      {/* « Outils » vit à côté de « Réglages » : les deux disent ce que la conversation met à
+          disposition du modèle — l'un les capacités, l'autre les paramètres. */}
+      <Button variant="ghost" size="sm" onClick={onOutils}>
+        Outils
+      </Button>
+      <Button variant="ghost" size="sm" onClick={onReglages}>
+        Réglages
+      </Button>
+      <Button variant="ghost" size="sm" className="lg:hidden" aria-label="Plan de chargement" onClick={onOuvrirPlan}>
+        <IconePlan />
+      </Button>
+    </div>
+  );
+}
+
+export function EnTeteChat(props: EnTeteChatProps): ReactElement {
+  const { titre, modele } = props;
   return (
     <header className="flex shrink-0 items-center gap-2 border-b border-border px-2 py-2 lg:gap-3 lg:px-6 lg:py-3">
       <Button
@@ -54,7 +73,7 @@ export function EnTeteChat({
         size="sm"
         className="lg:hidden"
         aria-label="Conversations"
-        onClick={onOuvrirConversations}
+        onClick={props.onOuvrirConversations}
       >
         <IconeListe />
       </Button>
@@ -62,17 +81,12 @@ export function EnTeteChat({
         <h1 className="truncate text-md font-semibold text-text">{titre}</h1>
         {modele !== null && <p className="truncate text-2xs text-text-3">{modele}</p>}
       </div>
-      <div className="flex shrink-0 items-center gap-1 lg:gap-2">
-        <Badge tone={pret ? 'ok' : 'neutral'} dot>
-          {pret ? 'moteur prêt' : 'moteur inactif'}
-        </Badge>
-        <Button variant="ghost" size="sm" onClick={onReglages}>
-          Réglages
-        </Button>
-        <Button variant="ghost" size="sm" className="lg:hidden" aria-label="Plan de chargement" onClick={onOuvrirPlan}>
-          <IconePlan />
-        </Button>
-      </div>
+      <ActionsEntete
+        pret={props.pret}
+        onOutils={props.onOutils}
+        onReglages={props.onReglages}
+        onOuvrirPlan={props.onOuvrirPlan}
+      />
     </header>
   );
 }

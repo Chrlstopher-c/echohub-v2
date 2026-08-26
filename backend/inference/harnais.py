@@ -8,9 +8,17 @@ constant, la seule variable est la conduite, donc un écart lui est attribuable.
 
 DEUX CONDUITES
 
-`echohub` est la conduite d'origine, inchangée : six tours d'outils, une relance sur promesse non
-tenue, l'anti-redite sur appel échoué. Elle reste le défaut — un changement de défaut modifierait
-le comportement de conversations existantes sans que personne l'ait demandé.
+`echohub` est la conduite d'origine, inchangée : six tours d'outils avec un couperet, une relance
+sur promesse non tenue, l'anti-redite sur appel échoué. Elle est CONSERVÉE, mais n'est plus le
+défaut — elle sert désormais de point de comparaison.
+
+Le défaut est passé à `forge` le 2026-08-26, sur un cas mesuré et non sur une préférence : à une
+recherche web ordinaire, la borne de six tours a été atteinte, le journal l'atteste
+(« Borne de 6 tours d'outils atteinte : tour de clôture sans outil »). Le modèle s'est alors
+retrouvé au tour de clôture SANS outils déclarés, a écrit « Laisse-moi chercher autrement » et s'est
+arrêté là. Il ne pouvait pas savoir qu'on venait de lui retirer ses moyens : rien dans sa
+conversation ne lui disait combien de tours il avait consommés. Un couperet muet fait passer pour de
+l'incapacité ce qui est une contrainte du harnais.
 
 `forge` vient du harnais d'évaluation d'agent-forge, et n'ajoute que ce qui a été mesuré comme
 manquant. Trois écarts, pas un de plus :
@@ -41,7 +49,15 @@ from __future__ import annotations
 
 import re
 
+from dataclasses import dataclass, field
+from typing import Any
+
+from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
+
+from backend.inference.engines_adapters.contrat import MessageChat, OptionsGeneration
+from backend.inference.harnais_outils import _sans_appels_outils
+from backend.inference.reprise import CONSIGNE_PROMESSE, RELANCES_PROMESSE_MAX, promesse_non_tenue
 
 # Sous ce seuil, un tour est tenu pour muet : le modèle n'a pas répondu, il a seulement réfléchi.
 # Quarante caractères, parce qu'une vraie réponse courte — « Oui, la version 3.12 le permet. » —
@@ -65,7 +81,25 @@ class Harnais(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     nom: str
-    tours_outils_max: int = Field(ge=1, le=60)
+    # Tours d'outils CONSÉCUTIFS accordés avant l'avertissement. Ce n'est pas un quota par
+    # conversation : le modèle qui rend la main puis repart a de nouveau tout son budget.
+    tours_outils_max: int = Field(ge=2, le=60)
+    # Prolongations accordées quand le modèle continue APRÈS avoir été averti.
+    #
+    # `None` = AUCUN plafond de prolongation : tant que le modèle continue d'appeler des outils
+    # après avoir été averti, il est prolongé. C'est le comportement voulu pour un agent — une
+    # tâche réelle enchaîne parfois des dizaines d'étapes, et un couperet à quarante tours
+    # arrêterait le travail au milieu pour une raison qui n'a rien à voir avec la tâche.
+    #
+    # Ce qui borne alors la boucle n'est pas un compte d'extensions mais `tours_absolus_max`, et
+    # c'est un garde-fou de sûreté, pas un budget : il ne se rencontre pas en usage normal. Il
+    # existe parce qu'une boucle sans borne est un défaut en soi — et le cas n'est pas théorique,
+    # le 2026-08-26 le modèle a rappelé six fois d'affilée le même outil que le harnais détruisait.
+    # Sans borne, il aurait tourné jusqu'à épuiser le contexte.
+    extensions_max: int | None = Field(default=0)
+    # Garde-fou de sûreté, jamais un budget. Volontairement très au-dessus de ce qu'une tâche
+    # réelle demande : l'atteindre signale une boucle, pas une tâche longue.
+    tours_absolus_max: int = Field(default=200, ge=1, le=1000)
     # Relancer un tour qui n'a produit ni appel ni réponse lisible. Distinct de la relance sur
     # promesse : celle-ci cherche une annonce, celle-là cherche l'absence de tout.
     relance_sur_tour_muet: bool = False
@@ -74,18 +108,45 @@ class Harnais(BaseModel):
     radotage_tours: int = Field(default=0, ge=0, le=5)
 
 
+# Six tours et un couperet : la conduite d'origine. Conservée telle quelle pour pouvoir mesurer
+# ce que la seconde change.
 ECHOHUB = Harnais(nom="echohub", tours_outils_max=6)
 
 FORGE = Harnais(
     nom="forge",
-    tours_outils_max=20,
+    tours_outils_max=10,
+    extensions_max=None,
     relance_sur_tour_muet=True,
     relances_muettes_max=2,
     radotage_tours=RADOTAGE_TOURS,
 )
 
 _CONNUS: dict[str, Harnais] = {ECHOHUB.nom: ECHOHUB, FORGE.nom: FORGE}
-DEFAUT = ECHOHUB
+DEFAUT = FORGE
+
+# Injecté à l'AVANT-DERNIER tour du budget courant, jamais au dernier : prévenir une fois qu'il
+# est trop tard ne sert à rien. Le modèle apprend ainsi qu'il approche d'une borne ET ce qu'il doit
+# faire pour la franchir — deux informations dont il ne dispose pas autrement, puisque rien dans sa
+# conversation ne dit combien de tours il a consommés.
+#
+# Demandé le 2026-08-26 après un cas mesuré : la borne de six tours atteinte, le modèle se
+# retrouvait au tour de clôture SANS outils déclarés, écrivait « Laisse-moi chercher autrement » et
+# s'arrêtait là. Il ne pouvait pas savoir qu'on venait de lui retirer ses moyens. Un couperet muet
+# fait passer pour de l'incapacité ce qui est une contrainte du harnais.
+CONSIGNE_AVERTISSEMENT = (
+    "Harness notice — you have made {faits} consecutive tool calls, and {restants} remain before "
+    "the harness stops offering tools and asks you to answer with what you have.\n"
+    "If the task genuinely needs more steps, say so in one short sentence and keep calling: the "
+    "budget will be extended. If you already have what you need, stop calling and answer now."
+)
+
+# Dernier avertissement : plus aucune extension ne sera accordée. Dire qu'il reste un tour serait
+# faux, et le modèle organiserait la suite sur une promesse que le harnais ne tiendra pas.
+CONSIGNE_DERNIER_TOUR = (
+    "Harness notice — this is your LAST tool call. No further extension will be granted. Make it "
+    "count, then answer the user with what you have. Do not announce a step you will not be able "
+    "to take."
+)
 
 CONSIGNE_TOUR_MUET = (
     "Your last turn produced nothing: no tool call, and no answer to the user — only reasoning, "
@@ -151,8 +212,164 @@ def radote(tours_precedents: list[str], harnais: Harnais) -> bool:
     return all(texte == derniers[-1] for texte in derniers)
 
 
+@dataclass
+class EtatBoucle:
+    """État d'un tour de boucle. Porté par l'appel, jamais par le module : deux conversations
+    simultanées n'ont rien à partager, et une variable de module les mélangerait silencieusement."""
+
+    harnais: Harnais
+    outils_declares: list[dict[str, Any]] | None
+    echecs_vus: set[str] = field(default_factory=set)
+    # Cumule sur TOUS les tours : un fichier écrit au premier reste écrit même si les suivants
+    # échouent.
+    aboutis: int = 0
+    relances: int = 0
+    tours_muets: int = 0
+    # Tours d'outils consécutifs consommés, et prolongations déjà accordées.
+    tours_faits: int = 0
+    extensions: int = 0
+    # Le modèle a-t-il été averti pour le budget courant ? Remis à faux à chaque extension, pour
+    # qu'il soit averti de nouveau avant la borne suivante.
+    averti: bool = False
+    # Textes des tours ayant appelé un outil, pour la détection de radotage.
+    textes: list[str] = field(default_factory=list)
+
+
+def harnais_demande(options: OptionsGeneration) -> str | None:
+    """Conduite demandée par l'appelant, si le contrat en porte une.
+
+    Lu par `getattr` plutôt que par un champ déclaré : `OptionsGeneration` appartient au contrat des
+    moteurs, et une conduite de harnais n'est pas un réglage d'échantillonnage. Tant qu'aucune
+    interface ne la choisit, l'absence du champ est le cas normal, pas une anomalie.
+    """
+    valeur = getattr(options, "harnais", None)
+    return valeur if isinstance(valeur, str) else None
+
+
+def consigne_de_relance(texte: str, etat: EtatBoucle, avec_outils: bool) -> str | None:
+    """Consigne à renvoyer au modèle quand un tour n'a demandé AUCUN outil, ou `None` pour finir.
+
+    Trois cas, dans cet ordre — le premier qui s'applique gagne :
+
+    1. le tour est MUET (ni appel, ni réponse lisible) : le modèle n'a produit que du raisonnement,
+       que l'utilisateur ne voit pas. `promesse_non_tenue` écarte ce cas par construction, puisqu'elle
+       cherche une annonce et qu'un tour vide n'annonce rien ;
+    2. le tour RADOTE : le même texte réécrit, sans qu'aucun outil ne soit appelé entre-temps.
+       L'anti-redite d'origine ne borne que les APPELS échoués et ne voit pas ce cas ;
+    3. le tour s'achève sur une PROMESSE que rien ne vient tenir — le mécanisme d'origine, intact.
+
+    `None` signifie « la réponse est finie » : c'est le cas courant, et il ne coûte rien.
+    """
+    if not avec_outils or etat.relances >= RELANCES_PROMESSE_MAX + etat.harnais.relances_muettes_max:
+        return None
+    if tour_muet(texte, etat.harnais) and etat.tours_muets < etat.harnais.relances_muettes_max:
+        etat.tours_muets += 1
+        etat.relances += 1
+        logger.warning("Tour muet ({} car.) : relance {}.", len(texte.strip()), etat.relances)
+        return CONSIGNE_TOUR_MUET
+    etat.textes.append(texte)
+    if radote(etat.textes, etat.harnais):
+        etat.relances += 1
+        logger.warning("Texte répété à l'identique sur {} tours : relance {}.",
+                       etat.harnais.radotage_tours, etat.relances)
+        return CONSIGNE_RADOTAGE
+    if etat.relances < RELANCES_PROMESSE_MAX and promesse_non_tenue(texte):
+        etat.relances += 1
+        logger.warning("Réponse close sur une annonce sans appel : relance {}.", etat.relances)
+        return CONSIGNE_PROMESSE
+    return None
+
+
+def budget_epuise(etat: EtatBoucle) -> bool:
+    """Le modèle a-t-il consommé tout son budget, extensions comprises ?
+
+    Borne ABSOLUE et calculable d'avance : `tours_outils_max * (1 + extensions_max)`. Une extension
+    accordée sans plafond ferait une boucle sans fin sur un modèle qui appelle un outil à chaque
+    tour — le cas n'est pas théorique, il s'est produit six fois d'affilée le 2026-08-26 sur un
+    appel que le harnais détruisait.
+    """
+    if etat.tours_faits >= etat.harnais.tours_absolus_max:
+        logger.warning("Garde-fou de {} tours d'outils atteint : la boucle est arrêtée. "
+                       "Ce plafond ne se rencontre pas sur une tâche normale — suspecter une "
+                       "boucle plutôt qu'une tâche longue.", etat.harnais.tours_absolus_max)
+        return True
+    if etat.harnais.extensions_max is None:
+        return False
+    plafond = etat.harnais.tours_outils_max * (1 + etat.harnais.extensions_max)
+    return etat.tours_faits >= plafond
+
+
+def avertissement_du_tour(etat: EtatBoucle) -> str | None:
+    """Consigne à injecter AVANT ce tour, ou `None` s'il n'y a rien à dire.
+
+    Deux avertissements distincts, et la distinction n'est pas cosmétique : annoncer une extension
+    qui ne viendra pas ferait organiser au modèle une suite que le harnais ne lui accordera pas.
+    """
+    restants = _restants(etat)
+    if restants != 1:
+        return None
+    if not _extension_possible(etat):
+        return CONSIGNE_DERNIER_TOUR
+    if etat.averti:
+        return None
+    etat.averti = True
+    return CONSIGNE_AVERTISSEMENT.format(faits=etat.tours_faits, restants=restants)
+
+
+def _extension_possible(etat: EtatBoucle) -> bool:
+    """Une prolongation peut-elle encore être accordée ?
+
+    `extensions_max is None` signifie « sans plafond » : seul `tours_absolus_max` arrête alors la
+    boucle, et il est assez haut pour ne pas se rencontrer. Le garde-fou reste vérifié ici pour
+    qu'on n'annonce jamais une extension au tour qui précède immédiatement son déclenchement.
+    """
+    if etat.tours_faits + etat.harnais.tours_outils_max > etat.harnais.tours_absolus_max:
+        return False
+    if etat.harnais.extensions_max is None:
+        return True
+    return etat.extensions < etat.harnais.extensions_max
+
+
+def _restants(etat: EtatBoucle) -> int:
+    """Tours restants dans le budget COURANT, extensions déjà accordées comprises."""
+    accorde = etat.harnais.tours_outils_max * (1 + etat.extensions)
+    return accorde - etat.tours_faits
+
+
+def prolonger(etat: EtatBoucle) -> bool:
+    """Accorde une prolongation si le modèle a été averti et continue. Rend `True` si accordée.
+
+    L'extension ne s'accorde qu'APRÈS un avertissement : sans lui, le modèle n'a jamais eu
+    l'occasion de s'arrêter, et prolonger reviendrait à ne pas avoir de borne du tout.
+    """
+    if not etat.averti or not _extension_possible(etat):
+        return False
+    etat.extensions += 1
+    etat.averti = False
+    logger.info("Budget d'outils prolongé (extension {}, {} tours faits) : "
+                "le modèle a continué après avertissement.", etat.extensions, etat.tours_faits)
+    return True
+
+
+def relancer(messages: list[MessageChat], texte: str, consigne: str) -> list[MessageChat]:
+    """Conversation à repasser au moteur pour qu'il reprenne, consigne en dernier tour utilisateur."""
+    return list(messages) + [
+        MessageChat(role="assistant", content=_sans_appels_outils(texte)),
+        MessageChat(role="user", content=consigne),
+    ]
+
+
 __all__ = [
+    "CONSIGNE_AVERTISSEMENT",
+    "CONSIGNE_DERNIER_TOUR",
     "CONSIGNE_RADOTAGE",
+    "EtatBoucle",
+    "avertissement_du_tour",
+    "budget_epuise",
+    "prolonger",
+    "consigne_de_relance",
+    "harnais_demande",
+    "relancer",
     "CONSIGNE_TOUR_MUET",
     "DEFAUT",
     "ECHOHUB",

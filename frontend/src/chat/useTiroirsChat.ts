@@ -12,7 +12,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useEstGrandEcran } from '../shared/design';
 
-export type TiroirChat = 'conversations' | 'plan' | null;
+export type TiroirChat = 'conversations' | 'plan' | 'artefact' | null;
 
 export interface EtatTiroirsChat {
   readonly tiroir: TiroirChat;

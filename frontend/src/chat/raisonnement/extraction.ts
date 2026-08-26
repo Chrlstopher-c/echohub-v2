@@ -143,10 +143,37 @@ function _premiereBalise(source: string): number {
   return ouverture === null ? source.length : ouverture.index + decalage;
 }
 
+interface EtatDecoupe {
+  visible: string[];
+  raisonnements: SegmentRaisonnement[];
+  curseur: number;
+}
+
+/** Consomme un bloc ouvert par une balise. Rend `null` si le bloc n'est jamais refermé. */
+function _consommerBloc(source: string, etat: EtatDecoupe, ouverture: Ouverture): EtatDecoupe | null {
+  const { convention, index } = ouverture;
+  etat.visible.push(source.slice(etat.curseur, index));
+  const debut = index + convention.ouvrante.length;
+  const fin = source.indexOf(convention.fermante, debut);
+  if (fin < 0) {
+    // Bloc jamais refermé : tout le reste du texte reçu lui appartient. Rien n'est mis en attente,
+    // sinon un raisonnement en cours resterait invisible jusqu'à la fin de la génération.
+    etat.raisonnements.push({ convention: convention.nom, texte: source.slice(debut), complet: false });
+    return null;
+  }
+  etat.raisonnements.push({ convention: convention.nom, texte: source.slice(debut, fin), complet: true });
+  return { ...etat, curseur: fin + convention.fermante.length };
+}
+
+/** Referme un bloc dont seule la balise fermante existe (amorcé par le gabarit, voir plus haut). */
+function _consommerOrpheline(source: string, etat: EtatDecoupe, orpheline: Ouverture): EtatDecoupe {
+  const texte = source.slice(etat.curseur, orpheline.index);
+  etat.raisonnements.push({ convention: orpheline.convention.nom, texte, complet: true });
+  return { ...etat, curseur: orpheline.index + orpheline.convention.fermante.length };
+}
+
 function _segmenter(source: string): ReponseSegmentee {
-  const visible: string[] = [];
-  const raisonnements: SegmentRaisonnement[] = [];
-  let curseur = 0;
+  let etat: EtatDecoupe = { visible: [], raisonnements: [], curseur: 0 };
   for (let tour = 0; tour < toursMax(source); tour += 1) {
     /*
      * Deux cas concourent, et c'est LE PLUS PROCHE du curseur qui l'emporte — pas l'un des deux
@@ -161,30 +188,21 @@ function _segmenter(source: string): ReponseSegmentee {
      * En comparant les positions, les blocs ressortent dans leur ordre d'apparition réel :
      * raisonnement, appel, résultat, réponse.
      */
-    const orpheline = fermetureOrpheline(source, curseur);
-    const ouverture = prochaineOuverture(source, curseur);
+    const orpheline = fermetureOrpheline(source, etat.curseur);
+    const ouverture = prochaineOuverture(source, etat.curseur);
     if (orpheline !== null && (ouverture === null || orpheline.index < ouverture.index)) {
-      const texte = source.slice(curseur, orpheline.index);
-      raisonnements.push({ convention: orpheline.convention.nom, texte, complet: true });
-      curseur = orpheline.index + orpheline.convention.fermante.length;
+      etat = _consommerOrpheline(source, etat, orpheline);
       continue;
     }
     if (ouverture === null) {
       break;
     }
-    const { convention, index } = ouverture;
-    visible.push(source.slice(curseur, index));
-    const debut = index + convention.ouvrante.length;
-    const fin = source.indexOf(convention.fermante, debut);
-    if (fin < 0) {
-      // Bloc jamais refermé : tout le reste du texte reçu lui appartient. Rien n'est mis en attente,
-      // sinon un raisonnement en cours resterait invisible jusqu'à la fin de la génération.
-      raisonnements.push({ convention: convention.nom, texte: source.slice(debut), complet: false });
-      return { visible: visible.join(''), raisonnements, enCours: true };
+    const suite = _consommerBloc(source, etat, ouverture);
+    if (suite === null) {
+      return { visible: etat.visible.join(''), raisonnements: etat.raisonnements, enCours: true };
     }
-    raisonnements.push({ convention: convention.nom, texte: source.slice(debut, fin), complet: true });
-    curseur = fin + convention.fermante.length;
+    etat = suite;
   }
-  visible.push(source.slice(curseur));
-  return { visible: visible.join(''), raisonnements, enCours: false };
+  etat.visible.push(source.slice(etat.curseur));
+  return { visible: etat.visible.join(''), raisonnements: etat.raisonnements, enCours: false };
 }

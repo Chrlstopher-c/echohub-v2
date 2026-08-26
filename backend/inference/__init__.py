@@ -19,6 +19,7 @@ normaliser — c'est exactement le point de souplesse que ce module documente.
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass, field
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -35,6 +36,15 @@ from backend.inference.engines_adapters import (
 # Réexportés : `api.py` et les tests les lisent sur `backend.inference`, qui reste la surface
 # publique du domaine. Un découpage interne ne doit pas obliger les appelants à connaître le
 # sous-module — même règle que partout ici : on importe le domaine, jamais ses entrailles.
+from backend.inference import harnais
+from backend.inference.harnais import (
+    EtatBoucle,
+    avertissement_du_tour,
+    budget_epuise,
+    consigne_de_relance,
+    prolonger,
+    relancer,
+)
 from backend.inference.harnais_outils import (
     BALISE_ENTREE_FERMANTE,
     BALISE_ENTREE_OUVRANTE,
@@ -234,6 +244,36 @@ _AUCUN_OUTIL_ABOUTI = (
 )
 
 
+def _restants_nuls(etat: EtatBoucle) -> bool:
+    """Le budget courant est-il consommé, alors qu'une extension reste possible ?"""
+    accorde = etat.harnais.tours_outils_max * (1 + etat.extensions)
+    return etat.tours_faits >= accorde and etat.extensions < etat.harnais.extensions_max
+
+
+async def _jouer_appels(
+    appels: list[dict[str, Any]],
+    messages: list[MessageChat],
+    contexte: ContexteExecution,
+    etat: EtatBoucle,
+    texte: str,
+) -> AsyncIterator[dict[str, Any]]:
+    """Exécute les appels d'un tour et met l'état de conduite à jour."""
+    etat.tours_muets = 0
+    etat.textes.append(texte)
+    avant = etat.aboutis
+    async for etape in _executer_appels(appels, messages, contexte, etat.echecs_vus):
+        if isinstance(etape.get("texte"), str):
+            yield {"texte": etape["texte"]}
+        etat.aboutis += 1 if etape.get("succes") else 0
+    if etat.aboutis > avant:
+        # Un outil a abouti : l'ardoise des relances est effacée, comme celle des redites.
+        # MESURÉ le 2026-08-16 : relancé une fois, le modèle écrit bien son fichier — puis referme
+        # aussitôt sur « Le voici : » sans appeler `presenter_fichier`. Un compteur global le
+        # laissait passer. Ce qu'il faut borner, c'est la promesse SANS PROGRÈS ; une promesse qui
+        # suit un travail réel mérite le même traitement que la première.
+        etat.relances = 0
+
+
 async def _executer_appels(
     appels: list[dict[str, Any]],
     messages: list[MessageChat],
@@ -405,59 +445,54 @@ class MoteurChat:
         Un seul appel au moteur par tour, outils déclarés dedans ; le tour suivant n'a lieu que si
         le modèle a réellement demandé un outil. Les outils restent déclarés à CHAQUE tour — voir
         `TOURS_OUTILS_MAX` pour la mesure qui a fait abandonner l'inverse.
+
+        La CONDUITE — combien de tours, quand relancer, quand constater un radotage — vient de
+        `harnais.py` et non de constantes locales : c'est ce qui permet de la faire varier sans
+        toucher au transport, et de comparer deux conduites à outils et modèle constants.
         """
-        outils_declares = outils or None
-        # Appels échoués sans succès depuis, et compte de ce qui a abouti. Portés par la boucle et
-        # non par le module : deux conversations n'ont rien à partager. `aboutis` cumule sur TOUS les
-        # tours — un fichier écrit au premier reste écrit même si les suivants échouent.
-        echecs_vus: set[str] = set()
-        aboutis = 0
-        relances = 0
-        for _ in range(TOURS_OUTILS_MAX):
+        etat = EtatBoucle(harnais=harnais.choisir(harnais.harnais_demande(options)),
+                          outils_declares=outils or None)
+        while not budget_epuise(etat):
+            etat.tours_faits += 1
+            # L'avertissement précède le tour : prévenir après coup ne sert à rien, le modèle a
+            # déjà décidé de ce qu'il faisait de son dernier appel.
+            avis = avertissement_du_tour(etat)
+            if avis is not None:
+                messages = list(messages) + [MessageChat(role="tool", content=avis)]
             recu: list[str] = []
-            async for morceau in self._diffuser_complet(messages, options, outils_declares, recu):
+            async for morceau in self._diffuser_complet(messages, options, etat.outils_declares, recu):
                 yield morceau
             yield {"tokens": len(recu)}
+            texte = "".join(recu)
             # Sans registre, un `<tool_call>` écrit par le modèle est une hallucination : l'exécuter
             # produirait un bloc « outil inconnu » là où il n'y a simplement aucun outil.
-            appels = _appels_demandes("".join(recu)) if outils else []
+            appels = _appels_demandes(texte) if outils else []
             if not appels:
-                # Aucun appel : soit la réponse est finie, soit elle s'arrête sur une promesse que
-                # rien ne vient tenir. Le second cas se relance une fois, outils sous les yeux.
-                if relances < RELANCES_PROMESSE_MAX and outils and promesse_non_tenue("".join(recu)):
-                    relances += 1
-                    logger.warning("Réponse close sur une annonce sans appel : relance {}.", relances)
-                    yield {"texte": BALISE_FIN_ETAPE}
-                    messages = list(messages) + [
-                        MessageChat(role="assistant", content=_sans_appels_outils("".join(recu))),
-                        MessageChat(role="user", content=CONSIGNE_PROMESSE),
-                    ]
-                    continue
-                return
+                consigne = consigne_de_relance(texte, etat, bool(outils))
+                if consigne is None:
+                    return
+                yield {"texte": BALISE_FIN_ETAPE}
+                messages = relancer(messages, texte, consigne)
+                continue
             # Ce tour appelait un outil : ce qui vient d'être écrit était du commentaire de travail,
             # pas la réponse. On le signale au lieu de le laisser passer pour telle. Le balisage de
             # l'appel, lui, ne repart PAS au moteur — sinon il lui sert de modèle à recopier.
             yield {"texte": BALISE_FIN_ETAPE}
             messages = list(messages) + [
-                MessageChat(role="assistant", content=_sans_appels_outils("".join(recu)))
+                MessageChat(role="assistant", content=_sans_appels_outils(texte))
             ]
-            avant = aboutis
-            async for etape in _executer_appels(appels, messages, contexte, echecs_vus):
-                if isinstance(etape.get("texte"), str):
-                    yield {"texte": etape["texte"]}
-                aboutis += 1 if etape.get("succes") else 0
-            if aboutis > avant:
-                # Un outil a abouti : l'ardoise des relances est effacée, comme celle des redites.
-                # MESURÉ le 2026-08-16 : relancé une fois, le modèle écrit bien son fichier — puis
-                # referme aussitôt sur « Le voici : » sans appeler `presenter_fichier`. Un compteur
-                # global le laissait passer. Ce qu'il faut borner, c'est la promesse SANS PROGRÈS ;
-                # une promesse qui suit un travail réel mérite le même traitement que la première.
-                relances = 0
-        async for morceau in self._cloturer(messages, options, aboutis):
+            async for etape in _jouer_appels(appels, messages, contexte, etat, texte):
+                yield etape
+            # Le modèle a rappelé un outil APRÈS l'avertissement : c'est le signal que la tâche
+            # n'est pas finie, et c'est lui qui décide, pas le harnais.
+            if etat.averti or _restants_nuls(etat):
+                prolonger(etat)
+        async for morceau in self._cloturer(messages, options, etat.aboutis, etat.harnais):
             yield morceau
 
     async def _cloturer(
-        self, messages: list[MessageChat], options: OptionsGeneration, aboutis: int
+        self, messages: list[MessageChat], options: OptionsGeneration, aboutis: int,
+        conduite: harnais.Harnais = harnais.DEFAUT,
     ) -> AsyncIterator[dict[str, Any]]:
         """Tour final sans outil, quand les trois tours ont tous demandé un outil.
 
@@ -470,7 +505,8 @@ class MoteurChat:
         qu'aucune carte n'était affichée (mesuré le 2026-08-16). Laisser annoncer un résultat
         inexistant est pire qu'échouer : l'utilisateur ne peut même pas savoir que ça a raté.
         """
-        logger.warning("Borne de {} tours d'outils atteinte : tour de clôture sans outil.", TOURS_OUTILS_MAX)
+        logger.warning("Borne de {} tours d'outils atteinte ({}) : tour de clôture sans outil.",
+                       conduite.tours_outils_max, conduite.nom)
         if aboutis == 0:
             logger.warning("Aucun outil abouti sur ce tour : clôture avec consigne explicite.")
             messages = list(messages) + [MessageChat(role="tool", content=_AUCUN_OUTIL_ABOUTI)]
