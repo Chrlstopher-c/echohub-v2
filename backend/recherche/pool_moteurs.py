@@ -49,7 +49,18 @@ from backend.recherche.modeles import MoteurMuet
 # façades du même fournisseur.
 #
 #   gabanza 30 · yep 20 · yandex 15 · naver 15 · bing 10 · duckduckgo web 10 · privacywall 10
-#   seznam 10 · baidu 10 · gmx 10 · zapmeta 9 · boardreader 8 · 360search 6 · fynd 4
+#   baidu 10 · gmx 10 · zapmeta 9 · fynd 4
+#
+# Le nombre de résultats ne suffit PAS à entrer dans ce pool : une seconde mesure a compté, sur une
+# requête francophone précise, combien des dix premiers résultats parlaient réellement du sujet.
+#   gabanza 10/10 · yandex 9/10 · fynd 8/10 · zapmeta 7/9 · bing 7/10 · naver 6/10 · privacywall 5/10
+#
+# Trois moteurs ont été RETIRÉS sur ce second critère, alors qu'ils répondaient :
+#   seznam       0/10 — moteur tchèque, il rend des hôtels de Bohême pour « ressort de suspension »
+#   boardreader  du deal-shopping hors-sujet (trottinette, punching-ball) sur une requête technique
+#   360search    aucun résultat à la contre-mesure, après 6 à la première : instable
+# Un moteur hors-sujet n'est pas de la redondance. Le modèle ne reçoit que six résultats : chaque
+# ligne de bruit en chasse une vraie, et lui coûte du contexte pour rien.
 #
 # Écartés parce que mesurés à zéro résultat SANS être muets — ils répondent, ils n'ont rien :
 # mojeek, google, crowdview, wiby, searchmysite, resulthunter, ayo, reloado.
@@ -59,7 +70,6 @@ POOL_GENERAL: Final[tuple[str, ...]] = (
     "gabanza",
     "yandex",
     "bing",
-    "seznam",
     "yep",
     "naver",
     "duckduckgo web",
@@ -67,8 +77,6 @@ POOL_GENERAL: Final[tuple[str, ...]] = (
     "privacywall",
     "gmx",
     "zapmeta",
-    "360search",
-    "boardreader",
     "fynd",
     # Les trois d'origine restent dans le pool, en fin de rotation : ils sont excellents quand ils
     # répondent. Les retirer serait remplacer une fragilité par une autre.
@@ -78,7 +86,7 @@ POOL_GENERAL: Final[tuple[str, ...]] = (
 )
 
 # Nombre de moteurs interrogés par appel. Quatre suffisent à fusionner 20-40 résultats quand ils
-# répondent, et divisent par quatre la charge vue par chacun sur un pool de dix-sept.
+# répondent, et divisent par quatre la charge vue par chacun sur un pool de quatorze.
 MOTEURS_PAR_APPEL_DEFAUT: Final = 4
 
 # Deux durées, parce que deux natures d'échec. Un blocage est une décision du moteur, qui dure ;
