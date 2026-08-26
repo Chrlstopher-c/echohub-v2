@@ -1,10 +1,21 @@
+import { useCallback, useMemo, useState } from 'react';
 import type { ReactElement } from 'react';
-import { cn, Feuille } from '../shared/design';
+import { cn, Feuille, Modal, useEstGrandEcran } from '../shared/design';
 import { FournisseurActions, useActionsFil, type EtatActionsFil } from './actions';
+import {
+  FournisseurAtelier,
+  PanneauArtefact,
+  useAtelier,
+  type CapacitesAtelier,
+  type EtatAtelier,
+  type VersionArtefact,
+} from './artefacts';
 import { PanneauContexte } from './contexte';
 import { Composeur } from './conversation/Composeur';
 import { FilMessages } from './conversation/FilMessages';
 import { ListeConversations } from './conversation/ListeConversations';
+import { PanneauOutils } from './conversation/PanneauOutils';
+import { useSelectionOutils } from './conversation/useSelectionOutils';
 import { EnTeteChat } from './EnTeteChat';
 import { ModaleReglages } from './reglages';
 import { PanneauPlan } from './plan/PanneauPlan';
@@ -19,9 +30,10 @@ import { useTiroirsChat, type EtatTiroirsChat } from './useTiroirsChat';
  * traverse avant de discuter, c'est l'état de la machine pendant qu'on discute. Le débit mesuré de
  * la dernière réponse remonte d'ailleurs du fil vers le plan — la conversation devient la mesure.
  *
- * Sous 1024 px, 656 px de décor fixe ne laissent plus de fil lisible : les deux colonnes latérales
- * deviennent des tiroirs (`Feuille`) et l'échange prend tout l'écran. Au-dessus du seuil `Feuille`
- * est un passe-plat — la mise en page à trois colonnes est rigoureusement inchangée.
+ * Un artefact ouvert PREND LA PLACE du plan dans la colonne de droite, il ne s'y empile pas : le
+ * plan dit l'état de la machine, l'artefact est ce qu'on regarde — deux moments différents, une
+ * seule colonne, et la fermeture rend le plan tel qu'on l'avait laissé. Sous 1024 px, chacun des
+ * trois panneaux latéraux devient un tiroir (`Feuille`) et l'échange prend tout l'écran.
  */
 
 function FilVide({ cible }: { cible: CibleChargement | null }): ReactElement {
@@ -65,10 +77,12 @@ interface ColonneProps {
 interface ColonneEchangeProps extends ColonneProps {
   fil: EtatActionsFil;
   tiroirs: EtatTiroirsChat;
+  capacites: CapacitesAtelier;
+  onOutils: () => void;
 }
 
-function ColonneEchange({ etat, cible, fil, tiroirs }: ColonneEchangeProps): ReactElement {
-  const { courante, conversationActive, moteurPret } = etat;
+function ColonneEchange({ etat, cible, fil, tiroirs, capacites, onOutils }: ColonneEchangeProps): ReactElement {
+  const { courante, moteurPret } = etat;
   // Deux flux peuvent alimenter le fil : le composeur et un rejeu lancé depuis un message. Le
   // moteur n'en sert qu'un à la fois (le backend refuse le second), donc l'écran n'en montre qu'un.
   const genere = courante.genere || fil.genere;
@@ -79,6 +93,7 @@ function ColonneEchange({ etat, cible, fil, tiroirs }: ColonneEchangeProps): Rea
         modele={etat.chargement.statut?.modele ?? cible?.nomModele ?? null}
         pret={moteurPret}
         onReglages={() => etat.ouvrirReglages(true)}
+        onOutils={onOutils}
         onOuvrirConversations={() => tiroirs.ouvrir('conversations')}
         onOuvrirPlan={() => tiroirs.ouvrir('plan')}
       />
@@ -86,21 +101,38 @@ function ColonneEchange({ etat, cible, fil, tiroirs }: ColonneEchangeProps): Rea
       {/* `fil.messages` est le chemin de branche servi par le serveur ; tant qu'il n'est pas
           arrivé il vaut `null` et l'historique déjà chargé fait foi — aucun chemin n'est déduit. */}
       <FournisseurActions valeur={fil.actions}>
-        <FilMessages
-          messages={fil.messages ?? courante.messages}
-          brouillon={fil.brouillon ?? courante.brouillon}
-          vide={<FilVide cible={cible} />}
-        />
+        <FournisseurAtelier valeur={capacites}>
+          <FilMessages
+            messages={fil.messages ?? courante.messages}
+            brouillon={fil.brouillon ?? courante.brouillon}
+            vide={<FilVide cible={cible} />}
+          />
+        </FournisseurAtelier>
       </FournisseurActions>
-      <Composeur
-        genere={genere}
-        desactive={conversationActive === null}
-        empechement={empechementSaisie(conversationActive !== null, moteurPret)}
-        conversationId={conversationActive}
-        onEnvoyer={(contenu, fichierIds) => envoyer(courante, fil, contenu, fichierIds)}
-        onAnnuler={() => interrompre(courante, fil)}
-      />
+      <ComposeurEchange etat={etat} fil={fil} genere={genere} />
     </section>
+  );
+}
+
+function ComposeurEchange({
+  etat,
+  fil,
+  genere,
+}: {
+  etat: EtatEcranChat;
+  fil: EtatActionsFil;
+  genere: boolean;
+}): ReactElement {
+  const { courante, conversationActive, moteurPret } = etat;
+  return (
+    <Composeur
+      genere={genere}
+      desactive={conversationActive === null}
+      empechement={empechementSaisie(conversationActive !== null, moteurPret)}
+      conversationId={conversationActive}
+      onEnvoyer={(contenu, fichierIds) => envoyer(courante, fil, contenu, fichierIds)}
+      onAnnuler={() => interrompre(courante, fil)}
+    />
   );
 }
 
@@ -148,12 +180,7 @@ function ColonnePlan({ etat, cible }: ColonneProps): ReactElement {
   }));
   return (
     // Dans le tiroir, la largeur vient du panneau : une largeur fixe y déborderait à 390 px.
-    <aside
-      className={cn(
-        'flex w-full min-w-0 max-w-full flex-col gap-3 overflow-y-auto overflow-x-hidden p-3',
-        'lg:w-[26rem] lg:shrink-0 lg:border-l lg:border-border',
-      )}
-    >
+    <div className="flex w-full min-w-0 max-w-full flex-col gap-3 overflow-y-auto overflow-x-hidden p-3">
       <PanneauPlan
         cible={cible}
         etatPlan={etat.etatPlan}
@@ -168,7 +195,93 @@ function ColonnePlan({ etat, cible }: ColonneProps): ReactElement {
         // coûterait une tokenisation par token reçu, sur le verrou du moteur qui génère.
         actif={!etat.courante.genere}
       />
+    </div>
+  );
+}
+
+/*
+ * La colonne de droite n'a qu'un occupant à la fois : l'artefact ouvert, sinon le plan. L'aside
+ * garde SA largeur dans les deux cas — un panneau qui redimensionne le fil à chaque ouverture
+ * ferait sauter le texte qu'on est en train de lire ; « agrandir » existe pour le reste. Les
+ * classes `lg:` sont inertes dans un tiroir : le même élément sert les deux mises en page.
+ */
+function ColonneDroite({ etat, cible, atelier }: ColonneProps & { atelier: EtatAtelier }): ReactElement {
+  return (
+    <aside
+      className={cn(
+        'flex h-full w-full min-w-0 max-w-full flex-col',
+        'lg:w-[26rem] lg:shrink-0 lg:border-l lg:border-border',
+      )}
+    >
+      {atelier.ouvert !== null ? (
+        <div className="min-h-0 flex-1 p-3">
+          <PanneauArtefact
+            artefact={atelier.ouvert.artefact}
+            version={atelier.ouvert.version}
+            onChoisirVersion={atelier.choisirVersion}
+            onFermer={atelier.fermer}
+          />
+        </div>
+      ) : (
+        <ColonnePlan etat={etat} cible={cible} />
+      )}
     </aside>
+  );
+}
+
+/* Le tiroir d'artefact n'existe que sous le seuil ; au-dessus, la colonne de droite l'affiche. */
+function TiroirArtefact({ atelier, tiroirs }: { atelier: EtatAtelier; tiroirs: EtatTiroirsChat }): ReactElement | null {
+  if (atelier.ouvert === null) {
+    return null;
+  }
+  return (
+    <Feuille
+      ouverte={tiroirs.tiroir === 'artefact'}
+      onFermer={tiroirs.fermer}
+      cote="droite"
+      titre="Artefact"
+    >
+      <div className="h-full min-h-0 p-3">
+        <PanneauArtefact
+          artefact={atelier.ouvert.artefact}
+          version={atelier.ouvert.version}
+          onChoisirVersion={atelier.choisirVersion}
+          onFermer={() => {
+            atelier.fermer();
+            tiroirs.fermer();
+          }}
+        />
+      </div>
+    </Feuille>
+  );
+}
+
+/*
+ * Modale de sélection des outils. Une modale et non un volet des réglages : les réglages vivent
+ * dans `chat/reglages/` (hors du périmètre de cette refonte), et la sélection d'outils est un
+ * choix de CAPACITÉS qui mérite d'être atteignable en un geste depuis l'entête — voir le rapport
+ * pour la fusion éventuelle des deux surfaces.
+ */
+function ModaleOutils({
+  conversationId,
+  ouvert,
+  onFermer,
+}: {
+  conversationId: string | null;
+  ouvert: boolean;
+  onFermer: () => void;
+}): ReactElement {
+  const selection = useSelectionOutils(conversationId);
+  return (
+    <Modal open={ouvert} onClose={onFermer} title="Outils du modèle" size="md">
+      <PanneauOutils
+        catalogue={selection.catalogue}
+        actifs={selection.actifs}
+        persistee={selection.persistee}
+        onBasculer={selection.basculer}
+        onBasculerGroupe={selection.basculerGroupe}
+      />
+    </Modal>
   );
 }
 
@@ -209,6 +322,7 @@ function TiroirConversations({ etat, tiroirs }: { etat: EtatEcranChat; tiroirs: 
     >
       <ListeConversations
         conversations={etat.liste.conversations}
+        archivees={etat.liste.archivees}
         conversationActive={etat.conversationActive}
         erreur={etat.liste.erreur}
         onOuvrir={(id) => {
@@ -221,8 +335,44 @@ function TiroirConversations({ etat, tiroirs }: { etat: EtatEcranChat; tiroirs: 
         }}
         onSupprimer={etat.supprimerConversation}
         onRenommer={etat.renommerConversation}
+        // L'archivage passe directement par l'état de liste : `useEcranChat` n'a pas à connaître
+        // un geste qui ne change ni la conversation courante ni le moteur.
+        onArchiver={(id, archivee) => void etat.liste.archiver(id, archivee)}
+        onChargerArchivees={() => void etat.liste.chargerArchivees()}
       />
     </Feuille>
+  );
+}
+
+/*
+ * Deux tiroirs distincts à droite plutôt qu'un tiroir à contenu variable : le tiroir de plan
+ * montre TOUJOURS le plan, celui d'artefact toujours l'artefact — fermer l'un ne fait pas surgir
+ * l'autre. Au-dessus du seuil, la Feuille est un passe-plat et la colonne de droite arbitre seule
+ * entre les deux occupants.
+ */
+function CoteDroit({
+  etat,
+  cible,
+  atelier,
+  tiroirs,
+  grandEcran,
+}: ColonneProps & { atelier: EtatAtelier; tiroirs: EtatTiroirsChat; grandEcran: boolean }): ReactElement {
+  return (
+    <>
+      <Feuille
+        ouverte={tiroirs.tiroir === 'plan'}
+        onFermer={tiroirs.fermer}
+        cote="droite"
+        titre="Plan de chargement"
+      >
+        {grandEcran ? (
+          <ColonneDroite etat={etat} cible={cible} atelier={atelier} />
+        ) : (
+          <ColonnePlan etat={etat} cible={cible} />
+        )}
+      </Feuille>
+      {!grandEcran && <TiroirArtefact atelier={atelier} tiroirs={tiroirs} />}
+    </>
   );
 }
 
@@ -234,25 +384,62 @@ export interface ChatEcranProps {
   cible: CibleChargement | null;
 }
 
+/*
+ * Câblage de l'atelier sur l'écran : mêmes messages que le fil, et ouverture qui déclenche le
+ * tiroir sous le seuil — la carte cliquée doit MONTRER l'artefact, pas seulement changer un état.
+ */
+function useAtelierEcran(
+  etat: EtatEcranChat,
+  fil: EtatActionsFil,
+  tiroirs: EtatTiroirsChat,
+  grandEcran: boolean,
+): { atelier: EtatAtelier; capacites: CapacitesAtelier } {
+  // L'atelier lit le MÊME chemin que le fil : une version créée dans une branche abandonnée
+  // n'existe pas ici, et une version tout juste fermée dans le brouillon est déjà ouvrable.
+  const atelier = useAtelier(fil.messages ?? etat.courante.messages, fil.brouillon ?? etat.courante.brouillon);
+  const ouvrirVersion = useCallback(
+    (version: VersionArtefact): void => {
+      atelier.ouvrir(version);
+      if (!grandEcran) {
+        tiroirs.ouvrir('artefact');
+      }
+    },
+    [atelier, grandEcran, tiroirs],
+  );
+  const capacites = useMemo(
+    () => ({ ouvrirVersion, artefactOuvert: atelier.ouvert?.artefact.artefact_id ?? null }),
+    [ouvrirVersion, atelier.ouvert],
+  );
+  return { atelier, capacites };
+}
+
 export function ChatEcran({ cible }: ChatEcranProps): ReactElement {
   const etat = useEcranChat(cible);
+  const [outilsOuverts, setOutilsOuverts] = useState<boolean>(false);
   // `courante.genere` est passé au fil de branche : c'est le seul signal qui dit qu'un tour occupe
   // déjà le moteur, et sa fin est le moment où la feuille active a pu changer sans qu'on l'ait
   // demandé — donc le moment où la vue de branche doit être relue.
   const fil = useActionsFil(etat.conversationActive, etat.courante.genere);
   const tiroirs = useTiroirsChat();
+  const grandEcran = useEstGrandEcran();
+  const { atelier, capacites } = useAtelierEcran(etat, fil, tiroirs, grandEcran);
   return (
     <div className="flex h-full min-h-0 overflow-x-hidden bg-bg">
       <TiroirConversations etat={etat} tiroirs={tiroirs} />
-      <ColonneEchange etat={etat} cible={cible} fil={fil} tiroirs={tiroirs} />
-      <Feuille
-        ouverte={tiroirs.tiroir === 'plan'}
-        onFermer={tiroirs.fermer}
-        cote="droite"
-        titre="Plan de chargement"
-      >
-        <ColonnePlan etat={etat} cible={cible} />
-      </Feuille>
+      <ColonneEchange
+        etat={etat}
+        cible={cible}
+        fil={fil}
+        tiroirs={tiroirs}
+        capacites={capacites}
+        onOutils={() => setOutilsOuverts(true)}
+      />
+      <CoteDroit etat={etat} cible={cible} atelier={atelier} tiroirs={tiroirs} grandEcran={grandEcran} />
+      <ModaleOutils
+        conversationId={etat.conversationActive}
+        ouvert={outilsOuverts}
+        onFermer={() => setOutilsOuverts(false)}
+      />
       <PanneauDeReglages etat={etat} />
     </div>
   );

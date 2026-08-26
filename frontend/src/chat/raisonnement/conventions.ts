@@ -45,6 +45,9 @@ export const LIBELLE_CONVENTION: Readonly<Record<string, string>> = {
   think: 'Raisonnement',
   process: 'Raisonnement',
   outil: 'Outil',
-  etape: 'Étape',
-  appel: 'Appel d’outil',
+  // « Note de travail » plutôt qu'« Étape » : le contenu est le commentaire que le modèle écrit
+  // entre deux appels (« je vais chercher », « je synthétise ») — le nommer par sa nature dit au
+  // lecteur s'il vaut d'être déplié, un numéro d'étape ne dit rien.
+  etape: 'Note de travail',
+  appel: 'Appel du modèle',
 };

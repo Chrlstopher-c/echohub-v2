@@ -1,18 +1,21 @@
+/*
+ * Un message du fil. Le tour utilisateur reste du texte brut dans une surface distincte, aligné à
+ * droite ; la réponse du modèle est rendue en Markdown sur toute la largeur, comme un document.
+ * La distinction d'auteur vient de la position et de la surface — jamais d'une couleur : l'accent
+ * est réservé aux actions et à l'activité (DESIGN.md).
+ *
+ * Sous chaque réponse, une ligne de mesures à la manière du panneau de plan : mono, chiffres
+ * tabulaires, texte tertiaire. Chaque valeur vient du backend et n'apparaît que si elle existe —
+ * un moteur qui ne rapporte pas son débit ne se voit pas attribuer un chiffre inventé.
+ */
+
 import { motion } from 'framer-motion';
 import type { ReactElement } from 'react';
 import { Badge, cn, fadeUp } from '../../shared/design';
 import type { MessageChat } from '../api/contrats';
 import { EnveloppeMessage } from '../actions';
 import { ReponseModele } from '../raisonnement';
-import { formaterDebit } from '../plan/format';
-
-/*
- * Un message. Le tour utilisateur reste du texte brut dans une surface distincte ; la réponse du
- * modèle est rendue en Markdown sur toute la largeur, comme un document.
- *
- * Les statistiques affichées sous une réponse viennent du backend et n'apparaissent que si elles
- * existent : un moteur qui ne rapporte pas son débit ne se voit pas attribuer un chiffre inventé.
- */
+import { formaterDebit, formaterHeure } from '../plan/format';
 
 /*
  * Le modèle est affiché À CÔTÉ des mesures parce qu'il les qualifie : 31 tok/s ne veut rien dire
@@ -20,23 +23,21 @@ import { formaterDebit } from '../plan/format';
  * route. `modele_id` est celui enregistré au moment de la réponse — pas le modèle chargé
  * maintenant, qui pourrait déjà être un autre.
  *
- * Seul le nom de fichier est montré : l'identifiant complet vaut `<depot>::<fichier>` et occuperait
- * toute la ligne. Le reste est dans l'infobulle.
+ * Seul le nom de fichier est montré : l'identifiant complet vaut `<depot>::<fichier>` et
+ * occuperait toute la ligne. Le reste est dans l'infobulle.
  */
 function nomCourt(identifiant: string): string {
   const apresDepot = identifiant.split('::').at(-1) ?? identifiant;
   return apresDepot.replace(/\.gguf$/i, '');
 }
 
-function Statistiques({ message }: { message: MessageChat }): ReactElement | null {
+function Mesures({ message }: { message: MessageChat }): ReactElement {
   const debit = message.tokens_par_seconde;
   const tokens = message.tokens_generes;
   const modele = message.modele_id;
-  if (debit === null && tokens === null && modele === null && !message.interrompu) {
-    return null;
-  }
   return (
-    <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-2xs tabular-nums text-text-3">
+    <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 font-mono text-2xs tabular-nums text-text-3">
+      <span>{formaterHeure(message.cree_le)}</span>
       {modele !== null && (
         <span className="max-w-full truncate text-text-2 lg:max-w-[22rem]" title={modele}>
           {nomCourt(modele)}
@@ -57,9 +58,9 @@ export interface MessageProps {
  * `EnveloppeMessage` porte les actions au survol (copier, éditer, rejouer en sous-branche). Elle
  * est neutre hors d'un fournisseur d'actions : un message rendu ailleurs reste un message.
  *
- * `ReponseModele` remplace `RenduMarkdown` pour les réponses : il sépare d'abord le raisonnement
- * du texte visible, puis rend le Markdown. Les messages utilisateur restent en texte brut — ce
- * qu'on a tapé s'affiche tel qu'on l'a tapé.
+ * `ReponseModele` sépare d'abord le travail intermédiaire (raisonnement, cartes d'outils,
+ * artefacts) du texte visible, puis rend le Markdown. Les messages utilisateur restent en texte
+ * brut — ce qu'on a tapé s'affiche tel qu'on l'a tapé.
  */
 export function Message({ message }: MessageProps): ReactElement {
   const utilisateur = message.role === 'user';
@@ -77,13 +78,13 @@ export function Message({ message }: MessageProps): ReactElement {
           la retenue tombe à 92 %, la distinction gauche/droite suffisant à identifier l'auteur. */}
       <div className={cn('min-w-0', utilisateur ? 'max-w-[92%] lg:max-w-[80%]' : 'w-full')}>
         <EnveloppeMessage message={message}>
-          <div className={cn(utilisateur && 'rounded-md bg-surface-2 px-3 py-2')}>
+          <div className={cn(utilisateur && 'rounded-md bg-surface-2 px-3.5 py-2.5')}>
             {utilisateur ? (
               <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-text">{message.contenu}</p>
             ) : (
               <ReponseModele source={message.contenu} />
             )}
-            {!utilisateur && <Statistiques message={message} />}
+            {!utilisateur && <Mesures message={message} />}
           </div>
         </EnveloppeMessage>
       </div>

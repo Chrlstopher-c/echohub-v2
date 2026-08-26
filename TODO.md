@@ -12,6 +12,27 @@ et son URL change à chaque relance — la retrouver dans `%LOCALAPPDATA%\cloudf
 
 ## À faire (priorité)
 
+### 0. Contrat réclamé par la refonte de la conversation (2026-08-26)
+
+Le frontend est écrit et attend ces trois surfaces. Tant qu'elles n'existent pas, l'écran de
+sélection d'outils affiche un mode dégradé ASSUMÉ (« sélection non persistée »), il ne simule rien.
+
+- [ ] **Outil `creer_artefact`**, distinct de `presenter_fichier` — créer n'est pas désigner. Sortie
+      JSON validée champ à champ côté front :
+      `{artefact_id: str, version: int ≥1, titre: str, type: "html"|"markdown"|"code"|"svg"|"mermaid",
+      langage: str|null, fichier_id: str, taille_octets: int}`. `artefact_id` stable à travers les
+      versions, `version` attribué par le backend, contenu servi par la route fichiers existante.
+- [ ] **`GET /chat/outils`** → `[{nom, description, groupe, tokens_definition}]`, le coût mesuré avec
+      le vrai gabarit et non estimé.
+- [ ] **`GET`/`PATCH /chat/conversations/{id}/outils`** → `{outils_actifs: string[] | null}`
+      (`null` = tous, `[]` = aucun). Le socle ne doit décrire QUE les outils réellement branchés :
+      un prompt qui annonce une capacité absente est le défaut que ce socle existe pour supprimer.
+- [ ] **Porter l'issue d'un appel dans le balisage** — `<sortie etat="echec">`. Aujourd'hui le
+      frontend DEVINE l'échec en reconnaissant des préfixes de texte (`Échec de l'outil :`,
+      `Failed:`) : un `EchecOutil` formulé autrement s'affiche « terminé ». Une lecture par préfixe
+      diverge au premier message reformulé ou traduit.
+- [ ] Dépendance npm `mermaid` pour le rendu des diagrammes (repli actuel : source colorée).
+
 ### 1. Reconnexion de l'interface après une veille
 
 La génération survit désormais au départ du client et se persiste seule (2026-08-16). Il reste la
@@ -115,11 +136,11 @@ de déport existe et est couvert par des tests unitaires ; aucune mesure ne l'a 
       `backend/inference/engines_adapters/superviseur.py:306`. Relevé le 2026-08-26 en linterant le
       fichier pour une autre raison ; la fonction est antérieure et n'a pas été touchée depuis, donc
       ce n'est pas une régression. Extraire les helpers plutôt que relever la borne.
-- [ ] **`inference/__init__.py` fait 524 lignes** (max 500), avec `_diffuser_complet` à 44 lignes et
-      `_boucle_outils` à 62. Le fichier porte la boucle d'outils, qui est le cœur du harnais :
-      le découper demande de décider ce qui appartient à la conduite et ce qui appartient au
-      transport — c'est le préalable au branchement de `inference/harnais.py`, écrit et testé le
-      2026-08-26 mais délibérément pas encore câblé pour cette raison.
+- [x] ~~`inference/harnais.py` non câblé~~ — fait le 2026-08-26 : la conduite (état de boucle,
+      relances, budget) a été déplacée dans `harnais.py`, le transport reste dans `__init__.py`.
+- [ ] **`inference/__init__.py` reste au-dessus de 500 lignes**, avec `_diffuser_complet` à 44 et
+      `_boucle_outils` à 46 (contre 62 avant le découpage). Ce qui reste à sortir relève du
+      transport, pas de la conduite.
 - [ ] **`chat/generation.py` fait 541 lignes** (max 500), avec `preparer` et `diffuser` à 36 lignes
       et `_construire_contexte` à 45. Relevé le 2026-08-26 en y remplaçant une seule ligne ; aucune
       de ces fonctions n'a été touchée.

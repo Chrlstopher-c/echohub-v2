@@ -1,21 +1,27 @@
-import { useMemo } from 'react';
-import type { ReactElement } from 'react';
-import { CarteArtefact, artefactDepuisSegment } from '../artefacts';
-import { RenduMarkdown } from '../markdown';
-import { BlocRaisonnement } from './BlocRaisonnement';
-import { segmenterReponse, type ReponseSegmentee, type SegmentRaisonnement } from './extraction';
-
 /*
- * Une réponse de modèle telle qu'elle doit se lire : les blocs de raisonnement d'abord, repliés,
- * puis la réponse rendue en Markdown.
+ * Une réponse de modèle telle qu'elle doit se lire : le travail intermédiaire d'abord — replié ou
+ * en carte —, puis la réponse rendue en Markdown.
  *
- * Les blocs passent avant parce que c'est leur ordre d'émission, et parce qu'un bloc replié
- * n'occupe qu'une ligne : la réponse reste la première chose lisible de l'écran.
+ * C'est ici que chaque segment reçoit sa forme, et UNIQUEMENT ici — une seule table de routage
+ * pour un même balisage, sinon deux détections finissent par produire deux affichages :
+ *   - segment `outil` : artefact créé → carte d'atelier ; fichier présenté → carte cliquable ;
+ *     sinon carte d'outil lisible d'un coup d'œil (`CarteOutil`) ;
+ *   - segment `outil` illisible (balisage inattendu) : bloc replié générique, jamais du vide ;
+ *   - raisonnement, note de travail, appel brut du modèle : bloc replié discret.
  *
  * Le cas « rien hors du raisonnement » est nommé au lieu d'être laissé vide. Il arrive pour de bon
- * sur les modèles de raisonnement dont le budget de génération s'épuise avant la réponse ; un
- * message blanc laisserait croire à une panne d'affichage.
+ * sur les modèles de raisonnement dont le budget s'épuise avant la réponse ; un message blanc
+ * laisserait croire à une panne d'affichage.
  */
+
+import { useMemo } from 'react';
+import type { ReactElement } from 'react';
+import { CarteArtefact, CarteVersionArtefact, artefactDepuisSegment, versionDepuisSegment } from '../artefacts';
+import { RenduMarkdown } from '../markdown';
+import { BlocRaisonnement } from './BlocRaisonnement';
+import { CarteOutil } from './CarteOutil';
+import { lireAppel } from './lecture-appel';
+import { segmenterReponse, type ReponseSegmentee, type SegmentRaisonnement } from './extraction';
 
 interface SansReponseProps {
   segmentee: ReponseSegmentee;
@@ -39,6 +45,32 @@ function SansReponse({ segmentee, actif }: SansReponseProps): ReactElement | nul
   );
 }
 
+interface SegmentProps {
+  segment: SegmentRaisonnement;
+  rang: number | null;
+  actif: boolean;
+}
+
+function SegmentRendu({ segment, rang, actif }: SegmentProps): ReactElement {
+  if (segment.convention === 'outil') {
+    // L'ordre compte : la forme la plus spécifique d'abord. Un artefact créé porte aussi la forme
+    // d'un appel réussi — le tester après `lireAppel` le ferait retomber en carte générique.
+    const versionCreee = versionDepuisSegment(segment);
+    if (versionCreee !== null) {
+      return <CarteVersionArtefact version={versionCreee} />;
+    }
+    const artefact = artefactDepuisSegment(segment);
+    if (artefact !== null) {
+      return <CarteArtefact artefact={artefact} />;
+    }
+    const appel = lireAppel(segment.texte, actif && !segment.complet);
+    if (appel !== null) {
+      return <CarteOutil appel={appel} />;
+    }
+  }
+  return <BlocRaisonnement segment={segment} rang={rang} actif={actif && !segment.complet} />;
+}
+
 export interface ReponseModeleProps {
   source: string;
   /**
@@ -46,26 +78,6 @@ export interface ReponseModeleProps {
    * l'analyse du texte ne peut pas le savoir, et une animation le prétendrait à tort.
    */
   actif?: boolean;
-}
-
-/*
- * Un artefact présenté (`presenter_fichier`) se lit comme la réponse elle-même, pas comme un
- * appel d'outil ordinaire : il sort donc du traitement replié de `BlocRaisonnement` et s'affiche
- * en carte, directement visible dans le fil — c'est tout l'objet de l'outil (plan d'exécution,
- * lot L3), le faire voir plutôt que le laisser dans un bloc que l'utilisateur doit déplier.
- */
-interface SegmentOuArtefactProps {
-  segment: SegmentRaisonnement;
-  rang: number | null;
-  actif: boolean;
-}
-
-function SegmentOuArtefact({ segment, rang, actif }: SegmentOuArtefactProps): ReactElement {
-  const artefact = artefactDepuisSegment(segment);
-  if (artefact !== null) {
-    return <CarteArtefact artefact={artefact} />;
-  }
-  return <BlocRaisonnement segment={segment} rang={rang} actif={actif} />;
 }
 
 export function ReponseModele({ source, actif = false }: ReponseModeleProps): ReactElement {
@@ -76,14 +88,9 @@ export function ReponseModele({ source, actif = false }: ReponseModeleProps): Re
   const visible = segmentee.visible.trim();
   const multiples = segmentee.raisonnements.length > 1;
   return (
-    <div className="min-w-0 space-y-2">
+    <div className="min-w-0 space-y-1.5">
       {segmentee.raisonnements.map((segment, index) => (
-        <SegmentOuArtefact
-          key={index}
-          segment={segment}
-          rang={multiples ? index + 1 : null}
-          actif={actif && !segment.complet}
-        />
+        <SegmentRendu key={index} segment={segment} rang={multiples ? index + 1 : null} actif={actif} />
       ))}
       {visible !== '' ? (
         <RenduMarkdown source={visible} />
