@@ -63,13 +63,31 @@ services:
       # - /mnt/models/echohub:/data/models:ro
       - echohub_userdata:/data/user              # base SQLite, configuration, journaux
 
-      # --- Développement : code monté depuis l'hôte, inactif par défaut -------------------
-      # Décommenter pour éditer le backend sans reconstruire (`docker compose restart echohub`).
+      # Modèles des bancs d'agent-forge, en LECTURE SEULE, montés comme un dépôt supplémentaire.
+      # Le nom de dossier suit la convention `<org>--<repo>` de storage.py::nom_dossier ; les GGUF
+      # qui s'y trouvent à plat apparaissent alors comme les variantes de ce dépôt, ce que
+      # `fichiers_gguf` sait déjà présenter. Aucune copie : ce sont des dizaines de Go.
+      # Chemin d'une machine Linux : sous Windows, Docker Desktop créera un dossier vide et le
+      # dépôt s'affichera sans variante — sans effet sur les modèles du volume nommé.
+      - "${FORGE_MODELS_DIR:-/mnt/models/agent-forge}:/data/models/agent-forge--bancs:ro"
+
+      # --- Développement : code monté depuis l'hôte -------------------------------------
+      # Actif : le harnais évolue au rythme des sessions d'usage, et reconstruire l'image coûte
+      # ~16 min dominées par la compilation CUDA de llama-cpp-python. `docker compose restart
+      # echohub` suffit désormais à prendre un changement de backend.
       # Le volume anonyme sur .venv est INDISSOCIABLE du bind mount : sans lui, un venv Windows
       # présent sur l'hôte masquerait le venv Linux de l'image, et le llama-cpp-python compilé
       # pour CUDA disparaîtrait purement et simplement.
-      # - ./backend:/app/backend
-      # - /app/backend/.venv
+      - ./backend:/app/backend
+      - /app/backend/.venv
+      # Le `dist` construit sur l'hôte, servi par nginx. Sans lui, l'interface reste celle de
+      # l'image : un changement de frontend resterait invisible malgré un `bun run build` réussi —
+      # le symptôme le plus coûteux à diagnostiquer, parce que tout paraît avoir fonctionné.
+      # En ÉCRITURE, et ce n'est pas un relâchement : l'entrypoint marque `index.html` d'une
+      # empreinte `?v=` à chaque démarrage, sans laquelle un déploiement reste invisible derrière
+      # le cache du navigateur. Monté en lecture seule, `sed -i` échoue et le conteneur redémarre
+      # en boucle. Le fichier touché est un artefact de build, régénéré à chaque `bun run build`.
+      - ./frontend/dist:/app/frontend/dist
 
     environment:
       MODELS_DIR: /data/models

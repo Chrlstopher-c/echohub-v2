@@ -17,10 +17,13 @@ from typing import Any
 from loguru import logger
 
 from backend.outils.contrat import ContexteExecution, DescriptionOutil, EchecOutil, Outil, ResultatOutil
+from backend.outils.executer_commande import OUTIL as OUTIL_COMMANDE
 from backend.outils.executer_python import OUTIL as OUTIL_PYTHON
+from backend.outils.explorer_bac import OUTIL_CHERCHER, OUTIL_LISTER
 from backend.outils.fichiers_bac import OUTIL_ECRIRE, OUTIL_LIRE, OUTIL_MODIFIER
 from backend.outils.presenter_fichier import OUTIL as OUTIL_PRESENTER
 from backend.outils.recherche_web import OUTIL as OUTIL_RECHERCHE
+from backend.outils.recuperer_page import OUTIL as OUTIL_PAGE
 
 # Ordre significatif : c'est celui dans lequel les outils sont présentés au modèle, et le premier
 # est celui vers lequel il se tourne le plus volontiers. La recherche web est en tête parce que
@@ -33,12 +36,30 @@ from backend.outils.recherche_web import OUTIL as OUTIL_RECHERCHE
 # le fichier d'abord, ce qui rend la correction suivante possible au lieu d'être une réémission.
 #
 # La présentation vient en dernier : elle ne fait jamais rien sans qu'un fichier existe déjà.
+#
+# Quatre outils ajoutés le 2026-08-26, chacun placé par la même règle — à côté de celui dont il est
+# la suite naturelle, jamais en fin de liste :
+#
+# - `recuperer_page` suit immédiatement `recherche_web`, parce que c'est sa seconde moitié : la
+#   recherche rend des adresses et des extraits de deux lignes, et un extrait ne permet pas de
+#   répondre. Sans lui, le harnais réclamait des sources tout en laissant le modèle combler de
+#   mémoire — l'écart exact que le socle interdit ;
+# - `lister_fichiers` et `chercher_dans_fichiers` s'intercalent APRÈS les trois outils de fichier
+#   et AVANT l'exécution. Le socle exige déjà « your memory of what you wrote is not the file »
+#   sans donner le moyen d'y obéir ; voir avant d'agir doit précéder agir ;
+# - `executer_commande` suit `executer_python` et ne le remplace pas. L'ordre compte ici comme
+#   ailleurs : présenter le shell d'abord ferait glisser vers `bash -c python3 …` tout ce qui
+#   relève de Python, et on perdrait le confinement mieux ajusté du second.
 _OUTILS: dict[str, Outil] = {
     OUTIL_RECHERCHE.nom: OUTIL_RECHERCHE,
+    OUTIL_PAGE.nom: OUTIL_PAGE,
     OUTIL_ECRIRE.nom: OUTIL_ECRIRE,
     OUTIL_LIRE.nom: OUTIL_LIRE,
     OUTIL_MODIFIER.nom: OUTIL_MODIFIER,
+    OUTIL_LISTER.nom: OUTIL_LISTER,
+    OUTIL_CHERCHER.nom: OUTIL_CHERCHER,
     OUTIL_PYTHON.nom: OUTIL_PYTHON,
+    OUTIL_COMMANDE.nom: OUTIL_COMMANDE,
     OUTIL_PRESENTER.nom: OUTIL_PRESENTER,
 }
 

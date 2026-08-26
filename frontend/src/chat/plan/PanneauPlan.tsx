@@ -7,6 +7,7 @@ import { ArbitrageContexte } from './ArbitrageContexte';
 import { BarresMemoire } from './BarresMemoire';
 import { EtatChargement } from './EtatChargement';
 import { Justifications } from './Justifications';
+import { ReglagesMemoire } from './ReglagesMemoire';
 import { RubanCouches } from './RubanCouches';
 import type { CibleChargement } from './cible';
 import type { EtatChargementModele } from './useChargement';
@@ -88,6 +89,17 @@ function CorpsPlan({ cible, plan, etatPlan, chargement, debitObserve }: CorpsPro
         debitObserve={debitObserve}
         onChangerContexte={(contexte) => etatPlan.ajusterPreferences({ contexte })}
         desactive={chargement.statut?.etat === 'en_cours'}
+      />
+      {/* Juste après l'arbitrage de contexte, et pas ailleurs : ces deux réglages décident de ce
+          que CE contexte coûte. Les lire séparément ferait manquer le lien — un contexte large
+          n'est pas cher en soi, il l'est en `f16`. */}
+      <ReglagesMemoire
+        plan={plan}
+        typeCacheKv={etatPlan.preferences.typeCacheKv}
+        flashAttention={etatPlan.preferences.flashAttention}
+        desactive={chargement.statut?.etat === 'en_cours'}
+        onChangerCache={(typeCacheKv) => etatPlan.ajusterPreferences({ typeCacheKv })}
+        onChangerFlash={(flashAttention) => etatPlan.ajusterPreferences({ flashAttention })}
       />
       <Button variant="ghost" size="sm" onClick={() => setDetailOuvert(!detailOuvert)} aria-expanded={detailOuvert}>
         {detailOuvert ? 'Masquer le détail du plan' : 'Pourquoi ces valeurs ?'}
