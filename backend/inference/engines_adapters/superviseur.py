@@ -17,6 +17,7 @@ cause exploitable. La replanification appartient au planificateur.
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from typing import AsyncIterator, Sequence
 
@@ -25,7 +26,9 @@ from pydantic import BaseModel, Field
 
 from backend.core import ChargementEchoue, maintenant
 from backend.inference.engines_adapters.adaptateur_llama_cpp import AdaptateurLlamaCpp
+from backend.inference.engines_adapters.adaptateur_llama_server import AdaptateurLlamaServer
 from backend.inference.engines_adapters.adaptateur_vllm import AdaptateurVllm
+from backend.inference.engines_adapters import processus_llama_server
 from backend.inference.engines_adapters.base import AdaptateurMoteur
 from backend.inference.engines_adapters.contrat import (
     CauseEchec,
@@ -78,12 +81,47 @@ class StatutInference(BaseModel):
     depuis: str = Field(default_factory=maintenant)
 
 
+# Variable d'environnement de secours : `bindings` force l'ancien chemin, `serveur` force le
+# nouveau. Vide (le cas normal) laisse la disponibilité du binaire décider.
+VARIABLE_CHEMIN_LLAMA = "ECHOHUB_CHEMIN_LLAMA"
+
+
+def _adaptateur_llama_cpp() -> AdaptateurMoteur:
+    """Choisit l'implémentation de llama.cpp : le serveur natif, ou les bindings Python.
+
+    CE N'EST PAS UN AUTRE MOTEUR, et c'est la raison de ce choix ici plutôt que dans le
+    planificateur : le plan est identique, les deux chemins appliquent les mêmes couches GPU, les
+    mêmes blocs d'experts déportés, le même contexte et le même cache. Faire de `llama-server` une
+    troisième valeur de `Moteur` aurait obligé le planificateur, l'écran des capacités et le
+    frontend à connaître une distinction qui ne change rien à ce qu'ils décident — et aurait rendu
+    les deux chemins incomparables, puisqu'ils n'auraient plus reçu le même plan.
+
+    Le serveur natif est préféré quand son binaire est présent, pour une raison mesurée le
+    2026-08-26 sur le 35B-A3B : les bindings réévaluent le prompt ENTIER à chaque tour d'une même
+    conversation — l'architecture est hybride, un état récurrent ne se tronque pas, et
+    `kv_cache_seq_rm` refuse donc la réutilisation du préfixe. TTFT 5,94 s à chaque message contre
+    0,15 s dès le second avec le serveur. `swa_full=True` a été essayé : sans effet.
+
+    Le repli sur les bindings n'est pas une précaution de style : ils restent le seul chemin qui
+    expose le tokenizer et le découpage multimodal dans ce processus.
+    """
+    choix = os.environ.get(VARIABLE_CHEMIN_LLAMA, "").strip().lower()
+    if choix == "bindings":
+        logger.info("llama.cpp : chemin bindings imposé par {}", VARIABLE_CHEMIN_LLAMA)
+        return AdaptateurLlamaCpp()
+    if choix == "serveur" or processus_llama_server.binaire_disponible():
+        logger.info("llama.cpp : chemin llama-server ({})", processus_llama_server.CHEMIN_BINAIRE)
+        return AdaptateurLlamaServer()
+    logger.info("llama.cpp : binaire llama-server absent, repli sur les bindings Python.")
+    return AdaptateurLlamaCpp()
+
+
 class SuperviseurInference:
     """Point d'entrée unique du pilotage des moteurs. Une seule instance par processus."""
 
     def __init__(self) -> None:
         self._adaptateurs: dict[MoteurSupporte, AdaptateurMoteur] = {
-            MoteurSupporte.LLAMA_CPP: AdaptateurLlamaCpp(),
+            MoteurSupporte.LLAMA_CPP: _adaptateur_llama_cpp(),
             MoteurSupporte.VLLM: AdaptateurVllm(),
         }
         self._actif: AdaptateurMoteur | None = None

@@ -134,11 +134,27 @@ export interface ParametresAttention {
   readonly dimension_valeur: number | null;
   readonly dimension_rope: number | null;
   readonly base_rope: number | null;
+  /** Une couche sur N porte un cache KV, les autres un état récurrent. `null` = toutes en portent. */
+  readonly intervalle_attention_pleine: number | null;
+}
+
+/** Largeurs FFN d'un MoE. Celle d'UN expert, jamais la largeur vive d'un bloc. */
+export interface ParametresExperts {
+  readonly largeur_ffn_expert: number | null;
+  readonly largeur_ffn_partagee: number | null;
 }
 
 /** Poids RÉEL de chaque bloc, descripteur par descripteur — remplace le « 150 Mo/couche » de la v1. */
 export interface MesuresTenseurs {
   readonly octets_par_bloc: readonly number[];
+  /**
+   * Part des seuls tenseurs d'experts (`ffn_*_exps`) dans chaque bloc. Même longueur et même ordre
+   * qu'`octets_par_bloc`. C'est LA mesure qui autorise le déport d'experts : sans elle, le
+   * planificateur retombe sur la coupe par couches entières, qui fait payer au CPU toute
+   * l'attention d'une couche pour libérer des experts dont 8 sur 256 sont lus par token.
+   */
+  readonly octets_experts_par_bloc: readonly number[];
+  readonly blocs_avec_attention: readonly number[];
   readonly octets_hors_blocs: number;
   readonly octets_totaux: number;
   readonly blocs_observes: number;
@@ -162,6 +178,7 @@ export interface MetadonneesGGUF {
   readonly nb_experts: number | null;
   readonly nb_experts_actifs: number | null;
   readonly attention: ParametresAttention;
+  readonly experts: ParametresExperts;
   readonly quantification_declaree: string | null;
   readonly quantification_mesuree: string | null;
   readonly nb_tenseurs: number;

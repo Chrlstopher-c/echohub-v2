@@ -182,6 +182,35 @@ export function versMetadonneesPlan(
   return assembler(modele, gguf, requis as ChampsRequis);
 }
 
+/*
+ * Mesures par bloc, transmises seulement si elles sont COMPLÈTES.
+ *
+ * `MetadonneesModele._verifier_mesures_par_bloc` refuse côté backend une mesure dont la longueur ne
+ * fait pas `nombre_couches` — et il a raison de le faire : une mesure tronquée se lirait comme un
+ * modèle plus léger qu'il n'est, et le plan qui en sortirait tiendrait sur le papier sans tenir en
+ * VRAM. Ici, incomplet vaut absent : le planificateur retombe alors sur la coupe par couches, ce
+ * qu'il sait faire et qu'il explique dans ses justifications.
+ */
+function mesuresParBloc(
+  gguf: MetadonneesGGUF,
+  nombreCouches: number,
+): Pick<MetadonneesModele, 'octets_par_bloc' | 'octets_experts_par_bloc' | 'octets_hors_blocs'> {
+  const mesures = gguf.mesures;
+  if (mesures === null) {
+    return {};
+  }
+  const totaux = mesures.octets_par_bloc;
+  const experts = mesures.octets_experts_par_bloc;
+  if (totaux.length !== nombreCouches || experts.length !== nombreCouches) {
+    return {};
+  }
+  return {
+    octets_par_bloc: totaux,
+    octets_experts_par_bloc: experts,
+    octets_hors_blocs: mesures.octets_hors_blocs,
+  };
+}
+
 function assembler(modele: ModeleEnregistre, gguf: MetadonneesGGUF, requis: ChampsRequis): MetadonneesModele {
   return {
     identifiant: modele.id,
@@ -202,6 +231,16 @@ function assembler(modele: ModeleEnregistre, gguf: MetadonneesGGUF, requis: Cham
     taille_vocabulaire: requis.taille_vocabulaire,
     quantification: gguf.quantification_mesuree ?? gguf.quantification_declaree,
     est_moe: (gguf.nb_experts ?? 0) > 1,
+    // Sans ces champs, le planificateur ne peut PAS déporter les experts et coupe par couches
+    // entières : sur un MoE, il fait alors payer au CPU toute l'attention d'une couche pour libérer
+    // des experts dont 8 sur 256 sont lus par token. Ils étaient mesurés et envoyés ; seul
+    // l'assemblage les perdait.
+    nombre_experts: gguf.nb_experts,
+    nombre_experts_actifs: gguf.nb_experts_actifs,
+    dimension_ffn_expert: gguf.experts.largeur_ffn_expert,
+    dimension_ffn_expert_partage: gguf.experts.largeur_ffn_partagee,
+    intervalle_attention_pleine: gguf.attention.intervalle_attention_pleine,
+    ...mesuresParBloc(gguf, requis.nombre_couches),
   };
 }
 
