@@ -43,6 +43,26 @@ BATCH_PLANCHER = 64
 # Défaut amont de `n_batch` dans llama.cpp, repris tel quel faute de mesure contraire.
 BATCH_DEFAUT = 2048
 
+# Coût par token de contexte des tampons du GRAPHE d'attention — distinct du cache KV, et facturé
+# EN PLUS de lui. Mesuré le 2026-08-26 sur deux architectures, quatre contextes chacune, en lisant
+# `sched_reserve: CUDA0 compute buffer size` dans le journal de llama-server :
+#
+#   Qwen3.6-35B-A3B (emb 2048, dim_tête 256)   32k:201,69  64k:251,69  128k:443,69  256k:827,69 MiB
+#   Qwen3.5-9B      (emb 4096, dim_tête 256)                64k:399,66  128k:719,66 MiB
+#
+# Les écarts donnent 3072 o/token sur le 35B et 5120 sur le 9B — soit exactement
+# `dimension_embedding + 4 × dimension_tête` dans les deux cas.
+#
+# `☠` CE FACTEUR 4 EST CALIBRÉ, PAS DÉRIVÉ. Deux modèles suffisent à ajuster une formule à deux
+# termes ; ils ne suffisent pas à la démontrer. Une première hypothèse — `3 × têtes_kv × dim_tête`,
+# qui tombait juste sur le 35B — a été RÉFUTÉE par le 9B : elle prédisait 6144 o/token contre 5120
+# mesurés. C'est pourquoi le terme constant ci-dessous n'est pas réduit à sa valeur mesurée : il
+# surestime, et cette surestimation est la marge qui absorbe une architecture qui s'écarterait.
+OCTETS_GRAPHE_PAR_TOKEN_FIXE = 4
+
+# Le graphe d'attention circule en f16, contrairement aux activations du bloc (f32).
+OCTETS_GRAPHE_ATTENTION = 2
+
 # vLLM refuse une préallocation trop proche de 1.0 : le processus a besoin de VRAM hors pool.
 PLAFOND_UTILISATION_VLLM = 0.95
 
@@ -158,7 +178,56 @@ def octets_tampons_calcul(
     activations = batch * largeur_bloc * OCTETS_ACTIVATION
     scores = 0 if flash_attention else batch * metadonnees.nombre_tetes_attention * contexte * OCTETS_ACTIVATION
     logits = metadonnees.taille_vocabulaire * OCTETS_ACTIVATION
-    return int(activations + scores + logits)
+    return int(activations + scores + graphe_attention_par_contexte(metadonnees, contexte) + logits)
+
+
+def graphe_attention_par_contexte(metadonnees: MetadonneesModele, contexte: int) -> int:
+    """Tampons du graphe d'attention, proportionnels au contexte — Y COMPRIS sous flash attention.
+
+    C'est le poste qui manquait, et il coûtait le chargement. `scores` ci-dessus tombe à zéro dès
+    que flash attention est active, ce qui laissait croire que les tampons ne dépendaient plus du
+    contexte : le plan affichait 205 Mo à 32k comme à 256k. La mesure dit 201,69 MiB puis
+    827,69 MiB. Sur le 35B à 262144, l'allocation manquante était exactement celle-là —
+    `cudaMalloc failed: out of memory` sur 827,69 MiB — alors que le plan promettait « tenable tel
+    quel ».
+
+    Flash attention supprime la matrice de scores `têtes × batch × contexte` ; elle ne supprime pas
+    les tampons de travail que le graphe réserve par token de contexte. Les deux étaient confondus.
+    """
+    par_token = metadonnees.dimension_embedding + OCTETS_GRAPHE_PAR_TOKEN_FIXE * dimension_tete(metadonnees)
+    return contexte * par_token
+
+
+def octets_etat_recurrent(metadonnees: MetadonneesModele, couches_gpu: int, slots: int = 1) -> int:
+    """État récurrent des blocs hybrides — indépendant du contexte, alloué PAR SLOT.
+
+    Sur `qwen35moe` une couche sur quatre porte un cache KV ; les autres portent un état récurrent
+    (Gated Delta Net) que le budget ne provisionnait pas du tout. Il se lit pourtant dans les
+    métadonnées (`ssm.*`), et la vérification tient sur deux modèles — `CUDA0 RS buffer size` du
+    journal de llama-server, à un seul slot :
+
+        Qwen3.6-35B-A3B  30 blocs récurrents  prévu 60,00 MiB  mesuré 60,72 MiB
+        Qwen3.5-9B       24 blocs récurrents  prévu 48,00 MiB  mesuré 48,16 MiB
+
+    L'écart résiduel (moins de 1,5 %) est l'état de convolution, dont la largeur exacte varie ; le
+    provisionner à zéro coûtait bien davantage.
+
+    `☠` LE NOMBRE DE SLOTS EST LE PIÈGE. llama-server en ouvre QUATRE par défaut, et l'état
+    récurrent est alloué pour chacun : 242,88 MiB au lieu de 60,72 sur le 35B, pour trois slots que
+    personne n'utilise — le backend est l'unique client. `processus_llama_server.py` passe désormais
+    `--parallel 1`, et ce paramètre reflète ce choix plutôt que de le supposer.
+    """
+    if metadonnees.dimension_interne_ssm is None or metadonnees.dimension_etat_ssm is None:
+        return 0
+    recurrents = max(0, couches_gpu - couches_attention(metadonnees, couches_gpu))
+    etat = metadonnees.dimension_interne_ssm * metadonnees.dimension_etat_ssm * OCTETS_ACTIVATION
+    # L'état de CONVOLUTION s'ajoute à l'état de récurrence : `d_inner × (noyau − 1)`, en f16. Il ne
+    # pèse qu'un demi-mégaoctet, et c'est exactement l'écart qui restait entre le prévu et le mesuré
+    # (60,00 contre 60,72 MiB sur le 35B). Un budget qui sous-estime, même d'un demi-mégaoctet, est
+    # un budget faux : c'est ce genre de résidu qu'on retrouve à expliquer après un échec.
+    noyau = metadonnees.noyau_convolution_ssm or 0
+    convolution = metadonnees.dimension_interne_ssm * max(0, noyau - 1) * OCTETS_GRAPHE_ATTENTION
+    return recurrents * (etat + convolution) * max(1, slots)
 
 
 def vram_effective(vram_disponible_octets: int, ratio_fragmentation: float) -> float:

@@ -240,6 +240,11 @@ function assembler(modele: ModeleEnregistre, gguf: MetadonneesGGUF, requis: Cham
     dimension_ffn_expert: gguf.experts.largeur_ffn_expert,
     dimension_ffn_expert_partage: gguf.experts.largeur_ffn_partagee,
     intervalle_attention_pleine: gguf.attention.intervalle_attention_pleine,
+    // Sans ces deux lignes, l'état récurrent reste chiffré à zéro côté planificateur — et le plan
+    // promet une VRAM qu'il n'a pas. C'est le même oubli de transmission que les mesures par bloc.
+    dimension_interne_ssm: gguf.ssm?.dimension_interne ?? null,
+    dimension_etat_ssm: gguf.ssm?.dimension_etat ?? null,
+    noyau_convolution_ssm: gguf.ssm?.noyau_convolution ?? null,
     ...mesuresParBloc(gguf, requis.nombre_couches),
   };
 }

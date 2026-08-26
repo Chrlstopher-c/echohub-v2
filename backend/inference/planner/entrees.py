@@ -158,6 +158,14 @@ class MetadonneesModele(BaseModel):
     # confirmé par le comptage des `attn_q.weight`. `None` = toutes les couches en portent un.
     intervalle_attention_pleine: int | None = Field(default=None, gt=0)
 
+    # Dimensions de l'état récurrent des blocs hybrides (clés GGUF `ssm.*`). Elles décident d'un
+    # poste de VRAM qui valait ZÉRO jusqu'au 2026-08-26 : 60,72 MiB sur le 35B, et quatre fois plus
+    # tant que llama-server ouvrait ses quatre slots par défaut. Absentes = architecture non
+    # hybride, ou métadonnées muettes : le poste vaut alors zéro à juste titre.
+    dimension_interne_ssm: int | None = Field(default=None, gt=0)
+    dimension_etat_ssm: int | None = Field(default=None, gt=0)
+    noyau_convolution_ssm: int | None = Field(default=None, gt=0)
+
     @model_validator(mode="after")
     def _verifier_coherence(self) -> MetadonneesModele:
         """Une métadonnée incohérente doit échouer ici, pas produire un plan silencieusement faux."""

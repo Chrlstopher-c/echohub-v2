@@ -39,6 +39,14 @@ export interface MetadonneesModele {
   readonly taille_vocabulaire: number;
   readonly quantification?: string | null;
   readonly est_moe?: boolean;
+  /**
+   * Dimensions de l'état récurrent des blocs hybrides. Le backend en tire un poste de VRAM qui
+   * valait ZÉRO avant le 2026-08-26 — 60,72 MiB mesurés sur le 35B. Absentes = architecture non
+   * hybride : le poste vaut alors nul à juste titre, pas par défaut de transmission.
+   */
+  readonly dimension_interne_ssm?: number | null;
+  readonly dimension_etat_ssm?: number | null;
+  readonly noyau_convolution_ssm?: number | null;
 }
 
 /** Modèle déjà résident : le GPU est exclusif, tout ce qui est listé ici devra être éjecté. */

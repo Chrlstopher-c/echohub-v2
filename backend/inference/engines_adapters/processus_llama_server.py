@@ -131,6 +131,11 @@ def construire_commande(plan: PlanChargement, binaire: Path) -> list[str]:
         "--n-gpu-layers", str(plan.couches_gpu),
         "--jinja",
         "--no-webui",
+        # UN seul slot. llama-server en ouvre QUATRE par défaut, et l'état récurrent des blocs
+        # hybrides est alloué POUR CHACUN : 242,88 MiB au lieu de 60,72 sur le 35B (mesuré au
+        # journal, `CUDA0 RS buffer size`), soit 182 MiB immobilisés pour trois slots que personne
+        # n'utilise — le backend est l'unique client de ce serveur, et il sérialise ses requêtes.
+        "--parallel", "1",
         *ARGUMENTS_REFLEXION,
     ]
     if plan.experts_deportes:

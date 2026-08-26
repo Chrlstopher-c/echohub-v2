@@ -53,6 +53,14 @@ export interface MetadonneesModele {
   octets_experts_par_bloc?: readonly number[];
   octets_hors_blocs?: number | null;
   intervalle_attention_pleine?: number | null;
+  /**
+   * État récurrent des blocs hybrides. Le backend en tire un poste de VRAM qui valait ZÉRO avant
+   * le 2026-08-26 : 60,72 MiB mesurés sur le 35B, et quatre fois plus tant que llama-server
+   * ouvrait ses quatre slots. Absentes = architecture non hybride.
+   */
+  dimension_interne_ssm?: number | null;
+  dimension_etat_ssm?: number | null;
+  noyau_convolution_ssm?: number | null;
 }
 
 export interface ModeleCharge {

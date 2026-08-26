@@ -138,6 +138,22 @@ export interface ParametresAttention {
   readonly intervalle_attention_pleine: number | null;
 }
 
+/**
+ * Dimensions de l'état récurrent des blocs hybrides (clés GGUF `ssm.*`).
+ *
+ * Elles décident d'un poste de VRAM que le planificateur chiffrait à ZÉRO jusqu'au 2026-08-26 —
+ * 60,72 MiB mesurés sur le 35B. Le backend les attend ; sans cette déclaration elles n'arrivaient
+ * jamais jusqu'à lui, silencieusement, exactement comme les sept champs de mesure perdus en route
+ * qui faisaient allouer 3 couches sur 40.
+ */
+export interface ParametresSSM {
+  readonly dimension_interne: number | null;
+  readonly dimension_etat: number | null;
+  readonly noyau_convolution: number | null;
+  readonly rang_pas_de_temps: number | null;
+  readonly nb_groupes: number | null;
+}
+
 /** Largeurs FFN d'un MoE. Celle d'UN expert, jamais la largeur vive d'un bloc. */
 export interface ParametresExperts {
   readonly largeur_ffn_expert: number | null;
@@ -179,6 +195,7 @@ export interface MetadonneesGGUF {
   readonly nb_experts_actifs: number | null;
   readonly attention: ParametresAttention;
   readonly experts: ParametresExperts;
+  readonly ssm: ParametresSSM;
   readonly quantification_declaree: string | null;
   readonly quantification_mesuree: string | null;
   readonly nb_tenseurs: number;

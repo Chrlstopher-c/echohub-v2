@@ -16,6 +16,7 @@ from __future__ import annotations
 from backend.inference.planner.budget import (
     besoin_ram_octets,
     couches_attention,
+    octets_etat_recurrent,
     octets_kv_par_token_par_couche,
     octets_tampons_calcul,
     poids_par_couche_octets,
@@ -77,12 +78,30 @@ def postes_vram(
     porteuses = couches_attention(metadonnees, couches_gpu)
     cache = int(porteuses * contexte * octets_kv_par_token_par_couche(metadonnees, type_kv))
     tampons = octets_tampons_calcul(metadonnees, contexte, batch, flash_attention)
-    total = sum(poste.octets for poste in poids) + cache + tampons
-    return (
+    recurrent = octets_etat_recurrent(metadonnees, couches_gpu)
+    total = sum(poste.octets for poste in poids) + cache + tampons + recurrent
+    postes = (
         *poids,
         _poste_cache(metadonnees, porteuses, couches_gpu, contexte, type_kv, cache),
         _poste_tampons(metadonnees, batch, flash_attention, tampons),
-        _poste_fragmentation(ratio_fragmentation, int(total * ratio_fragmentation)),
+    )
+    if recurrent:
+        postes = (*postes, _poste_recurrent(metadonnees, couches_gpu, porteuses, recurrent))
+    return (*postes, _poste_fragmentation(ratio_fragmentation, int(total * ratio_fragmentation)))
+
+
+def _poste_recurrent(
+    metadonnees: MetadonneesModele, couches_gpu: int, porteuses: int, octets: int
+) -> PosteMemoire:
+    """État récurrent des blocs hybrides — nommé dans le plan, parce qu'il ne l'était pas du tout."""
+    return PosteMemoire(
+        nom="État récurrent",
+        octets=octets,
+        detail=(
+            f"{couches_gpu - porteuses} bloc(s) sur {couches_gpu} portent un état récurrent au lieu "
+            "d'un cache KV. Sa taille ne dépend pas du contexte, mais du nombre de slots ouverts "
+            "par le moteur — un seul ici."
+        ),
     )
 
 
