@@ -12,11 +12,13 @@ pas le déclarer — le modèle promettrait une capacité absente, exactement le
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from typing import Any
 
 from loguru import logger
 
 from backend.outils.contrat import ContexteExecution, DescriptionOutil, EchecOutil, Outil, ResultatOutil
+from backend.outils.creer_artefact import OUTIL as OUTIL_ARTEFACT
 from backend.outils.executer_commande import OUTIL as OUTIL_COMMANDE
 from backend.outils.executer_python import OUTIL as OUTIL_PYTHON
 from backend.outils.explorer_bac import OUTIL_CHERCHER, OUTIL_LISTER
@@ -61,20 +63,67 @@ _OUTILS: dict[str, Outil] = {
     OUTIL_PYTHON.nom: OUTIL_PYTHON,
     OUTIL_COMMANDE.nom: OUTIL_COMMANDE,
     OUTIL_PRESENTER.nom: OUTIL_PRESENTER,
+    # `creer_artefact` ferme la marche, juste après la présentation : les deux montrent quelque
+    # chose à l'utilisateur, et les voisiner rend leur différence lisible dans le socle —
+    # `presenter_fichier` DÉSIGNE ce qui existe, `creer_artefact` PRODUIT ce qui n'existe pas.
+    OUTIL_ARTEFACT.nom: OUTIL_ARTEFACT,
 }
+
+
+# Familles présentées à l'écran de sélection. Un outil absent de cette table serait sans groupe :
+# la couverture est vérifiée par `groupes_complets()` plutôt que laissée à la relecture.
+_GROUPES: dict[str, str] = {
+    "recherche_web": "web",
+    "recuperer_page": "web",
+    "ecrire_fichier": "fichiers",
+    "lire_fichier": "fichiers",
+    "modifier_fichier": "fichiers",
+    "lister_fichiers": "fichiers",
+    "chercher_dans_fichiers": "fichiers",
+    "executer_python": "execution",
+    "executer_commande": "execution",
+    "presenter_fichier": "presentation",
+    "creer_artefact": "presentation",
+}
+
+
+def groupes_complets() -> bool:
+    """Tout outil enregistré a-t-il un groupe ? Faux signale un oubli, jamais un cas normal."""
+    return set(_OUTILS) <= set(_GROUPES)
 
 
 def disponibles() -> list[Outil]:
     return list(_OUTILS.values())
 
 
-def descriptions() -> list[DescriptionOutil]:
-    return [outil.description for outil in _OUTILS.values()]
+def descriptions(actifs: Sequence[str] | None = None) -> list[DescriptionOutil]:
+    """Déclarations des outils branchés. `None` = tous, `[]` = aucun.
+
+    La distinction porte l'intention de l'utilisateur : sans elle, une conversation qui coupe tous
+    ses outils serait indiscernable de celle qui n'a jamais choisi, et les retrouverait au
+    rechargement.
+
+    Un nom inconnu est simplement ignoré — un réglage écrit hier ne doit pas priver une
+    conversation de tous ses outils parce qu'un seul a été renommé depuis.
+    """
+    if actifs is None:
+        return [outil.description for outil in _OUTILS.values()]
+    retenus = set(actifs)
+    return [outil.description for nom, outil in _OUTILS.items() if nom in retenus]
 
 
-def format_moteur() -> list[dict[str, Any]]:
-    """Liste `tools=` telle que `create_chat_completion` l'attend."""
-    return [outil.description.vers_format_moteur() for outil in _OUTILS.values()]
+def format_moteur(actifs: Sequence[str] | None = None) -> list[dict[str, Any]]:
+    """Liste `tools=` telle que `create_chat_completion` l'attend, filtrée par la sélection."""
+    return [description.vers_format_moteur() for description in descriptions(actifs)]
+
+
+def groupes() -> dict[str, str]:
+    """Groupe de chaque outil, pour l'écran de sélection.
+
+    Défini ici et non côté interface : le groupe est une propriété de l'outil, et une seconde liste
+    tenue ailleurs finirait par oublier un outil ajouté.
+    """
+    return dict(_GROUPES)
 
 
 def _arguments(brut: object) -> dict[str, Any]:

@@ -18,29 +18,38 @@ Découpe interne, dans l'ordre des dépendances :
     socle            prompt système posé avant celui de la conversation
 """
 
+from collections.abc import Sequence
+
 from backend.outils.bac_a_sable import LIMITES_REELLES_TEXTE
 from backend.outils.contrat import DescriptionOutil, Outil, ResultatOutil
-from backend.outils.registre import descriptions, disponibles, executer, format_moteur
+from backend.outils.registre import (
+    descriptions,
+    disponibles,
+    executer,
+    format_moteur,
+    groupes,
+)
 from backend.outils.socle import composer, construire
 
 
-def prompt_socle(modele: str = "") -> str:
+def prompt_socle(modele: str = "", actifs: Sequence[str] | None = None) -> str:
     """Socle correspondant aux outils réellement enregistrés à cet instant.
 
     `modele` est l'identifiant du modèle RÉELLEMENT chargé, transmis par l'appelant : le domaine
     `outils` ne connaît pas `inference` et n'a pas à le découvrir. Vide, le socle n'affirme aucune
     identité — mieux vaut qu'il se taise que de nommer un modèle qui n'est pas celui qui répond.
     """
-    return construire(descriptions(), modele)
+    return construire(descriptions(actifs), modele)
 
 
-def prompt_systeme(prompt_conversation: str, modele: str = "") -> str:
+def prompt_systeme(prompt_conversation: str, modele: str = "",
+                   actifs: Sequence[str] | None = None) -> str:
     """Prompt système complet : socle d'abord, prompt de la conversation ensuite.
 
     C'est le seul point d'entrée que la génération doit utiliser. Composer ailleurs ferait exister
     un chemin où le socle est oublié — et ce chemin serait justement celui où le modèle affabule.
     """
-    return composer(prompt_socle(modele), prompt_conversation)
+    return composer(prompt_socle(modele, actifs), prompt_conversation)
 
 
 __all__ = [
@@ -52,6 +61,7 @@ __all__ = [
     "disponibles",
     "executer",
     "format_moteur",
+    "groupes",
     "prompt_socle",
     "prompt_systeme",
 ]

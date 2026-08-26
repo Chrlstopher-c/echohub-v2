@@ -21,6 +21,8 @@ from typing import ParamSpec, TypeVar
 
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
+import json
+
 from loguru import logger
 
 from backend.chat import annulation, depot, flux_sse, generation
@@ -38,6 +40,8 @@ from backend.chat.modeles import (
     MessageChat,
     ReglagesConversation,
     ResumeConversation,
+    OutilDisponible,
+    SelectionOutils,
     fusionner_reglages,
 )
 from backend.core import EchoHubError
@@ -127,6 +131,67 @@ async def modifier_reglages(conversation_id: str, corps: MajReglages) -> Reglage
     """Fusionne un patch partiel avec les réglages existants. Fournir tous les champs équivaut à un remplacement."""
     actuels = depot.lire_reglages(conversation_id)
     return depot.ecrire_reglages(conversation_id, fusionner_reglages(actuels, corps))
+
+
+@routeur.get("/outils", response_model=list[OutilDisponible])
+async def catalogue_outils() -> list[OutilDisponible]:
+    """Outils du registre, avec leur groupe et ce que leur déclaration coûte en tokens.
+
+    Le coût est MESURÉ avec le tokenizer du modèle chargé, jamais estimé sur un ratio
+    caractères/tokens : sur un vocabulaire de 248 320 entrées, l'estimation se trompe assez pour
+    faire croire qu'un outil est gratuit. Sans modèle chargé, le champ vaut `null` — une absence
+    nommée plutôt qu'un zéro qui se lirait comme « ne coûte rien ».
+    """
+    from backend.outils import descriptions, groupes
+
+    familles = groupes()
+    couts = await _couts_declarations([d.vers_format_moteur() for d in descriptions()])
+    return [
+        OutilDisponible(
+            nom=description.nom,
+            description=description.description,
+            groupe=familles.get(description.nom, "autre"),
+            tokens_definition=cout,
+        )
+        for description, cout in zip(descriptions(), couts, strict=True)
+    ]
+
+
+async def _couts_declarations(declarations: list[dict[str, object]]) -> list[int | None]:
+    """Coût en tokens de chaque déclaration, ou `None` partout si rien n'est mesurable."""
+    from backend.inference import superviseur
+
+    textes = [json.dumps(declaration, ensure_ascii=False) for declaration in declarations]
+    try:
+        comptage = await superviseur.compter_tokens(textes)
+    except Exception as exc:  # noqa: BLE001 — un coût est un confort, jamais une condition
+        logger.debug("Coût des déclarations d'outils non mesurable ({}) : champ laissé vide.", exc)
+        return [None] * len(textes)
+    if not comptage.possible or len(comptage.tokens) != len(textes):
+        return [None] * len(textes)
+    return list(comptage.tokens)
+
+
+@routeur.get("/conversations/{conversation_id}/outils", response_model=SelectionOutils)
+@_traduire_erreurs
+async def lire_outils(conversation_id: str) -> SelectionOutils:
+    """Outils actifs de la conversation. `null` = tous, `[]` = aucun."""
+    depot.exiger_conversation(conversation_id)
+    return SelectionOutils(outils_actifs=depot.lire_reglages(conversation_id).outils_actifs)
+
+
+@routeur.patch("/conversations/{conversation_id}/outils", response_model=SelectionOutils)
+@_traduire_erreurs
+async def modifier_outils(conversation_id: str, corps: SelectionOutils) -> SelectionOutils:
+    """Remplace la sélection. Un nom inconnu du registre est accepté puis ignoré à l'usage.
+
+    Refuser à l'enregistrement rendrait invalide un réglage écrit hier dès qu'un outil est renommé,
+    et l'utilisateur perdrait toute sa sélection pour un seul nom devenu obsolète.
+    """
+    actuels = depot.lire_reglages(conversation_id)
+    ecrits = depot.ecrire_reglages(
+        conversation_id, actuels.model_copy(update={"outils_actifs": corps.outils_actifs}))
+    return SelectionOutils(outils_actifs=ecrits.outils_actifs)
 
 
 @routeur.get("/conversations/{conversation_id}/messages", response_model=list[MessageChat])

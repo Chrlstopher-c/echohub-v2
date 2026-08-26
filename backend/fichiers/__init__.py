@@ -31,6 +31,7 @@ from backend.fichiers.service import (
     deposer_fichier,
     lier_fichiers_au_message,
     lire_fichier,
+    lister_fichiers,
     pieces_pour_messages,
     resoudre_reference,
 )
@@ -51,6 +52,7 @@ __all__ = [
     # Opérations
     "deposer_fichier",
     "lire_fichier",
+    "lister_fichiers",
     "resoudre_reference",
     "chemin_disque",
     "lier_fichiers_au_message",

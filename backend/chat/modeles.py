@@ -78,6 +78,13 @@ class ReglagesConversation(BaseModel):
     prompt_systeme: str = ""
     parametres: ParametresEchantillonnage = Field(default_factory=ParametresEchantillonnage)
     historique_max_messages: int | None = Field(default=None, ge=1)
+    # Outils mis à disposition du modèle. `None` = tous ceux du registre, `[]` = aucun. La
+    # distinction n'est pas cosmétique : sans elle, une conversation qui coupe tous ses outils
+    # serait indiscernable d'une conversation qui n'a jamais choisi, et retrouverait les dix au
+    # rechargement. Un nom inconnu du registre est ignoré à l'usage, jamais refusé à
+    # l'enregistrement — un réglage écrit hier ne doit pas devenir invalide parce qu'un outil a été
+    # renommé depuis.
+    outils_actifs: list[str] | None = None
 
 
 class MessageChat(BaseModel):
@@ -187,6 +194,13 @@ class MajReglages(BaseModel):
     prompt_systeme: str | None = None
     parametres: MajParametres | None = None
     historique_max_messages: int | None = Field(default=None, ge=1)
+    # Outils mis à disposition du modèle. `None` = tous ceux du registre, `[]` = aucun. La
+    # distinction n'est pas cosmétique : sans elle, une conversation qui coupe tous ses outils
+    # serait indiscernable d'une conversation qui n'a jamais choisi, et retrouverait les dix au
+    # rechargement. Un nom inconnu du registre est ignoré à l'usage, jamais refusé à
+    # l'enregistrement — un réglage écrit hier ne doit pas devenir invalide parce qu'un outil a été
+    # renommé depuis.
+    outils_actifs: list[str] | None = None
 
 
 class DemandeGeneration(BaseModel):
@@ -313,3 +327,27 @@ def fusionner_reglages(actuels: ReglagesConversation, patch: MajReglages) -> Reg
         parametres = fusionner_parametres(actuels.parametres, patch.parametres)
     fusionnes = {**actuels.model_dump(), **modifications, "parametres": parametres.model_dump()}
     return ReglagesConversation.model_validate(fusionnes)
+
+
+class OutilDisponible(BaseModel):
+    """Un outil du registre, tel que l'écran de sélection le présente."""
+
+    nom: str
+    description: str
+    # Famille d'appartenance (`web`, `fichiers`, `execution`, `presentation`) : elle vient du
+    # registre, seule source qui connaisse les outils réellement enregistrés.
+    groupe: str
+    # Coût en tokens de la DÉCLARATION de cet outil, mesuré avec le tokenizer du modèle chargé.
+    # `None` quand aucun modèle ne l'est : une absence nommée, jamais un zéro — un zéro se lirait
+    # comme « cet outil ne coûte rien », alors qu'un outil déclaré occupe la fenêtre à CHAQUE tour.
+    tokens_definition: int | None = None
+
+
+class SelectionOutils(BaseModel):
+    """Outils mis à disposition du modèle pour une conversation.
+
+    `None` signifie « tous ceux du registre », `[]` signifie « aucun ». Les confondre priverait
+    d'outils une conversation qui n'a jamais choisi, ou en rendrait à celle qui les a tous coupés.
+    """
+
+    outils_actifs: list[str] | None = None
