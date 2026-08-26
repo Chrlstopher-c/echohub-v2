@@ -10,13 +10,26 @@
  */
 
 const ENTREE = /<entree>([\s\S]*?)(?:<\/entree>|$)/;
-const SORTIE = /<sortie>([\s\S]*?)(?:<\/sortie>|$)/;
+/*
+ * La sortie porte désormais son ISSUE : `<sortie etat="echec">` quand l'appel a échoué,
+ * `<sortie>` quand il a abouti. Le harnais la connaît au moment où il écrit la balise
+ * (`backend/inference/harnais_outils.py`), et la transporter supprime l'interprétation qui se
+ * faisait ici : l'échec était DEVINÉ en reconnaissant des préfixes de texte, ce qui tenait
+ * jusqu'au premier message reformulé ou traduit.
+ *
+ * La forme sans attribut reste acceptée, et pas seulement par prudence : elle est déjà écrite dans
+ * tous les messages enregistrés avant le 26/08/2026, et un historique relu ne doit pas changer
+ * d'apparence parce que le format a évolué.
+ */
+const SORTIE = /<sortie(?:\s+etat="(?<etat>[a-z]+)")?>([\s\S]*?)(?:<\/sortie>|$)/;
 
 export interface AppelOutil {
   /** Ce que le modèle a demandé — nom de l'outil et arguments, mis en forme par le backend. */
   readonly entree: string;
   /** Ce que l'outil a rendu. Vide tant que l'exécution n'a rien produit. */
   readonly sortie: string;
+  /** Issue transmise par le harnais. `false` aussi tant que la sortie n'est pas close. */
+  readonly echec: boolean;
   /** `false` tant que la sortie n'est pas close : l'outil est encore en train de travailler. */
   readonly termine: boolean;
 }
@@ -34,7 +47,8 @@ export function decouperAppel(texte: string): AppelOutil | null {
   }
   return {
     entree: (entree?.[1] ?? '').trim(),
-    sortie: (sortie?.[1] ?? '').trim(),
+    sortie: (sortie?.[2] ?? '').trim(),
+    echec: sortie?.groups?.['etat'] === 'echec',
     termine: texte.includes('</sortie>'),
   };
 }

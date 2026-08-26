@@ -126,12 +126,27 @@ function cibleDepuisDetail(detail: string, cles: readonly string[]): string | nu
   return ligne === '' ? null : ligne;
 }
 
-function etatDepuisSortie(sortie: string, termine: boolean, actif: boolean): EtatAppel {
+function etatDepuisSortie(
+  sortie: string,
+  termine: boolean,
+  actif: boolean,
+  echecDeclare: boolean,
+): EtatAppel {
   if (!termine) {
     // Sans génération en cours, une sortie jamais refermée est un appel coupé net (arrêt manuel,
     // plafond de tokens) : le dire évite un « en cours » qui pulserait pour toujours.
     return actif ? 'en_cours' : 'interrompu';
   }
+  // L'issue DÉCLARÉE par le harnais prime : depuis le 26/08/2026 il écrit `<sortie etat="echec">`,
+  // et il tient ce fait de l'exécution même de l'outil. Aucune lecture de texte ne peut faire mieux.
+  if (echecDeclare) {
+    return 'echec';
+  }
+  // Repli par préfixe, pour les messages ENREGISTRÉS AVANT cette date, dont la sortie ne porte
+  // aucun attribut. Il ne s'applique donc qu'à de l'historique : c'est ce qui permet de le
+  // supprimer un jour sans rien casser, alors qu'il était jusqu'ici la seule source — et une
+  // lecture par préfixe ne survit ni à une reformulation, ni à une traduction, ni à un
+  // `EchecOutil` au texte libre.
   return PREFIXES_ECHEC.some((prefixe) => sortie.startsWith(prefixe)) ? 'echec' : 'termine';
 }
 
@@ -156,6 +171,6 @@ export function lireAppel(texte: string, actif: boolean): AppelLisible | null {
     cible: cibleDepuisDetail(detail, connu?.cles ?? []),
     entree: appel.entree,
     sortie: appel.sortie,
-    etat: etatDepuisSortie(appel.sortie, appel.termine, actif),
+    etat: etatDepuisSortie(appel.sortie, appel.termine, actif, appel.echec),
   };
 }

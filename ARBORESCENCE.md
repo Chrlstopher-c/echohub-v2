@@ -135,3 +135,18 @@ docker run --rm --gpus all --entrypoint /app/backend/.venv/bin/python \
   -v "$PWD/backend/outils:/app/backend/outils" \
   echohub:v2 -m pytest backend -q
 ```
+
+## Ajouts du 2026-08-26
+
+| Fichier | Rôle |
+|---|---|
+| `backend/outils/executer_commande.py` | Outil `executer_commande` — une commande shell réelle, confinée dans le bac |
+| `backend/outils/recuperer_page.py` | Outil `recuperer_page` — lit une page web dont on a l'adresse |
+| `backend/outils/explorer_bac.py` | Outils `lister_fichiers` et `chercher_dans_fichiers` |
+| `backend/inference/harnais.py` | Conduite de la boucle d'outils : tours, relances, budget, radotage |
+| `backend/inference/engines_adapters/processus_llama_server.py` | Pilotage du sous-processus `llama-server` |
+| `backend/inference/engines_adapters/adaptateur_llama_server.py` | Adaptateur `llama-server` — même plan, HTTP au lieu de bindings |
+| `frontend/src/chat/plan/ReglagesMemoire.tsx` | Cache KV et flash attention, dans le panneau de plan |
+
+Le frontend a par ailleurs été refondu sur la conversation (`chat/conversation/`,
+`chat/raisonnement/`, `chat/artefacts/`) : voir `STATE.md`, section du 2026-08-26.

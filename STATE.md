@@ -1,8 +1,118 @@
 # STATE — EchoHub v2
 
-*Dernière mise à jour : 2026-08-17*
+*Dernière mise à jour : 2026-08-26*
 
-## Résumé de l'état actuel
+## Session du 2026-08-26 — le harnais d'agent-forge, et llama.cpp servi autrement
+
+Six chantiers, tous décidés sur une mesure. Ce qui suit est l'état courant ; le résumé d'origine
+suit plus bas, inchangé.
+
+### 1. Quatre outils portés depuis agent-forge
+
+`executer_commande` (shell réel confiné : gcc, as, ld, make, curl, git — vérifiés présents sous le
+PATH du bac), `recuperer_page` (la seconde moitié de `recherche_web` : un extrait de deux lignes
+sert à choisir une source, jamais à répondre), `lister_fichiers` et `chercher_dans_fichiers` (le
+socle exigeait « your memory of what you wrote is not the file » sans donner le moyen d'obéir).
+
+Le confinement est PARTAGÉ, pas dupliqué : `executer_commande` passe par le même lanceur que
+`executer_python`. Deux réglages diffèrent, mesurés — le temps processeur (une compilation en
+consomme) et le filet en temps réel (un `curl` attend sans consommer de CPU).
+
+### 2. Le planificateur voyait 3 couches sur 40 — bug de transmission, pas de calcul
+
+Le backend mesure `octets_experts_par_bloc` correctement (346 Mo d'experts sur 369 Mo par bloc,
+**93,7 %**), l'API les envoie, et `cible/conversion.ts` ne les faisait pas suivre. Sans elles,
+`mesures_experts()` rend `None` et le planificateur retombe sur la coupe par couches entières — son
+repli documenté, correct en soi, déclenché pour rien.
+
+Sept champs rétablis. Mesuré avant/après, à VRAM identique :
+
+| ctx demandé | cache | sans les mesures | avec |
+|---|---|---|---|
+| 131072 | f16 | 18/40 GPU | **40/40** |
+| 131072 | q4_0 | 27/40 GPU | **40/40** |
+| 262144 | q4_0 | 23/40 GPU | **40/40** |
+
+Le type TS `MesuresTenseurs` ne déclarait même pas le champ : la dette de transcription que
+`conversion.ts` signale lui-même — deux transcriptions parallèles du contrat pydantic qui ont divergé.
+
+### 3. llama.cpp est servi par son binaire natif, plus par les bindings
+
+Mesuré sur le 35B-A3B, en conversation qui s'allonge :
+
+    llama-cpp-python  tour 1 : 1162 tokens réévalués · tour 2 : 1188 · tour 3 : 1211
+                      TTFT 5,94 s À CHAQUE MESSAGE
+    llama-server      TTFT 5,96 s au premier, puis 0,15 s
+
+Le journal donne la cause : `partial kv removal not supported`. Le préfixe EST trouvé (1161 tokens),
+mais l'architecture est hybride — un bloc sur quatre porte un cache KV, les autres un état récurrent,
+et un état récurrent ne se tronque pas. Enchaîner un tour sur le précédent l'exige. `swa_full=True`
+essayé : sans effet.
+
+Le débit de génération était comparable (26 contre 27-35 tok/s). Ce que l'interface affichait à
+10 tok/s divisait les tokens par le temps TOTAL, prefill compris : la lenteur ressentie était
+entièrement du TTFT.
+
+**Ce n'est PAS un troisième moteur.** Le plan reste `moteur: llama.cpp` ; le choix de
+l'implémentation vit dans le superviseur. Une troisième valeur de `Moteur` aurait obligé
+planificateur, capacités et frontend à connaître une distinction qui ne change rien à ce qu'ils
+décident — et aurait rendu les deux chemins incomparables. Repli : binaire absent → bindings ;
+`ECHOHUB_CHEMIN_LLAMA=serveur|bindings` pour forcer. Les bindings restent le seul chemin qui expose
+le tokenizer et le découpage multimodal dans ce processus.
+
+Le binaire est **compilé dans l'image** pour sm_86 : celui de `ghcr.io/ggml-org/llama.cpp` est lié à
+la glibc d'Ubuntu 24.04 et l'image est sur 22.04 (« GLIBC_2.38 not found »). Monté depuis
+`/mnt/models/echohub-bin` pour ne pas repayer 10 min de CUDA à chaque reconstruction.
+
+### 4. Deux régressions introduites ce soir avec ce chemin, et corrigées
+
+**La réflexion fuyait.** llama-server extrait les pensées vers `reasoning_content` et les retire du
+contenu ; l'adaptateur les concaténait SANS balise, et la réflexion — en anglais — coulait dans la
+réponse visible. Correctif : `--reasoning-format none`, qui les laisse balisées dans le contenu,
+comme le faisait le chemin bindings.
+
+**Les arguments d'appel étaient détruits.** llama-server envoie les arguments caractère par
+caractère (`{"`, `\"requete\":\"`, `met`, `eo`, …). L'adaptateur lisait chaque fragment comme un
+JSON complet, échouait, et émettait un `<tool_call>` VIDE par fragment. L'utilisateur a vu six
+appels identiques sans arguments et un modèle qui s'excuse — alors qu'il avait parfaitement produit
+`{"requete": "meteo Paris demain"}` à chaque tentative. **Un harnais qui détruit l'appel puis lui
+reproche son absence est pire qu'un harnais qui échoue : il accuse.** `_Accumulateur` recompose les
+fragments par index et ne les lit qu'une fois le flux clos.
+
+### 5. La conduite est réglable, et le budget d'outils avertit au lieu de couper
+
+`inference/harnais.py` porte deux conduites. `forge` est le DÉFAUT depuis ce jour, sur un cas
+mesuré : à une recherche web ordinaire, la borne de six tours était atteinte, le modèle se
+retrouvait au tour de clôture SANS outils déclarés, écrivait « Laisse-moi chercher autrement » et
+s'arrêtait. Il ne pouvait pas savoir qu'on venait de lui retirer ses moyens.
+
+La limite n'est plus un quota mais un compte de tours CONSÉCUTIFS qui PRÉVIENT : à l'avant-dernier
+tour, une consigne dit combien de tours sont faits, combien restent, et quoi faire pour continuer.
+Le modèle qui rappelle un outil après l'avertissement est prolongé, sans plafond de prolongations.
+Quand plus aucune extension n'est possible, l'avertissement CHANGE de texte — annoncer une extension
+qui ne viendra pas ferait organiser une suite que le harnais n'accordera pas.
+
+Reste un garde-fou à 200 tours, et c'en est un, pas un budget : le franchir se journalise comme une
+boucle suspectée. Le cas n'est pas théorique — le même jour, six appels identiques d'affilée.
+
+`echohub` (6 tours, couperet) est conservée inchangée comme point de comparaison : à outils et
+modèle constants, la seule variable est la conduite.
+
+### 6. Identité, issue des appels, et refonte de la conversation
+
+Le modèle sait désormais **où il tourne et quel modèle il est** (+595 caractères sur un socle de
+10 255). À « présente-toi », il répondait « je fonctionne sur un modèle d'inférence générique — pas
+le tien en particulier ». À la question la plus fréquente qu'on lui pose, un modèle sans identité
+n'admet pas son ignorance : il invente.
+
+L'**issue d'un appel voyage dans la balise** : `<sortie etat="echec">`. Le frontend la devinait par
+préfixe de texte, ce qui ne survit ni à une reformulation ni à un `EchecOutil` au texte libre.
+
+La **conversation a été refondue** (desktop et mobile) : affichage des outils repensé — une ligne
+qui dit tout, détail au dépliage —, artefacts versionnés avec panneau dédié, archivage et renommage
+des conversations, écran de sélection d'outils. Captures dans `frontend/captures/`.
+
+## Résumé de l'état antérieur (2026-08-17)
 
 L'application tourne, en Docker, sur RTX 5080 16 Go / WSL2. On charge un modèle GGUF depuis un plan
 calculé, on discute avec, il appelle réellement des outils, exécute du Python confiné, écrit et

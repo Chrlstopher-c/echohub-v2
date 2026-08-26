@@ -51,6 +51,7 @@ from backend.inference.harnais_outils import (
     BALISE_FIN_ETAPE,
     BALISE_OUTIL_FERMANTE,
     BALISE_OUTIL_OUVRANTE,
+    BALISE_SORTIE_ECHEC,
     BALISE_SORTIE_FERMANTE,
     BALISE_SORTIE_OUVRANTE,
     CARACTERES_APERCU_LIGNE,
@@ -244,10 +245,43 @@ _AUCUN_OUTIL_ABOUTI = (
 )
 
 
+def _avec_avertissement(messages: list[MessageChat], etat: EtatBoucle) -> list[MessageChat]:
+    """Consomme un tour de budget et injecte l'avertissement s'il est dû.
+
+    L'avertissement PRÉCÈDE le tour : prévenir après coup ne sert à rien, le modèle a déjà décidé
+    de ce qu'il faisait de son dernier appel.
+    """
+    etat.tours_faits += 1
+    avis = avertissement_du_tour(etat)
+    if avis is None:
+        return messages
+    return list(messages) + [MessageChat(role="tool", content=avis)]
+
+
+def _prolonger_si_demande(etat: EtatBoucle) -> None:
+    """Prolonge le budget quand le modèle a rappelé un outil APRÈS l'avertissement.
+
+    C'est lui qui décide de continuer, pas le harnais : le harnais l'a prévenu qu'il approchait
+    d'une borne, et un nouvel appel est sa réponse.
+    """
+    if etat.averti or _restants_nuls(etat):
+        prolonger(etat)
+
+
 def _restants_nuls(etat: EtatBoucle) -> bool:
     """Le budget courant est-il consommé, alors qu'une extension reste possible ?"""
     accorde = etat.harnais.tours_outils_max * (1 + etat.extensions)
     return etat.tours_faits >= accorde and etat.extensions < etat.harnais.extensions_max
+
+
+def _bloc_sortie(texte: str, succes: bool) -> str:
+    """Sortie d'un appel, portant son ISSUE dans la balise.
+
+    La balise ouvrante n'est écrite QU'ICI, une fois l'issue connue : l'écrire avant l'exécution
+    obligerait à la corriger après coup dans un flux déjà parti au client.
+    """
+    ouvrante = BALISE_SORTIE_OUVRANTE if succes else BALISE_SORTIE_ECHEC
+    return f"{ouvrante}{texte}{BALISE_SORTIE_FERMANTE}{BALISE_OUTIL_FERMANTE}\n\n"
 
 
 async def _jouer_appels(
@@ -291,7 +325,7 @@ async def _executer_appels(
         nom, arguments = _texte_appel(appel)
         # L'entrée part AVANT l'exécution : c'est ce qui rend l'attente lisible plutôt que muette.
         entree = f"{BALISE_ENTREE_OUVRANTE}{_annonce(nom, arguments)}{BALISE_ENTREE_FERMANTE}"
-        yield {"texte": f"{BALISE_OUTIL_OUVRANTE}{entree}{BALISE_SORTIE_OUVRANTE}"}
+        yield {"texte": f"{BALISE_OUTIL_OUVRANTE}{entree}"}
         signature = _signature(nom, arguments)
         if signature in echecs_vus:
             logger.warning("Appel {} déjà échoué à l'identique : non réexécuté.", nom)
@@ -303,7 +337,7 @@ async def _executer_appels(
                 echecs_vus.clear()
             else:
                 echecs_vus.add(signature)
-        yield {"texte": f"{texte}{BALISE_SORTIE_FERMANTE}{BALISE_OUTIL_FERMANTE}\n\n", "succes": succes}
+        yield {"texte": _bloc_sortie(texte, succes), "succes": succes}
         # Rôle `tool`, contenu NU. Le gabarit l'enveloppe lui-même dans `<tool_response>` : c'est
         # le canal que le modèle a appris à l'entraînement, et il ne le confond pas avec sa propre
         # prose. L'ancienne forme — rôle `assistant` préfixé « [outil nom — résultat] » — était un
@@ -453,12 +487,7 @@ class MoteurChat:
         etat = EtatBoucle(harnais=harnais.choisir(harnais.harnais_demande(options)),
                           outils_declares=outils or None)
         while not budget_epuise(etat):
-            etat.tours_faits += 1
-            # L'avertissement précède le tour : prévenir après coup ne sert à rien, le modèle a
-            # déjà décidé de ce qu'il faisait de son dernier appel.
-            avis = avertissement_du_tour(etat)
-            if avis is not None:
-                messages = list(messages) + [MessageChat(role="tool", content=avis)]
+            messages = _avec_avertissement(messages, etat)
             recu: list[str] = []
             async for morceau in self._diffuser_complet(messages, options, etat.outils_declares, recu):
                 yield morceau
@@ -483,10 +512,7 @@ class MoteurChat:
             ]
             async for etape in _jouer_appels(appels, messages, contexte, etat, texte):
                 yield etape
-            # Le modèle a rappelé un outil APRÈS l'avertissement : c'est le signal que la tâche
-            # n'est pas finie, et c'est lui qui décide, pas le harnais.
-            if etat.averti or _restants_nuls(etat):
-                prolonger(etat)
+            _prolonger_si_demande(etat)
         async for morceau in self._cloturer(messages, options, etat.aboutis, etat.harnais):
             yield morceau
 

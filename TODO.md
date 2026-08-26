@@ -27,10 +27,12 @@ sélection d'outils affiche un mode dégradé ASSUMÉ (« sélection non persist
 - [ ] **`GET`/`PATCH /chat/conversations/{id}/outils`** → `{outils_actifs: string[] | null}`
       (`null` = tous, `[]` = aucun). Le socle ne doit décrire QUE les outils réellement branchés :
       un prompt qui annonce une capacité absente est le défaut que ce socle existe pour supprimer.
-- [ ] **Porter l'issue d'un appel dans le balisage** — `<sortie etat="echec">`. Aujourd'hui le
-      frontend DEVINE l'échec en reconnaissant des préfixes de texte (`Échec de l'outil :`,
-      `Failed:`) : un `EchecOutil` formulé autrement s'affiche « terminé ». Une lecture par préfixe
-      diverge au premier message reformulé ou traduit.
+- [x] ~~Porter l'issue d'un appel dans le balisage~~ — **fait le 2026-08-26**. Le harnais écrit
+      `<sortie etat="echec">` quand l'appel a échoué, `<sortie>` sinon ; il tient ce fait de
+      l'exécution même de l'outil. Côté frontend, l'issue déclarée PRIME et le repli par préfixe ne
+      sert plus qu'aux messages enregistrés avant cette date — ce qui permettra de le supprimer un
+      jour sans rien casser. La forme sans attribut reste émise pour un succès : un historique relu
+      ne doit pas changer d'apparence parce que le format a évolué.
 - [ ] Dépendance npm `mermaid` pour le rendu des diagrammes (repli actuel : source colorée).
 
 ### 1. Reconnexion de l'interface après une veille
