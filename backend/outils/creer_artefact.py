@@ -53,6 +53,21 @@ _MIMES = {"html": "text/html", "markdown": "text/markdown", "code": "text/plain"
 # nom de fichier. Réduit à un jeu de caractères sûr avant tout usage — un `../` y passerait sinon.
 _CARACTERES_SURS = re.compile(r"[^a-z0-9-]+")
 LONGUEUR_ID_MAX = 48
+# Rendu DANS le résultat de l'outil, et non seulement dans sa description.
+#
+# Mesuré le 2026-08-26 : à « corrige la landing page », le modèle a rappelé l'outil SANS
+# `artefact_id`. L'identifiant fut donc redérivé du titre — qui avait bougé d'un mot — et un SECOND
+# artefact est né au lieu d'une v2. L'utilisateur s'est retrouvé avec deux pages concurrentes.
+#
+# La description de l'outil le disait déjà, mais elle est lue une fois, loin en amont, au milieu de
+# dix autres. Le résultat, lui, est sous les yeux du modèle au moment exact où il décide de la
+# suite : c'est là que la consigne a une chance d'être suivie.
+_CONSIGNE_VERSION = (
+    "To publish a corrected version of THIS artefact, call `creer_artefact` again with "
+    "artefact_id=\"{id}\" and the full new content. Omitting it creates a SEPARATE artefact "
+    "instead of a new version."
+)
+
 _MOTIF_VERSION = re.compile(r"^(?P<id>.+)-v(?P<version>\d+)\.[^.]+$")
 
 _SCHEMA: dict[str, Any] = {
@@ -122,7 +137,14 @@ def _identifiant(titre: str, fourni: str) -> str:
     """
     brut = (fourni or titre).strip().lower()
     sans_accent = unicodedata.normalize("NFKD", brut).encode("ascii", "ignore").decode()
-    propre = _CARACTERES_SURS.sub("-", sans_accent).strip("-")[:LONGUEUR_ID_MAX].strip("-")
+    entier = _CARACTERES_SURS.sub("-", sans_accent).strip("-")
+    propre = entier[:LONGUEUR_ID_MAX].strip("-")
+    if not fourni and len(entier) > LONGUEUR_ID_MAX:
+        # Un identifiant dérivé d'un titre TRONQUÉ est instable : deux titres qui ne diffèrent
+        # qu'après le 48e caractère donnent le même identifiant, et deux titres qui diffèrent avant
+        # en donnent deux — c'est ainsi qu'un artefact s'est dédoublé le 2026-08-26.
+        logger.info("Identifiant d'artefact dérivé d'un titre tronqué ({} → {}) : "
+                    "le modèle devrait renvoyer `artefact_id` pour versionner.", entier, propre)
     return propre or "artefact"
 
 
@@ -172,7 +194,8 @@ async def executer(arguments: dict[str, Any], contexte: ContexteExecution) -> st
     logger.info("Artefact {} v{} déposé ({} octets, type {})", artefact_id, version, len(octets), type_)
     return json.dumps(
         {"artefact_id": artefact_id, "version": version, "titre": titre, "type": type_,
-         "langage": langage or None, "fichier_id": fichier.id, "taille_octets": len(octets)},
+         "langage": langage or None, "fichier_id": fichier.id, "taille_octets": len(octets),
+         "pour_corriger": _CONSIGNE_VERSION.format(id=artefact_id)},
         ensure_ascii=False)
 
 
