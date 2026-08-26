@@ -40,6 +40,26 @@ sélection d'outils affiche un mode dégradé ASSUMÉ (« sélection non persist
       ne doit pas changer d'apparence parce que le format a évolué.
 - [ ] Dépendance npm `mermaid` pour le rendu des diagrammes (repli actuel : source colorée).
 
+### 0 bis. Né de la session du 2026-08-26, consigné le 2026-08-27
+
+- [ ] **Le modèle demande la permission d'utiliser un outil qu'il possède.** Mesuré sur un fil réel :
+      il écrit « Si tu veux, je peux réécrire le script en utilisant httpx (déjà présent) » et rend
+      la main, deux fois de suite. Le harnais relance bien (journal : 1/3, 2/3, 3/3 puis extension
+      de budget) mais une demande de permission est une phrase BIEN FORMÉE — elle n'est ni une
+      promesse en l'air ni un tour muet, donc elle passe à travers les trois détections.
+      À MESURER D'ABORD : ce fil précis échouait parce que `requests` manquait au bac (corrigé
+      depuis). Vérifier si le réflexe survit au correctif avant d'ajouter une règle au socle —
+      empiler une consigne sur un problème disparu, c'est du contexte payé à chaque tour pour rien.
+- [ ] **Message de clôture trompeur.** Quand le harnais clôt sur une promesse non tenue, il
+      journalise « Borne de 10 tours d'outils atteinte » alors que ce n'est pas le motif. Purement
+      cosmétique aujourd'hui, et c'est exactement le genre de ligne qui enverra sur une fausse piste
+      dans six mois. `_cloturer` doit dire POURQUOI il clôt.
+- [ ] **Artefact affiché d'un bloc, sans progression.** L'utilisateur voit un écran vide pendant
+      toute la génération, puis l'artefact apparaît d'un coup. Proposition non tranchée : afficher
+      la carte dès que le NOM de l'outil est connu — au premier fragment — avec une progression,
+      comme le fait Claude AI. Le contenu, lui, ne peut pas être diffusé au fil de l'eau sans casser
+      l'accumulation des arguments (cf. `_Accumulateur`, corrigé le 2026-08-26).
+
 ### 1. Reconnexion de l'interface après une veille
 
 La génération survit désormais au départ du client et se persiste seule (2026-08-16). Il reste la
