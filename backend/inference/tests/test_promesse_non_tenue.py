@@ -16,6 +16,8 @@ import asyncio
 from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
+import pytest
+
 import backend.inference as domaine_inference
 from backend.chat.modeles import ParametresEchantillonnage
 from backend.chat.port_inference import MessageInference, RequeteGeneration
@@ -254,3 +256,66 @@ def test_un_outil_abouti_redonne_droit_a_une_relance(monkeypatch: Any) -> None:
 
     assert superviseur.tours == 5, "la promesse qui suit un travail réel est relancée elle aussi"
     assert "présenté ci-dessus" in texte, "le tour final n'est plus une promesse"
+
+
+# --- code écrit au lieu d'être exécuté ------------------------------------------------------------
+#
+# Cas rapporté le 2026-08-26 depuis l'app : « il vient de se couper en pleine génération ». Ce
+# n'était PAS une coupure — `interrompu=False`, 1281 tokens à 22,7 tok/s, 9 867 tokens de contexte
+# sur 131 072, `truncated=0`. Le modèle avait fini son tour en écrivant un script d'upload avec un
+# `Bearer YOUR_TOKEN`, suivi de `# Now run it`. Rien n'avait tourné, rien n'avait été téléversé.
+#
+# La détection lisait la DERNIÈRE LIGNE, qui était la clôture du bloc de code : trois backticks
+# n'annoncent rien, donc aucune relance.
+
+_CODE_A_TROUS = '''Voici le script.
+
+```python
+import requests
+with open('hello.s', 'rb') as f:
+    r = requests.post("https://api.gofile.my/v1/upload",
+        headers={"Authorization": "Bearer YOUR_TOKEN"}, files={"file": f})
+
+# Now run it
+```'''
+
+_CODE_SAIN = '''Voici la fonction demandée :
+
+```python
+def somme(a: int, b: int) -> int:
+    return a + b
+```'''
+
+
+def test_un_code_a_trous_est_une_promesse_non_tenue() -> None:
+    """Un jeton laissé en placeholder PROUVE que le code n'a pas tourné : il ne peut pas tourner.
+
+    Ce critère ne repose sur aucune interprétation de l'intention, contrairement à la lecture d'une
+    phrase d'annonce — c'est ce qui le rend sûr malgré sa portée.
+    """
+    assert promesse_non_tenue(_CODE_A_TROUS)
+
+
+def test_un_code_complet_en_fin_de_message_n_est_pas_une_promesse() -> None:
+    """Le garde-fou du test précédent : la plupart des réponses utiles finissent par du code."""
+    assert not promesse_non_tenue(_CODE_SAIN)
+
+
+@pytest.mark.parametrize("texte", [
+    "Pour compiler, utilise :\n\n```bash\ngcc -o hello hello.c\n```",
+    "J'ai lancé le script, il a rendu 0 erreur. Tout est vert.",
+    "Le binaire pèse 8,4 Ko et tourne sans dépendance.",
+])
+def test_les_reponses_legitimes_ne_sont_pas_relancees(texte: str) -> None:
+    """Une relance de trop coûte un tour à l'utilisateur : la détection doit rester étroite."""
+    assert not promesse_non_tenue(texte)
+
+
+@pytest.mark.parametrize("texte", [
+    "Bien.\n\n```python\nx = 1\n# je lance le script maintenant\n```",
+    "Parfait. Je téléverse le fichier sur GoFile maintenant.",
+    "C'est prêt.\n\n```python\ndef envoyer():\n    # TODO: brancher l'API\n    pass\n```",
+])
+def test_les_annonces_d_execution_sont_relancees(texte: str) -> None:
+    """Produire n'est pas le seul acte annoncé sans être fait : lancer et téléverser aussi."""
+    assert promesse_non_tenue(texte)

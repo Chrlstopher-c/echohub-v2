@@ -89,6 +89,11 @@ RELANCES_PROMESSE_MAX = 3
 _VERBES_PRODUCTION = (
     "cré|créé|creer|crée|génèr|génér|genere|écri|ecri|rédig|redig|prépar|prepar|constru|"
     "constitu|réalis|realis|produi|fabriqu|dessin|compos|monte|mets en place|mets au point|"
+    # Verbes d'EXÉCUTION, ajoutés le 2026-08-26. Produire n'est pas le seul acte qu'un modèle
+    # annonce sans le faire : « je lance le script », « je téléverse le fichier » laissent tout
+    # autant l'utilisateur devant rien. Ils ne sont pas plus risqués que les autres — la détection
+    # reste ancrée en FIN de message, là où plus aucun appel ne peut suivre.
+    "lanc|exécut|execut|éxecut|run |upload|télévers|televers|envoi|déploi|deploi|compil|"
     "implémente|implemente|ajoute|complète|complete|corrige|write|create|generate|build|make|"
     "prepare|draft|implement"
 )
@@ -146,6 +151,32 @@ def consigne_promesse(rang: int) -> str:
     return CONSIGNES_PROMESSE[min(max(1, rang), len(CONSIGNES_PROMESSE)) - 1]
 
 
+# Marques d'un code NON TERMINÉ, livré comme s'il l'était.
+#
+# Mesuré le 2026-08-26 : à « upload par api http sur GoFile », le modèle a écrit un bloc Python
+# se terminant par `headers={"Authorization": "Bearer YOUR_TOKEN"}` puis `# Now run it`, et a rendu
+# la main. Rien n'a tourné, rien n'a été téléversé, et l'utilisateur a lu ça comme une coupure en
+# pleine génération — `interrompu` valait pourtant False, 1281 tokens à 22,7 tok/s, contexte à
+# 9 867 sur 131 072. Le modèle avait bel et bien fini son tour.
+#
+# La détection d'annonce ne pouvait pas le voir : elle lit la DERNIÈRE LIGNE, et la dernière ligne
+# était la clôture du bloc de code. D'où les deux corrections ci-dessous — remonter à la dernière
+# ligne signifiante, et reconnaître un code à trous.
+#
+# Un jeton laissé en placeholder n'est pas un détail de style : c'est la preuve que le code n'a
+# jamais été exécuté, puisqu'il ne PEUT pas l'être. Le relancer sur cette base ne repose sur aucune
+# interprétation de l'intention.
+_PLACEHOLDERS = re.compile(
+    r"YOUR[_-]?(TOKEN|API[_-]?KEY|KEY|SECRET|PASSWORD|ID)|<your[_ -]|"
+    r"\bREPLACE[_ -]?(ME|WITH)\b|\bINSERT[_ -]?YOUR\b|\bTODO\b|\bFIXME\b|"
+    r"xxxxx|<API[_-]?KEY>|\{\{[a-z_]+\}\}",
+    re.IGNORECASE,
+)
+
+# Clôture d'un bloc de code Markdown en fin de message.
+_BLOC_CODE_FINAL = re.compile(r"```[a-zA-Z0-9_+-]*\n(?P<code>.*?)\n?```\s*$", re.DOTALL)
+
+
 def promesse_non_tenue(texte: str) -> bool:
     """Le tour s'achève-t-il sur une annonce laissée sans suite ?
 
@@ -155,9 +186,22 @@ def promesse_non_tenue(texte: str) -> bool:
     fin = texte.rstrip()
     if not fin:
         return False
+
+    bloc = _BLOC_CODE_FINAL.search(fin)
+    if bloc is not None:
+        # Un code à trous n'est pas un livrable : il ne peut pas avoir tourné.
+        if _PLACEHOLDERS.search(bloc.group("code")):
+            return True
+        # La clôture du bloc masquait la vraie fin du message. On regarde ce qui la précède —
+        # commentaire impératif, phrase d'annonce — au lieu de trois backticks qui n'annoncent rien.
+        fin = (fin[: bloc.start()] + "\n" + bloc.group("code")).rstrip() or fin
+
     if fin.endswith(":"):
         return True
     derniere_ligne = fin.rsplit("\n", 1)[-1]
+    # Le commentaire de tête est retiré : « # Now run it » est une annonce, le croisillon n'y change
+    # rien. C'est la seule concession faite au fait que la ligne vienne d'un bloc de code.
+    derniere_ligne = derniere_ligne.lstrip("#/ \t")
     if any(marqueur in derniere_ligne.lower() for marqueur in _FINS_DE_PROMESSE):
         return True
     return _ANNONCE.search(derniere_ligne) is not None
