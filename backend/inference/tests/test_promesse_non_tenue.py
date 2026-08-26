@@ -21,7 +21,13 @@ from backend.chat.modeles import ParametresEchantillonnage
 from backend.chat.port_inference import MessageInference, RequeteGeneration
 from backend.inference import MoteurChat
 from backend.inference.engines_adapters.contrat import MessageChat, MorceauGeneration, OptionsGeneration
-from backend.inference.reprise import CONSIGNE_PROMESSE, promesse_non_tenue
+from backend.inference.reprise import (
+    CONSIGNE_CLOTURE_PROMESSE,
+    CONSIGNE_PROMESSE,
+    CONSIGNES_PROMESSE,
+    RELANCES_PROMESSE_MAX,
+    promesse_non_tenue,
+)
 from backend.outils import registre
 from backend.outils.contrat import ContexteExecution, DescriptionOutil, Outil
 
@@ -56,6 +62,9 @@ class _SuperviseurQuiPromet:
     def __init__(self) -> None:
         self.tours = 0
         self.derniers_messages: list[MessageChat] = []
+        # Tous les messages vus, tous tours confondus : le tour de clôture reconstruit sa propre
+        # liste, donc n'inspecter que le dernier ferait manquer les consignes des tours précédents.
+        self.messages_vus: list[MessageChat] = []
 
     def generer(
         self,
@@ -65,10 +74,20 @@ class _SuperviseurQuiPromet:
     ) -> AsyncIterator[MorceauGeneration]:
         self.tours += 1
         self.derniers_messages = list(messages)
+        self.messages_vus += list(messages)
         return self._flux(promet=self.tours == 1)
 
     async def _flux(self, *, promet: bool) -> AsyncIterator[MorceauGeneration]:
-        contenu = "Voici le fichier :" if promet else "C'est écrit, le voici."
+        # Textes assez longs pour ne PAS tomber sous `MIN_REPONSE_CARACTERES` : sous ce seuil le
+        # tour est classé muet, une autre cause avec sa propre consigne, et ce test ne prouverait
+        # plus rien sur les promesses.
+        contenu = (
+            "J'ai rassemblé tout ce qu'il faut et je te prépare le fichier complet maintenant, "
+            "avec la structure demandée. Voici le fichier :"
+            if promet else
+            "C'est écrit, le voici — le fichier a été produit et déposé dans la conversation, "
+            "tu peux l'ouvrir directement depuis le panneau latéral."
+        )
         yield MorceauGeneration(type="token", contenu=contenu)
         yield MorceauGeneration(type="fin", raison_arret="stop")
 
@@ -110,26 +129,85 @@ def test_une_promesse_sans_appel_est_relancee(monkeypatch: Any) -> None:
 
     texte = _jouer(monkeypatch, superviseur)
 
-    assert superviseur.tours == 2, "le tour clos sur une annonce est relancé"
+    # Trois tours : l'annonce, la relance qui la répare, puis le tour final sans outil. Le stub
+    # tient sa promesse dès la relance — c'est le cas nominal, celui qui n'a jamais posé problème.
+    assert superviseur.tours >= 2, "le tour clos sur une annonce est relancé"
     assert "C'est écrit" in texte
-    consignes = [m for m in superviseur.derniers_messages if str(m.content) == CONSIGNE_PROMESSE]
+    consignes = [m for m in superviseur.messages_vus if str(m.content) == CONSIGNE_PROMESSE]
     assert consignes and consignes[0].role == "user"
 
 
-def test_la_relance_n_a_lieu_qu_une_fois(monkeypatch: Any) -> None:
-    """Un modèle qui promet indéfiniment ne doit pas faire tourner la boucle jusqu'à sa borne."""
+def test_les_relances_sont_bornees_et_escaladent(monkeypatch: Any) -> None:
+    """Un modèle qui promet indéfiniment ne doit pas faire tourner la boucle jusqu'à sa borne.
+
+    Porté de 1 à 3 relances le 2026-08-26 : le journal de production montrait la relance partir, le
+    modèle RÉ-ANNONCER, et la boucle rendre la main sur cette seconde annonce. Trois rappels, mais
+    trois rappels DIFFÉRENTS — répéter le même dans un contexte qui le contient déjà revient à
+    redemander à l'identique ce que le modèle vient de ne pas faire.
+    """
 
     class _ToujoursPromet(_SuperviseurQuiPromet):
+        def __init__(self) -> None:
+            super().__init__()
+            self.consignes_vues: list[str] = []
+
         def generer(self, messages, options, outils=None):  # type: ignore[no-untyped-def]
             self.tours += 1
             self.derniers_messages = list(messages)
-            return self._flux(promet=True)
+            self.consignes_vues += [
+                str(m.content) for m in messages
+                if m.role == "user" and str(m.content) in CONSIGNES_PROMESSE
+            ]
+            return self._promesse_variee(self.tours)
+
+        async def _promesse_variee(self, tour):  # type: ignore[no-untyped-def]
+            # Texte DIFFÉRENT à chaque tour : c'est ainsi qu'un modèle ré-annonce réellement. Un
+            # texte répété au mot près relève du radotage, qui a sa propre cause et son propre
+            # quota — le confondre ici testerait autre chose que ce que ce test prétend prouver.
+            yield MorceauGeneration(type="token", contenu=f"Je vais écrire le fichier {tour} :")
+            yield MorceauGeneration(type="fin", raison_arret="stop")
 
     superviseur = _ToujoursPromet()
 
     _jouer(monkeypatch, superviseur)
 
-    assert superviseur.tours == 2, "une seule relance, puis on rend la main"
+    # Ce qui compte n'est pas le nombre exact de tours — la clôture en ajoute selon la conduite —
+    # mais que les TROIS consignes de promesse aient été posées, et qu'elles soient DISTINCTES.
+    # Trois fois le même rappel était précisément l'ancien comportement inefficace.
+    assert len(set(superviseur.consignes_vues)) == RELANCES_PROMESSE_MAX, "consignes répétées"
+    assert superviseur.tours > RELANCES_PROMESSE_MAX, "toutes les relances n'ont pas été jouées"
+
+
+def test_une_promesse_a_bout_de_relances_declenche_une_cloture(monkeypatch: Any) -> None:
+    """Le défaut vu par l'utilisateur : « Je vais créer les fichiers […] : », puis plus rien.
+
+    Rendre la main ici laissait une phrase en suspens. Le dernier tour part donc SANS outil, avec
+    une consigne qui ne demande plus d'agir mais de rendre compte — la seule chose encore possible.
+    """
+
+    class _ToujoursPromet(_SuperviseurQuiPromet):
+        def __init__(self) -> None:
+            super().__init__()
+            self.outils_du_dernier_tour: object = "jamais appelé"
+
+        def generer(self, messages, options, outils=None):  # type: ignore[no-untyped-def]
+            self.tours += 1
+            self.derniers_messages = list(messages)
+            self.outils_du_dernier_tour = outils
+            return self._promesse_variee(self.tours)
+
+        async def _promesse_variee(self, tour):  # type: ignore[no-untyped-def]
+            yield MorceauGeneration(type="token", contenu=f"Je vais écrire le fichier {tour} :")
+            yield MorceauGeneration(type="fin", raison_arret="stop")
+
+    superviseur = _ToujoursPromet()
+
+    _jouer(monkeypatch, superviseur)
+
+    assert superviseur.outils_du_dernier_tour is None, "le tour de clôture déclare encore des outils"
+    cloture = [m for m in superviseur.derniers_messages
+               if str(m.content) == CONSIGNE_CLOTURE_PROMESSE]
+    assert cloture, "la consigne de clôture n'a pas été posée"
 
 
 def test_aucune_relance_sans_registre_d_outils(monkeypatch: Any) -> None:
@@ -174,5 +252,5 @@ def test_un_outil_abouti_redonne_droit_a_une_relance(monkeypatch: Any) -> None:
 
     texte = _jouer(monkeypatch, superviseur)
 
-    assert superviseur.tours == 4, "la promesse qui suit un travail réel est relancée elle aussi"
+    assert superviseur.tours == 5, "la promesse qui suit un travail réel est relancée elle aussi"
     assert "présenté ci-dessus" in texte, "le tour final n'est plus une promesse"

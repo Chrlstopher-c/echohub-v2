@@ -45,6 +45,7 @@ from backend.inference.harnais import (
     prolonger,
     relancer,
 )
+from backend.inference.reprise import CONSIGNE_CLOTURE_PROMESSE
 from backend.inference.harnais_outils import (
     BALISE_ENTREE_FERMANTE,
     BALISE_ENTREE_OUVRANTE,
@@ -306,6 +307,7 @@ async def _jouer_appels(
         # laissait passer. Ce qu'il faut borner, c'est la promesse SANS PROGRÈS ; une promesse qui
         # suit un travail réel mérite le même traitement que la première.
         etat.relances = 0
+        etat.relances_promesse = 0
 
 
 async def _executer_appels(
@@ -501,7 +503,13 @@ class MoteurChat:
             if not appels:
                 consigne = consigne_de_relance(texte, etat, bool(outils))
                 if consigne is None:
-                    return
+                    if not etat.promesse_en_suspens:
+                        return
+                    # Sortir de la boucle plutôt que rendre la main : la clôture ci-dessous doit
+                    # produire une VRAIE réponse là où le modèle n'a laissé qu'une intention.
+                    yield {"texte": BALISE_FIN_ETAPE}
+                    messages = relancer(messages, texte, CONSIGNE_CLOTURE_PROMESSE)
+                    break
                 yield {"texte": BALISE_FIN_ETAPE}
                 messages = relancer(messages, texte, consigne)
                 continue

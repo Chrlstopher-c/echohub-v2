@@ -59,7 +59,18 @@ AVERTISSEMENT_FENETRE_PLEINE = (
 #
 # C'est une heuristique, et elle est volontairement étroite : mieux vaut rater une promesse que
 # relancer une réponse terminée. Un tour de plus coûte du temps à l'utilisateur.
-RELANCES_PROMESSE_MAX = 1
+#
+# PORTÉ DE 1 À 3 le 2026-08-26, sur trace de production. Le journal montre la relance partir
+# (`POST /v1/chat/completions 200 OK`), le modèle RÉ-ANNONCER, puis la boucle rendre la main —
+# `etat.relances` valait déjà 1, donc `promesse_non_tenue` n'était même plus consultée. Ce que
+# l'utilisateur lisait à l'écran n'était pas la première annonce mais la seconde, et la conversation
+# s'arrêtait là : « Je vais créer les fichiers assembleur […] puis uploader le tout : », fin.
+#
+# Une seule relance suffit quand le modèle a juste oublié d'agir. Elle ne suffit pas quand il est
+# entré dans un mode où il commente son travail au lieu de le faire — état d'autant plus fréquent
+# que la quantification est basse (mesuré sur un IQ2_XXS). Trois rappels ESCALADÉS y répondent ;
+# trois fois le même n'y répondrait pas, et c'est bien ce qui se passait.
+RELANCES_PROMESSE_MAX = 3
 
 # Détection d'une ANNONCE laissée sans suite.
 #
@@ -95,12 +106,44 @@ _FINS_DE_PROMESSE = (
     "here is the file", "here is the new version", "let me write",
 )
 
-CONSIGNE_PROMESSE = (
+# Trois consignes, et le fait qu'elles DIFFÈRENT est le correctif.
+#
+# Répéter le même rappel dans un contexte qui contient déjà l'annonce et son rappel, c'est demander
+# au modèle de faire à l'identique ce qu'il vient de ne pas faire. Chaque rang retire donc une
+# option : le premier rappelle la règle, le deuxième interdit la phrase d'introduction — celle qui
+# se termine par deux-points et n'appelle rien —, le troisième ferme la sortie « je vais » en ne
+# laissant que deux issues, l'appel ou l'aveu.
+CONSIGNES_PROMESSE = (
     "Your message ended by announcing something you did not do: no tool call followed it, so "
     "nothing was created and the user sees nothing. Do it NOW, in this turn — emit the call with "
     "every argument inline. If you cannot do it, say plainly what is blocking you, instead of "
-    "announcing it a second time."
+    "announcing it a second time.",
+    "You announced it again instead of doing it. Stop writing introductions. This turn must START "
+    "with the tool call itself — no sentence before it, no colon, no plan. If the tool is not the "
+    "right one, call a different one. Announcing a third time produces nothing for the user.",
+    "This is the last rappel. Two outcomes are acceptable now, and only two: either this turn "
+    "contains a tool call, or it states — in plain words, to the user — what you were unable to do "
+    "and why. Do not describe what you are about to do. There is no next turn to do it in.",
 )
+
+# Conservé : d'autres modules l'importent, et c'est le premier rang.
+CONSIGNE_PROMESSE = CONSIGNES_PROMESSE[0]
+
+
+# Dernier tour, sans outil déclaré : le modèle NE PEUT PLUS annoncer une action, il ne lui reste
+# que la parole. C'est ce qui fait la différence avec une quatrième relance — on ne lui redemande
+# pas d'agir, on lui demande de rendre compte.
+CONSIGNE_CLOTURE_PROMESSE = (
+    "You are out of turns, and no tool is available in this one. Everything you announced and did "
+    "not do will not happen. Write the user a real answer now: what you actually accomplished, "
+    "what you did not, and — if it is useful to them — the content itself, written out here in "
+    "your message. Do not announce anything further."
+)
+
+
+def consigne_promesse(rang: int) -> str:
+    """Consigne du rang demandé (1 = première relance), la dernière valant pour tout dépassement."""
+    return CONSIGNES_PROMESSE[min(max(1, rang), len(CONSIGNES_PROMESSE)) - 1]
 
 
 def promesse_non_tenue(texte: str) -> bool:

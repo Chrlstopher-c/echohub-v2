@@ -57,7 +57,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from backend.inference.engines_adapters.contrat import MessageChat, OptionsGeneration
 from backend.inference.harnais_outils import _sans_appels_outils
-from backend.inference.reprise import CONSIGNE_PROMESSE, RELANCES_PROMESSE_MAX, promesse_non_tenue
+from backend.inference.reprise import (
+    RELANCES_PROMESSE_MAX,
+    consigne_promesse,
+    promesse_non_tenue,
+)
 
 # Sous ce seuil, un tour est tenu pour muet : le modèle n'a pas répondu, il a seulement réfléchi.
 # Quarante caractères, parce qu'une vraie réponse courte — « Oui, la version 3.12 le permet. » —
@@ -223,7 +227,13 @@ class EtatBoucle:
     # Cumule sur TOUS les tours : un fichier écrit au premier reste écrit même si les suivants
     # échouent.
     aboutis: int = 0
+    # Toutes causes confondues : c'est ce compteur que borne la garde globale.
     relances: int = 0
+    # Relances dues à une PROMESSE, comptées à part. Confondues avec les autres, deux tours muets
+    # épuisaient à eux seuls le quota de promesses, et une annonce arrivant ensuite n'était plus
+    # relancée du tout — un modèle bavard perdait sa protection avant même d'avoir annoncé quoi que
+    # ce soit. Constaté en test, sur un stub qui commençait par un tour muet.
+    relances_promesse: int = 0
     tours_muets: int = 0
     # Tours d'outils consécutifs consommés, et prolongations déjà accordées.
     tours_faits: int = 0
@@ -233,6 +243,10 @@ class EtatBoucle:
     averti: bool = False
     # Textes des tours ayant appelé un outil, pour la détection de radotage.
     textes: list[str] = field(default_factory=list)
+    # Le dernier tour s'est achevé sur une annonce alors qu'il ne reste plus de relance. La boucle
+    # doit CLÔTURER au lieu de rendre la main : sans ce drapeau, l'utilisateur reste devant une
+    # phrase qui se termine par deux-points et rien derrière.
+    promesse_en_suspens: bool = False
 
 
 def harnais_demande(options: OptionsGeneration) -> str | None:
@@ -260,7 +274,11 @@ def consigne_de_relance(texte: str, etat: EtatBoucle, avec_outils: bool) -> str 
 
     `None` signifie « la réponse est finie » : c'est le cas courant, et il ne coûte rien.
     """
-    if not avec_outils or etat.relances >= RELANCES_PROMESSE_MAX + etat.harnais.relances_muettes_max:
+    if not avec_outils:
+        return None
+    # Garde globale : somme des trois quotas. Elle borne la boucle sans amputer aucune cause de son
+    # budget propre — c'était le défaut du compteur unique.
+    if etat.relances >= RELANCES_PROMESSE_MAX + etat.harnais.relances_muettes_max + etat.harnais.radotage_tours:
         return None
     if tour_muet(texte, etat.harnais) and etat.tours_muets < etat.harnais.relances_muettes_max:
         etat.tours_muets += 1
@@ -273,10 +291,20 @@ def consigne_de_relance(texte: str, etat: EtatBoucle, avec_outils: bool) -> str 
         logger.warning("Texte répété à l'identique sur {} tours : relance {}.",
                        etat.harnais.radotage_tours, etat.relances)
         return CONSIGNE_RADOTAGE
-    if etat.relances < RELANCES_PROMESSE_MAX and promesse_non_tenue(texte):
+    if promesse_non_tenue(texte):
+        if etat.relances_promesse >= RELANCES_PROMESSE_MAX:
+            # Plus de relance possible, mais le texte reste une promesse : rendre la main ici
+            # laisserait l'utilisateur devant une phrase en suspens. `etat.promesse_en_suspens`
+            # dit à la boucle de CLÔTURER — un tour sans outil qui doit produire une vraie réponse.
+            etat.promesse_en_suspens = True
+            logger.warning("Annonce non tenue après {} relance(s) : clôture forcée.",
+                           etat.relances_promesse)
+            return None
         etat.relances += 1
-        logger.warning("Réponse close sur une annonce sans appel : relance {}.", etat.relances)
-        return CONSIGNE_PROMESSE
+        etat.relances_promesse += 1
+        logger.warning("Réponse close sur une annonce sans appel : relance {}/{}.",
+                       etat.relances_promesse, RELANCES_PROMESSE_MAX)
+        return consigne_promesse(etat.relances_promesse)
     return None
 
 
