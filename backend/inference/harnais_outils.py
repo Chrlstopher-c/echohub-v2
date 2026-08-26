@@ -37,6 +37,18 @@ BALISE_ENTREE_FERMANTE = "</entree>"
 BALISE_SORTIE_OUVRANTE = "<sortie>"
 BALISE_SORTIE_FERMANTE = "</sortie>"
 
+# Variante portant l'ISSUE de l'appel. Ajoutée le 2026-08-26 : jusque-là, l'interface DEVINAIT
+# l'échec en reconnaissant des préfixes dans le texte du résultat (« Échec de l'outil : », « Failed:
+# »). Une lecture par préfixe tient jusqu'au premier message reformulé, traduit, ou remplacé par un
+# `EchecOutil` au texte libre — et un outil raté s'affichait alors « terminé ».
+#
+# L'issue est un FAIT connu du harnais au moment où il écrit la balise : la transporter coûte douze
+# caractères et supprime toute interprétation en aval.
+#
+# La forme sans attribut reste émise pour un succès : elle est déjà dans tous les messages
+# enregistrés, et un historique relu ne doit pas changer d'apparence parce que le format a évolué.
+BALISE_SORTIE_ECHEC = '<sortie etat="echec">'
+
 # Marqueur de fin d'étape, posé quand le tour qui vient de s'achever a demandé un outil.
 #
 # Un modèle commente son travail avant d'appeler : « je vais chercher », « j'ai obtenu 6 résultats,
@@ -64,7 +76,8 @@ BALISE_FIN_ETAPE = "<etape-fin/>"
 LIGNES_BLOC_HISTORIQUE = 8
 
 _MOTIF_BLOC_OUTIL = re.compile(
-    f"({re.escape(BALISE_ENTREE_OUVRANTE)}|{re.escape(BALISE_SORTIE_OUVRANTE)})"
+    f"({re.escape(BALISE_ENTREE_OUVRANTE)}|{re.escape(BALISE_SORTIE_OUVRANTE)}"
+    f"|{re.escape(BALISE_SORTIE_ECHEC)})"
     r"(?P<corps>.*?)"
     f"({re.escape(BALISE_ENTREE_FERMANTE)}|{re.escape(BALISE_SORTIE_FERMANTE)})",
     re.DOTALL,

@@ -48,7 +48,7 @@ function verifier(nom: string, obtenu: unknown, attendu: unknown): void {
 
 /* ---- validation : type hors liste toléré, identité manquante refusée ---- */
 {
-  const base = { entree: 'creer_artefact(titre : X)', termine: true };
+  const base = { entree: 'creer_artefact(titre : X)', termine: true, echec: false };
   const brut = {
     artefact_id: 'a',
     version: 1,
@@ -74,7 +74,7 @@ function verifier(nom: string, obtenu: unknown, attendu: unknown): void {
   const appel = {
     entree: 'lire_fichier(chemin : x.json)',
     sortie: '{"artefact_id":"a","version":1,"titre":"X","fichier_id":"f","taille_octets":3}',
-    termine: true,
+    termine: true, echec: false,
   };
   verifier('autre outil — ignoré', versionDepuisAppel(appel), null);
 }
