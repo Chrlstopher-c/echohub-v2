@@ -7,6 +7,8 @@ mais elles portent la mesure qui a motivé le mécanisme, et elles se lisent mie
 
 from __future__ import annotations
 
+import re
+
 # Reprise d'une réponse coupée par la fenêtre du moteur.
 #
 # MESURÉ le 2026-08-16 : sur un contexte de 2 048, le moteur rend 1 980 tokens puis
@@ -59,10 +61,38 @@ AVERTISSEMENT_FENETRE_PLEINE = (
 # relancer une réponse terminée. Un tour de plus coûte du temps à l'utilisateur.
 RELANCES_PROMESSE_MAX = 1
 
+# Détection d'une ANNONCE laissée sans suite.
+#
+# La version d'origine listait douze phrases exactes. Mesuré le 2026-08-26 sur un cas réel : à
+# « Je crée une landing page complète avec des illustrations SVG intégrées. », elle rendait `False`
+# et aucune relance n'était déclenchée — le modèle s'arrêtait là, la page n'existait pas, et
+# l'utilisateur voyait une promesse pour seule réponse. « je crée » n'était pas dans la liste.
+#
+# Une liste de formulations ne peut pas tenir : demain ce sera « je génère », « je te prépare »,
+# « on va faire ». Le critère porte donc sur la FORME de l'annonce — un pronom d'action suivi d'un
+# verbe de production — et non sur des phrases apprises une à une.
+#
+# Volontairement ancré en FIN de message : une annonce en milieu de texte est un commentaire de
+# travail normal (« je crée le fichier, puis je le teste ») et la relancer serait du bruit. C'est
+# celle qui CLÔT le tour qui pose problème, parce qu'aucun appel ne la suit.
+_VERBES_PRODUCTION = (
+    "cré|créé|creer|crée|génèr|génér|genere|écri|ecri|rédig|redig|prépar|prepar|constru|"
+    "constitu|réalis|realis|produi|fabriqu|dessin|compos|monte|mets en place|mets au point|"
+    "implémente|implemente|ajoute|complète|complete|corrige|write|create|generate|build|make|"
+    "prepare|draft|implement"
+)
+_ANNONCE = re.compile(
+    r"\b(?:je|j'|on|nous|i|we|let me)\s*(?:vais|vas|allons|va|will|am going to|'m going to)?\s*"
+    r"\s*(?:now|maintenant)?\s*(?:le|la|les|te|vous|lui|it|you|the)?\s*"
+    rf"(?:{_VERBES_PRODUCTION})",
+    re.IGNORECASE,
+)
+
+# Conservés tels quels : ce sont des annonces qui ne portent pas de verbe d'action, et que le motif
+# ci-dessus ne peut donc pas voir.
 _FINS_DE_PROMESSE = (
     "voici le fichier", "voici la nouvelle version", "voici le nouveau", "voici la version",
-    "je vais l'écrire", "je vais écrire", "je vais le créer", "je l'écris maintenant",
-    "here is the file", "here is the new version", "i will now write", "let me write",
+    "here is the file", "here is the new version", "let me write",
 )
 
 CONSIGNE_PROMESSE = (
@@ -84,5 +114,7 @@ def promesse_non_tenue(texte: str) -> bool:
         return False
     if fin.endswith(":"):
         return True
-    derniere_ligne = fin.rsplit("\n", 1)[-1].lower()
-    return any(marqueur in derniere_ligne for marqueur in _FINS_DE_PROMESSE)
+    derniere_ligne = fin.rsplit("\n", 1)[-1]
+    if any(marqueur in derniere_ligne.lower() for marqueur in _FINS_DE_PROMESSE):
+        return True
+    return _ANNONCE.search(derniere_ligne) is not None
