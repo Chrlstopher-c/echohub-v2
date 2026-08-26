@@ -28,6 +28,14 @@ loguru
 
 # --- Accès externes -------------------------------------------------------------------------
 httpx                 # client HTTP asynchrone (recherche Hugging Face, sondes moteurs)
+# Pour le BAC À SABLE, pas pour le backend. Mesuré le 2026-08-26 : à « upload par API », le modèle
+# écrit `import requests` — c'est le réflexe de tout code Python HTTP publié depuis quinze ans — et
+# reçoit `ModuleNotFoundError`. Il ne peut pas l'installer lui-même : le bac abaisse ses privilèges
+# et pip n'a pas droit d'écriture sur le venv. Il a donc conclu, à tort mais logiquement, que
+# « le sandbox ne dispose d'aucun client HTTP qui fonctionne » et a rendu la main.
+# httpx était pourtant présent. Le corriger par la consigne serait combattre un réflexe ; l'ajouter
+# coûte 200 Kio et supprime le problème.
+requests              # client HTTP du bac à sable : ce que le modèle importe spontanément
 huggingface_hub       # recherche, métadonnées et téléchargement des modèles
 python-dotenv         # lecture du .env en exécution native (hors Docker)
 

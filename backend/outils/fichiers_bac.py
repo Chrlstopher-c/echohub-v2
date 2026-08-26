@@ -90,7 +90,7 @@ def _enregistrer(contexte: ContexteExecution, chemin_relatif: str, cible: Path) 
     existe bel et bien dans le bac et le code confiné peut s'en servir. On le dit, sans transformer
     un refus d'affichage en échec d'écriture.
     """
-    type_mime, _ = mimetypes.guess_type(chemin_relatif)
+    type_mime = _type_mime_devine(chemin_relatif, cible)
     try:
         fichier = deposer_fichier(
             contexte.conversation_id,
@@ -103,6 +103,59 @@ def _enregistrer(contexte: ContexteExecution, chemin_relatif: str, cible: Path) 
         logger.warning("Fichier {} écrit mais non déposé dans le magasin : {}", chemin_relatif, exc)
         return "Non présentable dans la conversation (refusé par le magasin), mais bien présent dans le bac."
     return f"Déposé dans la conversation sous « {fichier.nom_affiche} » (id {fichier.id})."
+
+
+# Extensions de code source que `mimetypes` ne connaît pas, et qui finissaient donc en fichiers
+# INACCESSIBLES à l'utilisateur. Mesuré le 2026-08-26 : le modèle écrit `hello_x86_64.s`,
+# `hello_arm64.S`, `hello_mips.s` — les trois sont bien créés dans le bac, et les trois sont refusés
+# par le magasin avec « Type MIME refusé : (absent) ». Rien ne remonte dans la conversation ;
+# l'utilisateur voit un travail annoncé comme fait et n'a aucun fichier.
+#
+# Ce ne sont pas des types exotiques : `.s` est de l'assembleur, `.rs` du Rust, `.ts` du TypeScript.
+# `mimetypes` s'appuie sur la table du système, qui ne les couvre pas.
+_EXTENSIONS_TEXTE = frozenset({
+    ".s", ".asm", ".c", ".h", ".cpp", ".hpp", ".cc", ".rs", ".go", ".java", ".kt", ".rb", ".php",
+    ".ts", ".tsx", ".jsx", ".sh", ".bash", ".zsh", ".sql", ".toml", ".ini", ".cfg", ".conf",
+    ".yml", ".yaml", ".env", ".lua", ".r", ".jl", ".swift", ".m", ".pl", ".vim", ".dockerfile",
+    ".gitignore", ".log", ".diff", ".patch", ".tex", ".rst", ".proto", ".gradle", ".make", ".mk",
+})
+
+# Au-delà de quoi on cesse de vérifier que le contenu est du texte : lire 64 Kio suffit à trancher,
+# et un fichier binaire trahit sa nature dès ses premiers octets.
+_ECHANTILLON_TEXTE = 64 * 1024
+
+
+def _type_mime_devine(chemin_relatif: str, cible: Path) -> str | None:
+    """Type MIME du fichier produit — deviné par extension, puis par le CONTENU en dernier recours.
+
+    Le magasin refuse tout type absent de sa liste blanche, ce qui est la bonne règle pour un envoi
+    venu de l'extérieur. Mais ce fichier-ci, c'est le bac qui vient de l'écrire : la question n'est
+    pas « puis-je faire confiance à cette source ? » mais « ce contenu est-il affichable ? ». Un
+    fichier de texte refusé pour une extension inconnue est une perte sèche pour l'utilisateur.
+
+    Le contenu tranche, pas le nom : l'extension oriente, la lecture confirme. Un binaire sans
+    extension connue reste refusé, et c'est voulu.
+    """
+    suffixe = Path(chemin_relatif).suffix.lower()
+    # La table d'extensions PRIME sur `mimetypes`, qui ne se contente pas d'ignorer ces fichiers :
+    # il leur invente des types absurdes, tout aussi absents de la liste blanche du magasin —
+    # `.rs` -> `application/rls-services+xml`, `.ts` -> `text/vnd.trolltech.linguist` (vérifié).
+    # Se contenter de compléter `mimetypes` n'aurait donc réparé que `.s`.
+    if suffixe in _EXTENSIONS_TEXTE or not suffixe:
+        return "text/plain" if _est_du_texte(cible) else None
+    type_mime, _ = mimetypes.guess_type(chemin_relatif)
+    if type_mime is not None:
+        return type_mime
+    return "text/plain" if _est_du_texte(cible) else None
+
+
+def _est_du_texte(cible: Path) -> bool:
+    """Le contenu se décode-t-il en UTF-8 ? Un fichier illisible rend False, jamais une exception."""
+    try:
+        cible.read_bytes()[:_ECHANTILLON_TEXTE].decode("utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+    return True
 
 
 def _preparer_cible(contexte: ContexteExecution, chemin_demande: str) -> Path:
