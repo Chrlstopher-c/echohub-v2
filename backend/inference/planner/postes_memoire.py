@@ -95,12 +95,12 @@ def _poste_recurrent(
 ) -> PosteMemoire:
     """État récurrent des blocs hybrides — nommé dans le plan, parce qu'il ne l'était pas du tout."""
     return PosteMemoire(
-        nom="État récurrent",
+        libelle="État récurrent",
         octets=octets,
-        detail=(
+        justification=(
             f"{couches_gpu - porteuses} bloc(s) sur {couches_gpu} portent un état récurrent au lieu "
             "d'un cache KV. Sa taille ne dépend pas du contexte, mais du nombre de slots ouverts "
-            "par le moteur — un seul ici."
+            "par le moteur — un seul ici (`--parallel 1`)."
         ),
     )
 
