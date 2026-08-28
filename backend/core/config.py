@@ -30,7 +30,16 @@ from backend.core.errors import ConfigurationInvalide
 NOM_APPLICATION = "echohub-v2"
 
 # Sous-dossier attribué à chaque chemin dérivé quand la variable d'environnement est absente.
-_SOUS_DOSSIERS: dict[str, str] = {"models_dir": "models", "engines_dir": "engines"}
+_SOUS_DOSSIERS: dict[str, str] = {
+    "models_dir": "models",
+    "engines_dir": "engines",
+    "atelier_workspace": "ateliers",
+}
+
+# Atelier d'exécution : conteneur de dev persistant, atteint par son nom sur le réseau interne de
+# la pile (aucun port publié sur l'hôte). Le défaut vaut en conteneur ; hors Docker, l'atelier
+# n'existe pas et les outils d'exécution rendent un repli explicite plutôt qu'un plantage.
+_URL_ATELIER_DEFAUT = "http://echohub-atelier:8080"
 
 _NIVEAUX_VALIDES = frozenset({"TRACE", "DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR", "CRITICAL"})
 
@@ -64,6 +73,10 @@ class Settings(BaseSettings):
     data_home: Path = Field(default_factory=_racine_donnees_par_defaut, validation_alias="XDG_DATA_HOME")
     models_dir: Path = Field(default=None, validation_alias="MODELS_DIR")
     engines_dir: Path = Field(default=None, validation_alias="ENGINES_DIR")
+    # Racine des espaces de travail par conversation, PARTAGÉE avec le conteneur atelier via un
+    # volume commun : un fichier écrit ici par `ecrire_fichier` est vu par le shell de l'atelier,
+    # et un fichier produit par une commande de l'atelier est balayé et rattaché à la conversation.
+    atelier_workspace: Path = Field(default=None, validation_alias="ATELIER_WORKSPACE")
 
     host: str = Field(default="127.0.0.1", validation_alias="ECHOHUB_HOST")
     # Distinct du port par défaut de la v1 (37821), qui peut tourner simultanément sur la même
@@ -85,13 +98,18 @@ class Settings(BaseSettings):
     # rendre ce qu'il a obtenu et de déclarer les moteurs muets, plutôt que d'être coupé avant.
     searxng_timeout_s: float = Field(default=8.0, gt=0, validation_alias="SEARXNG_TIMEOUT_S")
 
+    # Atelier d'exécution : URL de service interne et jeton partagé. Le jeton n'est jamais codé en
+    # dur ni journalisé — c'est le seul rempart devant un service qui exécute du shell root.
+    atelier_url: str = Field(default=_URL_ATELIER_DEFAUT, validation_alias="ATELIER_URL")
+    atelier_jeton: SecretStr | None = Field(default=None, validation_alias="ATELIER_JETON")
+
     @field_validator("data_home", mode="before")
     @classmethod
     def _ignorer_valeur_vide(cls, valeur: Any) -> Any:
         """Docker injecte parfois une variable vide : la traiter comme absente, pas comme `Path('.')`."""
         return valeur if valeur not in (None, "") else _racine_donnees_par_defaut()
 
-    @field_validator("models_dir", "engines_dir", mode="before")
+    @field_validator("models_dir", "engines_dir", "atelier_workspace", mode="before")
     @classmethod
     def _deriver_de_data_home(cls, valeur: Any, info: Any) -> Any:
         """Un chemin non fourni tombe sous `data_home`, donc dans le volume persistant."""

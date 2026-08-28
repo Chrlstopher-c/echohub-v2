@@ -30,7 +30,6 @@ from typing import Any
 from loguru import logger
 
 from backend.outils.bac_a_sable import (
-    LIMITE_CPU_COMMANDE_SECONDES,
     TIMEOUT_COMMANDE_SECONDES,
     executer_commande_confinee,
     preparer_bac,
@@ -51,10 +50,12 @@ _SCHEMA: dict[str, Any] = {
         "commande": {
             "type": "string",
             "description": (
-                "Shell command to run, exactly as you would type it. Runs with bash in this "
-                "conversation's sandbox as working directory. Chain with `&&` when a step must "
-                "only run if the previous one succeeded. Both stdout and stderr come back to you, "
-                "with the exit code."
+                "Shell command to run, exactly as you would type it. Runs with bash as ROOT in a "
+                "persistent dev workshop (a separate Docker container), with this conversation's "
+                "folder as working directory. You have network and a full PATH: install what you "
+                "need with `apt-get install -y <pkg>` or `pip install <pkg>` — installed packages "
+                "and files persist to your next messages. Chain with `&&` when a step must only run "
+                "if the previous one succeeded. Both stdout and stderr come back, with the exit code."
             ),
         },
     },
@@ -64,11 +65,14 @@ _SCHEMA: dict[str, Any] = {
 DESCRIPTION = DescriptionOutil(
     nom=NOM,
     description=(
-        "Really runs a shell command in a sandboxed process, bounded in CPU time, memory, file "
-        "size and process count. Use it for what Python cannot do directly: compile (gcc, as, ld, "
-        "make), call a service with curl, clone with git, inspect an archive. The working "
-        "directory is this conversation's sandbox, and files produced there become files of the "
-        "conversation. Returns stdout, stderr and the exit code — read the exit code before "
+        "Really runs a shell command as ROOT in a persistent dev workshop (a separate Docker "
+        "container), isolated from the user's machine by the container boundary. You have a real "
+        "terminal, network, a full PATH and dev tools (git, gcc, make, python3, node). INSTALL "
+        "whatever you need — `apt-get install -y nasm`, `pip install <pkg>` — it stays available "
+        "afterwards; files and packages persist across messages. Use it for what Python cannot do "
+        "directly: compile, call a service with curl, clone with git, inspect an archive. The "
+        "working directory is this conversation's folder, and files produced there become files of "
+        "the conversation. Returns stdout, stderr and the exit code — read the exit code before "
         "claiming the command worked."
     ),
     parametres=_SCHEMA,
@@ -95,8 +99,8 @@ def _formater(resultat: Any, fichiers: list[Any]) -> str:
     lignes = [f"Code de retour : {resultat.code_retour} ({verdict}, durée : {resultat.duree_s:.2f} s)"]
     if resultat.tue_par_filet_securite:
         lignes.append(
-            f"Processus tué : la commande a dépassé {TIMEOUT_COMMANDE_SECONDES} s de temps réel "
-            f"ou {LIMITE_CPU_COMMANDE_SECONDES} s de temps processeur."
+            f"Processus tué : la commande a dépassé le délai maximal de {TIMEOUT_COMMANDE_SECONDES} s "
+            "dans l'atelier."
         )
     if resultat.sortie.strip():
         lignes.append(f"Sortie standard :\n{_tronque(resultat.sortie)}")

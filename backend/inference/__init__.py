@@ -572,8 +572,13 @@ def _contexte_execution(requete: object) -> ContexteExecution:
     L'identité doit atteindre l'exécution (plan d'exécution, 2.5) : sans elle, un outil confiné
     écrirait dans le bac de n'importe qui. Elle est obligatoire sur `RequeteGeneration` ; son
     absence signale un appelant qui viole le contrat du port, pas un cas à dégrader en silence.
+
+    Le bac est le dossier de la conversation dans `atelier_workspace`, volume PARTAGÉ avec le
+    conteneur atelier : ce que `ecrire_fichier` écrit ici, le shell de l'atelier le voit sous
+    `/workspace/<conversation_id>`, et réciproquement. Le suffixe `<conversation_id>` est ce que
+    `bac_a_sable._sous_dossier` renvoie à l'atelier — les deux dérivations doivent rester alignées.
     """
-    from backend.fichiers.stockage import racine_conversations
+    from backend.core import get_settings
     from backend.outils.contrat import ContexteExecution
 
     conversation_id = getattr(requete, "conversation_id", None)
@@ -581,7 +586,7 @@ def _contexte_execution(requete: object) -> ContexteExecution:
         raise ValueError("RequeteGeneration sans conversation_id : contrat du port violé.")
     return ContexteExecution(
         conversation_id=conversation_id,
-        racine_bac=racine_conversations() / conversation_id / "bac",
+        racine_bac=get_settings().atelier_workspace / conversation_id,
     )
 
 

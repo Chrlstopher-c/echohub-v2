@@ -1,105 +1,67 @@
-"""Lanceur du processus Python confiné — un bac à sable par conversation (plan d'exécution, 2.6).
+"""Pont vers l'atelier d'exécution — le confinement a quitté le backend pour la frontière d'un conteneur.
 
-Le confinement tient en trois idées, dans cet ordre impératif à l'intérieur du processus enfant,
-juste après le `fork` et avant l'`exec` (`_preexec`) :
+Historique. Le code d'un modèle tournait ici même, dans un sous-processus confiné : `setuid` vers
+un utilisateur non privilégié, `rlimits`, PATH réduit à `/usr/bin:/bin`. Conséquence mesurée le
+2026-08-26 : le modèle voulait `nasm`, réponse `nasm: command not found` — il ne pouvait ni
+installer un paquet, ni disposer d'un vrai environnement. Le confinement protégeait l'hôte au prix
+de rendre l'outil inerte dès qu'il fallait autre chose que les binaires de base de l'image.
 
-    1. poser les limites de ressources (`resource.setrlimit`) ;
-    2. changer de groupe (`setgid`) ;
-    3. changer d'utilisateur (`setuid`) — en DERNIER, parce que c'est irréversible : une fois cet
-       appel passé, le processus ne peut plus revenir root pour corriger un oubli.
+Décision (option B). L'exécution vit désormais dans un conteneur de dev séparé, `echohub-atelier`,
+toujours actif, où l'agent est root, a le réseau, un PATH complet et peut faire `apt install`. Un
+seul atelier partagé par toutes les conversations, chacune ayant son dossier de travail dans un
+volume commun. Le confinement vis-à-vis de la machine de Chris n'a pas disparu : il s'est DÉPLACÉ
+de `setuid`+`rlimits` vers la frontière du conteneur — exactement comme un environnement Docker de
+dev isole ce qu'on y lance. Ce qui protège l'hôte, c'est que l'atelier ne monte aucun chemin de
+l'hôte et voit ses ressources bornées par Compose (`mem_limit`, `cpus`, `pids_limit`).
 
-`SANDBOX_UID`/`SANDBOX_GID` sont l'utilisateur non privilégié créé par le `Dockerfile` (identifiant
-fixe, sans shell, sans dossier personnel utilisable). Le changement ne s'opère que si le processus
-appelant est root (`os.getuid() == 0`) : en développement, les tests tournent déjà sous un utilisateur
-non privilégié, `setuid` vers un uid arbitraire y échouerait — et n'y sert à rien, l'isolement racine
-existe déjà. C'est le conteneur, où le backend tourne en root, qui a besoin de cette bascule.
+Ce module ne fait plus tourner de processus : il traduit un `racine_bac` de conversation en un
+dossier de l'atelier, délègue à `backend.outils.atelier`, et rend le résultat sous la forme que les
+outils connaissent déjà (`ResultatExecution`). Il ne lève jamais : un atelier injoignable devient un
+résultat au message actionnable, pas un plantage.
 
-Coupure réseau — mesurée, pas supposée. `unshare(CLONE_NEWNET)` exige `CAP_SYS_ADMIN` dans l'espace
-de noms courant. Mesuré dans `echohub:v2` (2026-08-15, root, sans capacité ajoutée) :
-
-    unshare(CLONE_NEWNET) ret=-1 errno=1 (EPERM), duree_ms≈0.02
-
-Docker Compose ne déclare aucun `cap_add` pour ce service : le jeu de capacités par défaut exclut
-`CAP_SYS_ADMIN`. Ce n'est donc pas une question de coût de démarrage — la mesure ne dit même pas
-« c'est lent », elle dit « c'est refusé ». Contourner avec un espace de noms utilisateur non privilégié
-(`unshare --user --net`) est possible en théorie, mais cela ouvrirait indépendamment la porte aux
-espaces de noms utilisateur non privilégiés dans ce conteneur — une surface d'attaque connue pour des
-échappées de conteneur, et un arbitrage qui dépasse ce lot. Décision : **le réseau n'est PAS coupé**.
-C'est écrit ici et dans `LIMITES_REELLES_TEXTE`, pas caché dans un commentaire que personne ne lira.
+Ce qui reste de l'ancien monde, et sert encore aux outils de fichiers (`ecrire_fichier`,
+`lire_fichier`, `lister_fichiers`) : la résolution d'un chemin dans le bac (`resoudre_dans_bac`,
+frontière anti-`../`) et la préparation du dossier (`preparer_bac`).
 """
 
 from __future__ import annotations
 
-import os
-import resource
-import subprocess
-import time
-from functools import partial
 from pathlib import Path
 
 from loguru import logger
 from pydantic import BaseModel
 
-# Utilisateur non privilégié créé par le Dockerfile — identifiant fixe (voir `Dockerfile`,
-# utilisateur `echohub-bac`). Ce n'est pas un chemin : comme les quotas de `fichiers/politique.py`,
-# c'est une borne de sécurité, elle ne dérive pas de la configuration d'environnement.
-SANDBOX_UID = 65532
-SANDBOX_GID = 65532
+from backend.core import get_settings
+from backend.outils.atelier import (
+    AtelierInjoignable,
+    ReponseAtelier,
+    executer_commande as _executer_commande_atelier,
+    executer_python as _executer_python_atelier,
+)
 
-# --- Limites de ressources (RLIMIT_*) ----------------------------------------------------------
-# Temps processeur : suffisant pour un script de quelques secondes, pas pour attendre un réseau.
-LIMITE_CPU_SECONDES = 5
-# Mémoire adressable : le socle de l'interpréteur Python tient sous 40 Mo mesurés ; 512 Mo laisse
-# une vraie marge de calcul sans autoriser un processus à épuiser la RAM du conteneur.
-LIMITE_MEMOIRE_OCTETS = 512 * 1024 * 1024
-# Taille de fichier : au-delà du quota par fichier du magasin (25 Mio, `fichiers/politique.py`),
-# volontairement plus large pour que ce soit le balayage — pas la rlimit — qui explique le refus
-# d'un fichier entre 25 et 64 Mio. Au-delà de 64 Mio, l'écriture échoue au niveau du système.
-LIMITE_TAILLE_FICHIER_OCTETS = 64 * 1024 * 1024
-# Nombre de processus : cette rlimit est comptée par le NOYAU sur la totalité de l'UID, pas par
-# exécution — un fork-bomb doit mourir, un script qui lance quelques sous-processus doit passer.
-LIMITE_PROCESSUS = 32
-# Descripteurs ouverts : large pour l'interpréteur lui-même (imports, stdio) et les fichiers que
-# le script ouvre légitimement, borné pour qu'un `while True: open(...)` échoue vite.
-LIMITE_DESCRIPTEURS = 64
-
-# Limites de la COMMANDE shell, distinctes de celles du code Python et pour une raison mesurée :
-# une commande utile ici compile (`gcc`, `as`, `ld`) ou attend le réseau (`curl`). Le temps
-# processeur d'un `curl` est quasi nul — il attend —, mais son temps RÉEL peut atteindre plusieurs
-# dizaines de secondes sur un envoi de fichier. Garder les 20 s du filet Python aurait tué l'envoi
-# qui a servi de cas de référence (compilation assembleur puis dépôt sur un service de fichiers,
-# 2026-08-26). Le temps processeur, lui, reste borné : c'est ce qui empêche une boucle de calcul.
-LIMITE_CPU_COMMANDE_SECONDES = 20
-TIMEOUT_COMMANDE_SECONDES = 90
-
-# Filet de sécurité du côté appelant, distinct de RLIMIT_CPU : une boucle qui dort (`time.sleep`)
-# ne consomme aucun temps processeur et échapperait donc à RLIMIT_CPU seul. Ce timeout mesure le
-# temps RÉEL écoulé et tue le processus si jamais il dépasse largement le plafond CPU fixé.
-TIMEOUT_SECURITE_SECONDES = 20
-
-# Environnement transmis au processus confiné : jamais l'environnement du backend tel quel, qui
-# porte des secrets (HF_TOKEN, l'URL interne de SearXNG). Un script exécuté par un modèle est une
-# entrée non fiable ; il n'a besoin de rien de plus qu'un PATH minimal pour trouver l'interpréteur.
-_ENVIRONNEMENT_CONFINE: dict[str, str] = {
-    "PATH": "/usr/bin:/bin",
-    "HOME": "/nonexistent",
-    "LANG": "C.UTF-8",
-}
+# Délais GÉNÉREUX, et c'est voulu : dans l'atelier un `apt install` prend des minutes, un `git
+# clone` ou une compilation aussi. L'ancien plafond de quelques secondes tuait précisément ce que
+# l'atelier existe pour permettre. Le délai reste borné — une commande folle finit par être tuée —
+# mais il laisse le temps d'une vraie installation. L'atelier applique ce délai côté serveur et
+# rend un résultat propre ; le client HTTP attend un peu plus (voir `atelier.MARGE_CLIENT_SECONDES`).
+TIMEOUT_COMMANDE_SECONDES = 600
+TIMEOUT_PYTHON_SECONDES = 600
 
 LIMITES_REELLES_TEXTE = (
-    "Le code Python s'exécute dans un processus séparé, sous un utilisateur non privilégié "
-    "(jamais administrateur), et il écrit uniquement dans le bac de cette conversation — ce qu'il y "
-    "produit devient un fichier de la conversation. Il est borné en temps processeur, en mémoire, "
-    "en taille de fichier écrit, en nombre de processus et en descripteurs ouverts. "
-    "Ce qui N'EST PAS garanti : sans isolation du système de fichiers (les outils nécessaires ne "
-    "sont pas disponibles dans ce conteneur), ce processus voit en lecture le système de fichiers du "
-    "conteneur au-delà de son bac ; et le réseau n'est pas coupé — la coupure a été mesurée "
-    "impossible sans élargir les droits du conteneur au-delà de ce qui a été décidé ici."
+    "Le code et les commandes s'exécutent dans un ATELIER : un conteneur de développement séparé, "
+    "toujours actif, isolé de la machine de l'utilisateur par la frontière du conteneur — comme un "
+    "environnement Docker de dev. Dans cet atelier tu es ROOT, tu as un vrai terminal, le réseau, un "
+    "PATH complet et les outils de dev (git, gcc, make, python3, node…). Tu peux INSTALLER des "
+    "paquets avec « apt-get install » ou « pip install » : ils restent disponibles pour la suite. "
+    "Les fichiers et les paquets installés PERSISTENT d'un message à l'autre. Chaque conversation a "
+    "son dossier de travail, où atterrissent les fichiers produits — ils deviennent des fichiers de "
+    "la conversation — mais tu peux te déplacer partout dans l'atelier. Cet atelier étant isolé, tu "
+    "n'as pas à craindre d'abîmer la machine de l'utilisateur : agis comme sur ta propre machine de dev."
 )
 
 
 class ResultatExecution(BaseModel):
-    """Ce que le processus confiné a produit — jamais levé en exception, toujours rendu."""
+    """Ce que l'atelier a produit — jamais levé en exception, toujours rendu."""
 
     sortie: str
     erreur: str
@@ -108,60 +70,66 @@ class ResultatExecution(BaseModel):
     tue_par_filet_securite: bool
 
 
-def _preexec(limite_cpu: int = LIMITE_CPU_SECONDES) -> None:
-    """Exécuté dans l'enfant, entre le `fork` et l'`exec` — jamais dans le processus appelant.
+class CheminHorsBac(Exception):
+    """Le chemin demandé par le modèle sort du bac de sa conversation."""
 
-    Ordre imposé par le plan d'exécution (2.6) : rlimits, puis `setgid`, puis `setuid`. `setuid`
-    est irréversible, il vient donc en dernier — inverser l'ordre laisserait une fenêtre où le
-    processus est root ET déjà limité en rien.
 
-    `limite_cpu` est le SEUL réglage variable : une commande shell qui compile a besoin de plus de
-    temps processeur qu'un extrait Python. Tout le reste — mémoire, taille de fichier, processus,
-    descripteurs, bascule d'utilisateur — est identique quelle que soit la nature du lancement.
-    Une limite affaiblie par appelant serait une porte dérobée dans le confinement.
+def _sous_dossier(racine_bac: Path) -> str:
+    """Dossier de travail de la conversation, RELATIF à la racine partagée avec l'atelier.
+
+    Le backend voit ce dossier sous `settings.atelier_workspace` (p. ex. `/data/ateliers/<id>`) ;
+    l'atelier le voit sous `/workspace/<id>` via le même volume. Seul le suffixe commun (`<id>`)
+    voyage, jamais un chemin absolu du backend qui n'aurait aucun sens dans l'atelier. Repli sur le
+    dernier segment si `racine_bac` n'est pas sous la racine (cas des tests hors conteneur).
     """
-    resource.setrlimit(resource.RLIMIT_CPU, (limite_cpu, limite_cpu))
-    resource.setrlimit(resource.RLIMIT_AS, (LIMITE_MEMOIRE_OCTETS, LIMITE_MEMOIRE_OCTETS))
-    resource.setrlimit(resource.RLIMIT_FSIZE, (LIMITE_TAILLE_FICHIER_OCTETS, LIMITE_TAILLE_FICHIER_OCTETS))
-    resource.setrlimit(resource.RLIMIT_NPROC, (LIMITE_PROCESSUS, LIMITE_PROCESSUS))
-    resource.setrlimit(resource.RLIMIT_NOFILE, (LIMITE_DESCRIPTEURS, LIMITE_DESCRIPTEURS))
-    if os.getuid() == 0:
-        os.setgid(SANDBOX_GID)
-        os.setuid(SANDBOX_UID)
+    workspace = get_settings().atelier_workspace
+    try:
+        return str(racine_bac.resolve().relative_to(workspace.resolve()))
+    except ValueError:
+        return racine_bac.name
+
+
+def _depuis_reponse(reponse: ReponseAtelier) -> ResultatExecution:
+    """Traduit la réponse de l'atelier dans la forme que les outils connaissent."""
+    return ResultatExecution(
+        sortie=reponse.sortie,
+        erreur=reponse.erreur,
+        code_retour=reponse.code_retour,
+        duree_s=reponse.duree_s,
+        tue_par_filet_securite=reponse.tue,
+    )
+
+
+def _repli(exc: AtelierInjoignable) -> ResultatExecution:
+    """Atelier injoignable : un résultat en échec dont le message dit quoi faire, jamais un plantage."""
+    return ResultatExecution(sortie="", erreur=str(exc), code_retour=-1, duree_s=0.0,
+                             tue_par_filet_securite=False)
 
 
 def preparer_bac(racine_bac: Path) -> None:
-    """Crée le bac s'il n'existe pas et le rend écrivable par l'utilisateur confiné.
+    """Crée le dossier de travail de la conversation s'il n'existe pas.
 
-    Le processus appelant (le backend) tourne en root dans le conteneur : c'est lui qui doit céder
-    la propriété du dossier, l'utilisateur confiné ne peut pas se l'attribuer lui-même. En
-    développement (appelant déjà non privilégié), le `chown` est sauté : il échouerait, et il ne
-    sert à rien puisque le processus confiné n'est alors jamais un autre utilisateur.
+    Le backend et l'atelier sont tous deux root sur ce volume partagé : il n'y a plus de bascule
+    d'utilisateur ni de `chown` à faire, l'ancien utilisateur non privilégié n'existe plus. Le
+    confinement ne vient plus des droits sur ce dossier mais de la frontière du conteneur atelier.
     """
-    racine_bac.mkdir(parents=True, exist_ok=True)
-    if os.getuid() == 0:
-        os.chown(racine_bac, SANDBOX_UID, SANDBOX_GID)
-        os.chmod(racine_bac, 0o700)
-
-
-class CheminHorsBac(Exception):
-    """Le chemin demandé par le modèle sort du bac de sa conversation."""
+    try:
+        racine_bac.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        logger.error("Préparation du dossier de bac impossible ({}) : {}", racine_bac, exc)
 
 
 def resoudre_dans_bac(racine_bac: Path, chemin_demande: str) -> Path:
     """Chemin absolu d'un fichier du bac — ou lève, jamais un chemin approximatif.
 
-    Le modèle choisit librement le nom de ses fichiers : c'est donc une entrée non fiable, au même
-    titre qu'une saisie utilisateur. Trois refus, et le troisième est le seul qui compte vraiment :
+    Le modèle choisit librement le nom de ses fichiers : c'est une entrée non fiable. Trois refus,
+    et le troisième est le seul qui compte vraiment :
 
     - chemin vide : rien à résoudre ;
     - chemin absolu : `/etc/passwd` n'est pas un fichier de bac ;
     - chemin qui, UNE FOIS RÉSOLU, sort de la racine. La résolution suit les liens symboliques,
-      donc un lien posé par le code confiné vers l'extérieur est attrapé ici — vérifier la chaîne
-      brute (`..` dans le texte) ne l'aurait pas vu.
-
-    `strict=False` est implicite : on résout un chemin qui n'existe pas encore, c'est le cas normal
-    d'une écriture.
+      donc un lien posé vers l'extérieur est attrapé ici — vérifier le texte brut (`..`) ne l'aurait
+      pas vu.
     """
     if not chemin_demande.strip():
         raise CheminHorsBac("Aucun chemin fourni.")
@@ -175,94 +143,41 @@ def resoudre_dans_bac(racine_bac: Path, chemin_demande: str) -> Path:
     return cible
 
 
-def adopter_par_le_bac(chemin: Path) -> None:
-    """Donne un fichier écrit par le backend à l'utilisateur confiné.
+def executer_code_confine(code: str, racine_bac: Path) -> ResultatExecution:
+    """Exécute `code` Python dans l'atelier, sous le dossier de travail de la conversation. Ne lève jamais.
 
-    Sans cela, le fichier appartiendrait à root et le code confiné, qui tourne sous
-    `SANDBOX_UID`, ne pourrait pas le RÉÉCRIRE — il pourrait le supprimer (le dossier lui
-    appartient) mais pas l'ouvrir en écriture. Un outil d'édition qui produit des fichiers que
-    l'exécution ne peut plus modifier serait un piège silencieux.
-    """
-    if os.getuid() == 0:
-        os.chown(chemin, SANDBOX_UID, SANDBOX_GID)
-
-
-def _lancer_confine(argv: list[str], racine_bac: Path, timeout_s: int,
-                    limite_cpu: int) -> ResultatExecution:
-    """Lance `argv` dans le bac, confiné, et rend ce qui a été produit. Ne lève jamais.
-
-    Cœur commun à l'exécution de code Python et à l'exécution d'une commande : le confinement ne
-    doit exister qu'à un seul endroit. Une seconde copie divergerait au premier réglage ajouté
-    d'un côté seulement, et c'est la copie la plus permissive qui deviendrait la vraie surface.
+    Bloquant (appel HTTP synchrone) : l'appelant (`executer_python.py`) le pousse sur un thread pour
+    ne pas geler la boucle asyncio.
     """
     preparer_bac(racine_bac)
-    debut = time.monotonic()
     try:
-        processus = subprocess.run(
-            argv,
-            cwd=racine_bac,
-            env=_ENVIRONNEMENT_CONFINE,
-            preexec_fn=partial(_preexec, limite_cpu),
-            capture_output=True,
-            text=True,
-            timeout=timeout_s,
-        )
-    except subprocess.TimeoutExpired as exc:
-        logger.warning("Lancement confiné tué par le filet de sécurité ({} s) : {}", timeout_s, argv[0])
-        return _tue(exc.stdout, exc.stderr, timeout_s, time.monotonic() - debut)
-    except OSError as exc:
-        logger.error("Lancement confiné impossible ({}) : {}", argv[0], exc)
-        return ResultatExecution(sortie="", erreur=f"Lancement impossible : {exc}", code_retour=-1,
-                                 duree_s=time.monotonic() - debut, tue_par_filet_securite=False)
-    return ResultatExecution(
-        sortie=processus.stdout,
-        erreur=processus.stderr,
-        code_retour=processus.returncode,
-        duree_s=time.monotonic() - debut,
-        tue_par_filet_securite=False,
-    )
-
-
-def _tue(sortie: str | bytes | None, erreur: str | bytes | None,
-         timeout_s: int, duree: float) -> ResultatExecution:
-    """Résultat d'un processus tué par le filet : ce qu'il avait produit est conservé."""
-    return ResultatExecution(
-        sortie=_texte(sortie),
-        erreur=f"{_texte(erreur)}\n[Processus tué : dépassement du filet de sécurité de {timeout_s}s]",
-        code_retour=-1,
-        duree_s=duree,
-        tue_par_filet_securite=True,
-    )
-
-
-def _texte(flux: str | bytes | None) -> str:
-    """Sortie d'un processus tué, dont le type varie selon le moment de l'interruption."""
-    if isinstance(flux, str):
-        return flux
-    return (flux or b"").decode("utf-8", "replace")
-
-
-def executer_code_confine(code: str, racine_bac: Path) -> ResultatExecution:
-    """Lance `python3 -I -c <code>` dans le bac, confiné, et rend ce qui a été produit.
-
-    Bloquant : l'appelant (`backend/outils/executer_python.py`) le pousse sur un thread pour ne
-    pas geler la boucle asyncio pendant l'exécution. `-I` (mode isolé) ignore `PYTHONPATH` et le
-    site-packages utilisateur — un script d'un modèle ne doit dépendre d'aucun état ambiant.
-    """
-    return _lancer_confine(["python3", "-I", "-c", code], racine_bac,
-                           TIMEOUT_SECURITE_SECONDES, LIMITE_CPU_SECONDES)
+        reponse = _executer_python_atelier(code, _sous_dossier(racine_bac), TIMEOUT_PYTHON_SECONDES)
+    except AtelierInjoignable as exc:
+        return _repli(exc)
+    return _depuis_reponse(reponse)
 
 
 def executer_commande_confinee(commande: str, racine_bac: Path) -> ResultatExecution:
-    """Lance une commande shell dans le bac, sous le même confinement que le code Python.
+    """Exécute une commande shell dans l'atelier, sous le dossier de travail de la conversation. Ne lève jamais.
 
-    `bash -lc` et non `sh` : les commandes qu'un modèle écrit spontanément emploient des formes
-    bash (`&&`, substitution, redirections combinées), et `sh` est `dash` dans cette image. Une
-    commande refusée pour une incompatibilité de shell serait attribuée au harnais.
-
-    Le shell hérite du bac comme répertoire de travail, du PATH minimal et de l'utilisateur non
-    privilégié : il voit `gcc`, `as`, `ld`, `curl`, `git`, `python3` — vérifié dans l'image —, et
-    il écrit uniquement là où le code Python confiné écrit déjà.
+    Même atelier, même dossier que le code Python : ce que l'un installe ou écrit, l'autre le voit.
     """
-    return _lancer_confine(["bash", "-lc", commande], racine_bac,
-                           TIMEOUT_COMMANDE_SECONDES, LIMITE_CPU_COMMANDE_SECONDES)
+    preparer_bac(racine_bac)
+    try:
+        reponse = _executer_commande_atelier(commande, _sous_dossier(racine_bac), TIMEOUT_COMMANDE_SECONDES)
+    except AtelierInjoignable as exc:
+        return _repli(exc)
+    return _depuis_reponse(reponse)
+
+
+__all__ = [
+    "ResultatExecution",
+    "CheminHorsBac",
+    "LIMITES_REELLES_TEXTE",
+    "TIMEOUT_COMMANDE_SECONDES",
+    "TIMEOUT_PYTHON_SECONDES",
+    "preparer_bac",
+    "resoudre_dans_bac",
+    "executer_code_confine",
+    "executer_commande_confinee",
+]

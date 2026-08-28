@@ -61,11 +61,12 @@ _SCHEMA: dict[str, Any] = {
 DESCRIPTION = DescriptionOutil(
     nom=NOM,
     description=(
-        "Really executes Python in a sandboxed process, bounded in CPU time, memory, file size and "
-        "process count. Use it to compute, transform data, or produce a file instead of inventing "
-        "a result. No internet access, no access to another conversation's files. Give EITHER "
-        "`fichier` — the path of a file you wrote with `ecrire_fichier`, which is the right way for "
-        "anything you may need to correct — OR `code` for a one-off snippet."
+        "Really executes Python as ROOT in a persistent dev workshop (a separate Docker container), "
+        "isolated from the user's machine by the container boundary. Use it to compute, transform "
+        "data, or produce a file instead of inventing a result. You have network, and you can `pip "
+        "install` packages from a shell with `executer_commande` — they stay available here. Give "
+        "EITHER `fichier` — the path of a file you wrote with `ecrire_fichier`, which is the right "
+        "way for anything you may need to correct — OR `code` for a one-off snippet."
     ),
     parametres=_SCHEMA,
     # `chemin` en tête, et ce n'est pas un hasard : c'est le nom que les trois outils de fichier

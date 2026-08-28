@@ -34,7 +34,7 @@ from loguru import logger
 
 from backend.core import EchoHubError
 from backend.fichiers import deposer_fichier
-from backend.outils.bac_a_sable import CheminHorsBac, adopter_par_le_bac, preparer_bac, resoudre_dans_bac
+from backend.outils.bac_a_sable import CheminHorsBac, preparer_bac, resoudre_dans_bac
 from backend.outils.contrat import ContexteExecution, DescriptionOutil, EchecOutil, Outil
 
 # Un fichier relu repart dans le contexte du modèle. Au-delà, la fenêtre se remplit d'un seul
@@ -210,7 +210,6 @@ async def _ecrire(arguments: dict[str, Any], contexte: ContexteExecution) -> str
         raise EchecOutil(f"Échec : {exc}") from exc
     octets = str(contenu).encode("utf-8")
     cible.write_bytes(octets)
-    adopter_par_le_bac(cible)
     mention = _enregistrer(contexte, chemin_demande, cible)
     lignes = str(contenu).count("\n") + 1
     return f"Écrit « {chemin_demande} » ({len(octets)} octets, {lignes} lignes). {mention}"
@@ -335,7 +334,6 @@ async def _modifier(arguments: dict[str, Any], contexte: ContexteExecution) -> s
     if refus is not None:
         raise EchecOutil(refus)
     cible.write_text(texte.replace(str(ancien), str(nouveau), 1), encoding="utf-8")
-    adopter_par_le_bac(cible)
     mention = _enregistrer(contexte, chemin_demande, cible)
     return f"Modifié « {chemin_demande} » : un fragment remplacé, le reste du fichier est intact. {mention}"
 
