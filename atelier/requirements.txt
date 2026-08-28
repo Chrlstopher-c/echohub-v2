@@ -1,0 +1,7 @@
+# Dépendances du SERVICE d'exécution de l'atelier — pas de l'agent.
+# L'agent, lui, installe ce qu'il veut à l'exécution (apt/pip) ; ceci n'est que le petit serveur
+# HTTP qui reçoit ses commandes.
+fastapi
+uvicorn[standard]
+pydantic>=2
+loguru

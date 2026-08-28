@@ -62,6 +62,11 @@ services:
       # et le registre de modèles se retrouverait sans rien. Le volume nommé reste la forme locale.
       # - /mnt/models/echohub:/data/models:ro
       - echohub_userdata:/data/user              # base SQLite, configuration, journaux
+      # Espaces de travail des conversations, PARTAGÉS avec le conteneur atelier (même volume monté
+      # sur /workspace là-bas). C'est ce partage qui fait qu'un fichier écrit par `ecrire_fichier`
+      # est visible du shell de l'atelier, et qu'un fichier produit par une commande est balayé et
+      # rattaché à la conversation. Distinct de userdata : l'atelier ne voit ni la base ni les secrets.
+      - echohub_ateliers:/data/ateliers
 
       # Modèles des bancs d'agent-forge, en LECTURE SEULE, montés comme un dépôt supplémentaire.
       # Le nom de dossier suit la convention `<org>--<repo>` de storage.py::nom_dossier ; les GGUF
@@ -112,6 +117,13 @@ services:
       # Nom de service Docker, résolu par le DNS interne du réseau de la pile. Le domaine
       # `recherche` lit cette variable via backend/core/config.py — rien n'est codé en dur.
       SEARXNG_URL: ${SEARXNG_URL:-http://searxng:8080}
+      # Atelier d'exécution : le backend lui délègue commandes et code Python par HTTP, sur le
+      # réseau interne (jamais un port publié). Le jeton partagé garde ce service qui exécute du
+      # shell root ; il vient du .env, jamais du code. ATELIER_WORKSPACE désigne le point de montage
+      # du volume PARTAGÉ avec l'atelier — un fichier écrit ici est vu des deux côtés.
+      ATELIER_URL: ${ATELIER_URL:-http://echohub-atelier:8080}
+      ATELIER_JETON: ${ATELIER_JETON:-}
+      ATELIER_WORKSPACE: /data/ateliers
       # GGML_CUDA_ENABLE_UNIFIED_MEMORY est volontairement ABSENTE : sous WSL2 elle immobilise
       # le modèle en RAM avec la VRAM figée à 2 Go (mesuré). ggml active le comportement sur la
       # simple présence de la variable — une valeur vide suffirait à nuire. L'entrypoint la
@@ -158,7 +170,46 @@ services:
     expose:
       - "8080"
 
+  # --- Atelier d'exécution ------------------------------------------------------------------
+  # Conteneur de dev persistant, unique et partagé par TOUTES les conversations (option B). L'agent
+  # y est root, avec réseau et un vrai toolchain, et il installe le reste lui-même (`apt`, `pip`).
+  # L'isolation vis-à-vis de la machine de Chris vient de la frontière du conteneur, pas de
+  # privilèges abaissés :
+  #   - AUCUN chemin de l'hôte monté (pas de /, pas de home, pas de docker.sock) — seul le volume
+  #     nommé `echohub_ateliers` est visible, partagé avec le backend ;
+  #   - ressources bornées (mem_limit, cpus, pids_limit) pour qu'une commande folle ne noie pas la
+  #     machine ;
+  #   - aucun port publié : `expose` ne l'ouvre que sur le réseau interne, où seul le backend l'atteint.
+  #
+  # Persistance : le VOLUME ne couvre que /workspace (fichiers des conversations et tout ce que
+  # l'agent y dépose, un venv compris). Les paquets installés par `apt` vont dans /usr, HORS volume :
+  # ils survivent aux redémarrages (`restart`, `compose restart`) car le conteneur reste le même,
+  # mais un rebuild de l'atelier (`compose build`/`down`) les efface — refaire alors un `apt install`
+  # est acceptable. Ce qui ne l'était pas, c'est de les perdre à chaque message : ce n'est plus le cas.
+  echohub-atelier:
+    build:
+      context: ./atelier
+      dockerfile: Dockerfile
+    image: echohub-atelier:v2
+    container_name: echohub-atelier
+    restart: unless-stopped
+    environment:
+      # Volume partagé, vu ici sous /workspace et sous /data/ateliers côté backend : même contenu.
+      ATELIER_WORKSPACE: /workspace
+      # Jeton partagé avec le backend : sans lui, l'exécution est refusée (repli fermé, cf. serveur.py).
+      ATELIER_JETON: ${ATELIER_JETON:-}
+    volumes:
+      - echohub_ateliers:/workspace
+    # Garde-fous : une commande de l'agent ne doit pas pouvoir asphyxier l'hôte. Généreux mais bornés.
+    mem_limit: 4g
+    cpus: 4.0
+    pids_limit: 512
+    expose:
+      - "8080"
+
 volumes:
   echohub_models:
   echohub_userdata:
   echohub_searxng:
+  # Espaces de travail des conversations, partagés backend <-> atelier (voir les deux services).
+  echohub_ateliers:
