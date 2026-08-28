@@ -7,6 +7,8 @@ rattacher les fichiers produits.
 
 from __future__ import annotations
 
+import subprocess
+import tempfile
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -15,11 +17,9 @@ import pytest
 from backend.chat import annulation
 from backend.chat.depot import assurer_schema_chat, creer_conversation
 from backend.chat.modeles import ReglagesConversation, ResumeConversation
-from backend.core import close_connection, init_db
+from backend.core import close_connection, get_settings, init_db
 from backend.core.config import reset_settings_cache
-# Import direct du sous-module, pas de `backend.fichiers` : même précédent que
-# `backend/inference/__init__.py::MoteurChat._flux`, qui construit `racine_bac` de la même façon.
-from backend.fichiers.stockage import racine_conversations
+from backend.outils import atelier, bac_a_sable
 
 
 @pytest.fixture
@@ -52,4 +52,48 @@ def conversation(base: Path) -> ResumeConversation:
 @pytest.fixture
 def racine_bac(conversation: ResumeConversation) -> Path:
     """Bac de cette conversation, dérivé exactement comme `MoteurChat._flux` le construit."""
-    return racine_conversations() / conversation.id / "bac"
+    return get_settings().atelier_workspace / conversation.id
+
+
+def _executer_local(argv: list[str], sous_dossier: str, timeout_s: int) -> atelier.ReponseAtelier:
+    """Exécute `argv` en local dans le dossier de travail, à la place de l'atelier distant.
+
+    L'atelier est un conteneur : on ne l'exige pas en test unitaire. On mocke à la FRONTIÈRE (le
+    module `atelier`), pas plus bas — l'exécution reste réelle, produit de vrais fichiers, et le
+    balayage les rattache comme en production. Le dossier est `atelier_workspace/<sous_dossier>`,
+    exactement ce que `bac_a_sable._sous_dossier` renvoie.
+    """
+    cwd = get_settings().atelier_workspace / sous_dossier
+    cwd.mkdir(parents=True, exist_ok=True)
+    try:
+        proc = subprocess.run(argv, cwd=cwd, capture_output=True, text=True, timeout=timeout_s)
+    except subprocess.TimeoutExpired as exc:
+        return atelier.ReponseAtelier(code_retour=-1, sortie=exc.stdout or "",
+                                      erreur=(exc.stderr or "") + "\n[tué : délai dépassé]",
+                                      duree_s=float(timeout_s), tue=True)
+    return atelier.ReponseAtelier(code_retour=proc.returncode, sortie=proc.stdout,
+                                  erreur=proc.stderr, duree_s=0.0, tue=False)
+
+
+@pytest.fixture(autouse=True)
+def atelier_local(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Redirige les appels de `bac_a_sable` vers un exécuteur LOCAL, sans conteneur atelier.
+
+    Patché sur les références que `bac_a_sable` détient (`_executer_*_atelier`), pas sur le module
+    `atelier` lui-même : les tests du client réel (`test_atelier.py`) continuent d'exercer le vrai
+    `atelier.executer_commande`, intact.
+    """
+    def _commande(commande: str, sous_dossier: str, timeout_s: int) -> atelier.ReponseAtelier:
+        return _executer_local(["bash", "-lc", commande], sous_dossier, timeout_s)
+
+    def _python(code: str, sous_dossier: str, timeout_s: int) -> atelier.ReponseAtelier:
+        fichier = tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, encoding="utf-8")
+        fichier.write(code)
+        fichier.close()
+        try:
+            return _executer_local(["python3", fichier.name], sous_dossier, timeout_s)
+        finally:
+            Path(fichier.name).unlink(missing_ok=True)
+
+    monkeypatch.setattr(bac_a_sable, "_executer_commande_atelier", _commande)
+    monkeypatch.setattr(bac_a_sable, "_executer_python_atelier", _python)

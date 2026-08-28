@@ -98,5 +98,10 @@ def test_loutil_recoit_lidentifiant_de_la_conversation_attendue(monkeypatch: Any
 
     assert len(contextes_recus) == 1, "l'outil factice doit avoir été exécuté exactement une fois"
     assert contextes_recus[0].conversation_id == CONVERSATION_ATTENDUE
-    assert contextes_recus[0].racine_bac.name == "bac"
-    assert contextes_recus[0].racine_bac.parent.name == CONVERSATION_ATTENDUE
+    # Le bac est désormais le dossier de la conversation dans le workspace partagé avec l'atelier :
+    # son dernier segment est l'identifiant de la conversation (c'est lui qui voyage vers l'atelier
+    # comme `sous_dossier`), et il vit sous la racine `atelier_workspace`.
+    from backend.core import get_settings
+
+    assert contextes_recus[0].racine_bac.name == CONVERSATION_ATTENDUE
+    assert contextes_recus[0].racine_bac.parent == get_settings().atelier_workspace
