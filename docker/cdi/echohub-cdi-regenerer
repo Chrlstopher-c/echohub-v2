@@ -22,7 +22,7 @@ if [ "$fige" = "$reel" ]; then
     exit 0
 fi
 echo "[cdi] major nvidia-uvm : spec=${fige:-absent}, réel=$reel — régénération"
-nvidia-ctk cdi generate --output="$SPEC" >/dev/null
+nvidia-ctk cdi generate --output="$SPEC" >/dev/null 2>&1
 nouveau="$(grep -A1 'path: /dev/nvidia-uvm$' "$SPEC" | awk '/major:/ {print $2}')"
 [ "$nouveau" = "$reel" ] || { echo "[cdi] régénération incohérente : $nouveau ≠ $reel" >&2; exit 2; }
 echo "[cdi] spec régénéré (major $nouveau)"
