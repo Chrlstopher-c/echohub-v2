@@ -22,11 +22,13 @@ from fastapi.responses import StreamingResponse
 from loguru import logger
 from pydantic import BaseModel, Field, model_validator
 
-from backend.core import EchoHubError
+from backend.core import EchoHubError, MoteurIndisponible
+from backend.engines import service as engines_service
 from backend.inference.engines_adapters import (
     CauseEchec,
     EtatChargement,
     MessageChat,
+    MoteurSupporte,
     OptionsGeneration,
     PlanChargement,
     Sante,
@@ -174,11 +176,33 @@ def _plan_moteur(requete: RequeteChargement) -> PlanChargement:
     return vers_plan_moteur(plan, requete.chemin_modele)
 
 
+async def _verifier_moteur_disponible(moteur: MoteurSupporte) -> None:
+    """Refuse un chargement dont le moteur ciblé n'est plus fonctionnel, plan déjà construit ou non.
+
+    `/planifier` filtre déjà les moteurs cassés (`choisir_moteur`, sur `moteurs_disponibles`), mais
+    un plan appliqué tel quel (`RequeteChargement.plan`, cf. `_plan_moteur`) ne repasse jamais par ce
+    filtre — voulu pour ne pas replanifier sur une VRAM qui a bougé entre l'affichage et la
+    confirmation. Cela laisse passer un plan devenu caduc si le moteur est tombé ENTRE les deux
+    appels. Mesuré le 2026-08-28 : `ggml_cuda_init: failed to initialize CUDA: unknown error` rend
+    llama.cpp défaillant en cours de session, sans qu'aucun code ne le revérifie avant de lancer le
+    sous-processus — un chargement pouvait alors être accepté puis rester bloqué sans jamais servir.
+    """
+    sonde = engines_service.sante_llamacpp if moteur is MoteurSupporte.LLAMA_CPP else engines_service.sante_vllm
+    sante = await sonde()
+    if not sante.fonctionnel:
+        raise MoteurIndisponible(
+            f"Le moteur {moteur.value} n'est plus fonctionnel : {sante.diagnostic}",
+            remediation=sante.remediation,
+            details={"moteur": moteur.value, "statut": sante.statut.value},
+        )
+
+
 @router.post("/charger", response_model=StatutInference, status_code=202)
 async def charger_modele(requete: RequeteChargement) -> StatutInference:
     """Démarre le chargement et rend la main aussitôt — l'avancement se lit sur `/etat`."""
     plan = _plan_moteur(requete)
     try:
+        await _verifier_moteur_disponible(plan.moteur)
         return await superviseur.demarrer_chargement(plan)
     except EchoHubError as exc:
         raise _en_http(exc) from exc
