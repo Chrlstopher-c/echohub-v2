@@ -58,7 +58,9 @@ backend/
   models/      recherche, téléchargement, métadonnées GGUF, registre
   inference/   planificateur, adaptateurs de moteurs, génération
   chat/        conversations et persistance
+  outils/      outils du modèle (exécution, fichiers, recherche) + pont vers l'atelier
   core/        config, logging, erreurs, base de données
+atelier/       conteneur d'exécution root persistant (Dockerfile, serveur HTTP, README)
 frontend/src/
   models/      écrans de découverte et gestion des modèles
   chat/        écran de conversation
@@ -67,6 +69,38 @@ frontend/src/
 ```
 
 Chaque domaine expose une interface publique. Un domaine n'importe jamais les internes d'un autre.
+
+## L'atelier d'exécution — une frontière de conteneur, pas un bac dans le backend
+
+Les outils `executer_commande` et `executer_python` (domaine `outils`) n'exécutent plus rien dans le
+backend. L'exécution vit dans un **conteneur de dev séparé et persistant**, `echohub-atelier`
+(dossier `atelier/` à la racine : `Dockerfile`, `serveur.py`, `README.md`). L'agent y est **root**,
+avec réseau, PATH complet et toolchain ; il installe ce qui lui manque (`apt`, `pip`), et fichiers
+comme paquets **persistent**.
+
+Pourquoi ce déplacement : l'ancien confinement (`setuid` + `rlimits` + PATH minimal, dans
+`bac_a_sable.py`) protégeait l'hôte au prix de rendre l'outil inerte dès qu'il fallait installer quoi
+que ce soit (mesuré : `nasm: command not found`). Le confinement n'a pas disparu, il s'est **déplacé
+vers la frontière du conteneur** : aucun chemin de l'hôte monté, aucun `docker.sock`, ressources
+bornées par Compose (`mem_limit`, `cpus`, `pids_limit`).
+
+**Mécanisme d'exécution — HTTP interne, pas `docker.sock`.** Le backend parle à l'atelier par un
+petit service HTTP (`atelier/serveur.py`, FastAPI), sur le réseau interne de la pile (port **jamais
+publié**), gardé par un jeton partagé (`ATELIER_JETON`). Le client backend est
+`backend/outils/atelier.py` ; `backend/outils/bac_a_sable.py` n'est plus qu'un pont qui traduit le
+`racine_bac` d'une conversation en dossier de l'atelier et délègue. Monter `docker.sock` dans le
+backend aurait donné root sur l'hôte à un backend qui exécute du texte de modèle — écarté pour cette
+raison.
+
+**Workspace partagé.** Un volume nommé (`echohub_ateliers`) est monté dans le backend
+(`/data/ateliers`, = `settings.atelier_workspace`) **et** dans l'atelier (`/workspace`). Le `racine_bac`
+d'une conversation est `atelier_workspace/<conversation_id>` ; l'atelier le voit sous
+`/workspace/<conversation_id>`. C'est le même dossier : un fichier écrit par `ecrire_fichier` (backend)
+est vu du shell de l'atelier, et un fichier produit par une commande de l'atelier est balayé
+(`balayage_bac.py`) et rattaché à la conversation comme pièce jointe (`origine='modele'`).
+
+**Repli.** Atelier injoignable → les outils rendent un message actionnable (« démarrer avec
+`docker compose up -d echohub-atelier` »), journalisé (loguru), jamais un timeout muet ni un crash.
 
 ## Stack
 
