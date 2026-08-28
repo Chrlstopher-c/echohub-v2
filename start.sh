@@ -129,8 +129,21 @@ demarrer_natif() {
 demarrer_docker() {
     command -v docker >/dev/null 2>&1 || echec "docker introuvable"
     mkdir -p "$LOGS"
+    # Le major de nvidia-uvm change d'un boot à l'autre et le spec CDI le fige : sans cette
+    # garde, CUDA meurt dans le conteneur après un reboot (docker/cdi/README.md).
+    local recreer=""
+    if [ -x /usr/local/sbin/echohub-cdi-regenerer ]; then
+        sudo /usr/local/sbin/echohub-cdi-regenerer && true
+        case $? in
+            0) ;;
+            3) recreer="--force-recreate" ;;
+            *) echec "régénération du spec CDI impossible" ;;
+        esac
+    else
+        journal "AVERTISSEMENT : echohub-cdi-regenerer absent — voir docker/cdi/README.md"
+    fi
     journal "construction et démarrage du conteneur (première fois : compilation CUDA, longue)"
-    (cd "$RACINE" && docker compose up -d --build) || echec "docker compose up a échoué"
+    (cd "$RACINE" && docker compose up -d --build $recreer) || echec "docker compose up a échoué"
     journal "interface : http://127.0.0.1:${ECHOHUB_PORT_WEB:-37820}"
     journal "journaux : docker compose logs -f echohub"
 }

@@ -1,0 +1,14 @@
+[Unit]
+Description=EchoHub — régénère le spec CDI NVIDIA avant Docker (major nvidia-uvm dynamique)
+Before=docker.service
+After=systemd-modules-load.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/echohub-cdi-regenerer
+# 3 = régénéré : un succès pour l'unité.
+SuccessExitStatus=3
+
+[Install]
+WantedBy=multi-user.target
