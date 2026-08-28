@@ -176,6 +176,13 @@ class SuperviseurInference:
                 self._actif = adaptateur
             self._conclure_succes(plan, session, etat_moteur, time.perf_counter() - debut)
         except asyncio.CancelledError:
+            # `adaptateur.charger()` peut avoir déjà lancé un sous-processus (llama-server) quand
+            # l'annulation frappe pendant l'attente de sa santé : l'exception traverse `_demarrer`
+            # sans jamais atteindre son propre nettoyage, et le Popen reste référencé dans
+            # l'adaptateur sans qu'aucun `poll()` supplémentaire ne le récolte — un zombie mesuré
+            # le 2026-08-28 (PID 337338, PPID du backend, jamais réclamé). `decharger()` est
+            # idempotent : appelé alors que rien n'a démarré, il ne fait rien.
+            await self._adaptateurs[plan.moteur].decharger()
             self._conclure_echec(plan, session, _diagnostic_annulation(), time.perf_counter() - debut)
             raise
         except EchecChargement as exc:
