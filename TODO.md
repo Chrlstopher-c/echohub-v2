@@ -1,14 +1,21 @@
 # TODO — EchoHub v2
 
-*Dernière mise à jour : 2026-08-17*
+*Dernière mise à jour : 2026-08-29*
 
 ## En cours
 
-Rien. Arbre git propre, application en ligne, accès distant opérationnel, 413 tests verts.
+Rien. Arbre git propre. Dernière session livrée : l'atelier d'exécution persistant (2026-08-28),
+éprouvé de bout en bout sur un chemin de chat réel.
 
-**Services vivants à connaître en reprenant** : conteneurs `echohub-v2` et `echohub-searxng`, plus un
-processus `cloudflared` détaché qui porte le tunnel. Ce dernier meurt au redémarrage de la machine
-et son URL change à chaque relance — la retrouver dans `%LOCALAPPDATA%\cloudflared\tunnel.log`.
+**Services vivants à connaître en reprenant** : conteneurs `echohub-v2`, `echohub-searxng` et
+`echohub-atelier`, plus un processus `cloudflared` détaché qui porte le tunnel. Ce dernier meurt au
+redémarrage de la machine et son URL change à chaque relance — la retrouver dans
+`%LOCALAPPDATA%\cloudflared\tunnel.log`.
+
+**Le dépôt est public depuis le 2026-08-29.** Audit fait avant bascule : aucun credential dans
+l'arbre ni dans l'historique. Ce qui en découle et n'est plus rattrapable par une modification :
+les valeurs de repli écrites en clair sont désormais connues — `SEARXNG_SECRET` en tête, à
+surcharger dans le `.env`.
 
 ## À faire (priorité)
 
@@ -157,7 +164,7 @@ de déport existe et est couvert par des tests unitaires ; aucune mesure ne l'a 
       téléchargement découpé
 - [ ] Sondage du profil machine ramené de 2 s à 10–15 s (appel NVML à chaque passage)
 
-### 9. Dette de style relevée par le linter
+### 9. Dette de style et couverture
 
 - [ ] **`superviseur.compter_contexte` fait 43 lignes** (max 35) —
       `backend/inference/engines_adapters/superviseur.py:306`. Relevé le 2026-08-26 en linterant le
@@ -165,12 +172,33 @@ de déport existe et est couvert par des tests unitaires ; aucune mesure ne l'a 
       ce n'est pas une régression. Extraire les helpers plutôt que relever la borne.
 - [x] ~~`inference/harnais.py` non câblé~~ — fait le 2026-08-26 : la conduite (état de boucle,
       relances, budget) a été déplacée dans `harnais.py`, le transport reste dans `__init__.py`.
-- [ ] **`inference/__init__.py` reste au-dessus de 500 lignes**, avec `_diffuser_complet` à 44 et
-      `_boucle_outils` à 46 (contre 62 avant le découpage). Ce qui reste à sortir relève du
-      transport, pas de la conduite.
-- [ ] **`chat/generation.py` fait 541 lignes** (max 500), avec `preparer` et `diffuser` à 36 lignes
-      et `_construire_contexte` à 45. Relevé le 2026-08-26 en y remplaçant une seule ligne ; aucune
-      de ces fonctions n'a été touchée.
+- [ ] **Cinq fichiers dépassent les 500 lignes** (relevé le 2026-08-29, arbre complet) :
+
+      | Fichier | Lignes |
+      |---|---|
+      | `backend/inference/engines_adapters/adaptateur_llama_cpp.py` | 1062 |
+      | `backend/inference/__init__.py` | 614 |
+      | `backend/chat/depot.py` | 544 |
+      | `backend/chat/generation.py` | 542 |
+      | `backend/inference/engines_adapters/contrat.py` | 522 |
+
+      `adaptateur_llama_cpp.py` est le plus gros écart de tout le dépôt et n'avait jamais été
+      relevé : il double la borne. À traiter en premier, d'autant que le chemin d'exécution réel
+      passe désormais par `adaptateur_llama_server.py` — une part de ce fichier peut être morte.
+      Dans `inference/__init__.py`, `_diffuser_complet` fait 44 lignes et `_boucle_outils` 46
+      (contre 62 avant le découpage) ; ce qui reste à sortir relève du transport, pas de la
+      conduite. Dans `chat/generation.py`, `preparer` et `diffuser` sont à 36 et
+      `_construire_contexte` à 45.
+- [ ] **`system/` et `engines/` n'ont aucun test.** Les deux touchent NVML, le GPU et l'installation
+      de venvs, donc rien ne s'y teste sans la machine — mais la partie pure (interprétation d'une
+      sortie `nvidia-smi`, comparaison de versions, résolution de venv) le pourrait.
+- [ ] **`docker/preuves_bac_a_sable.py` décrit un chemin d'exécution qui n'existe plus.** Il prouve
+      l'isolation de l'ancien bac confiné, remplacé par l'atelier le 2026-08-28. Le garder comme
+      trace de ce qui a été mesuré, ou le déplacer explicitement dans un dossier d'archive — mais
+      pas le laisser à la racine de `docker/` où il se lit comme courant.
+- [ ] **`core/db.py` : bug d'ordre dans `init_db`** — `ALTER` sur `chat_reglages` avant que la table
+      chat existe. Cause ~95 erreurs identiques dans la suite, sur `main` comme sur `atelier`.
+      Relevé le 2026-08-28, hors scope de cette session, jamais corrigé.
 
 ## Backlog
 

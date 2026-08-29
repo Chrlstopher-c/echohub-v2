@@ -1,6 +1,33 @@
 # STATE — EchoHub v2
 
-*Dernière mise à jour : 2026-08-28*
+*Dernière mise à jour : 2026-08-29*
+
+## Session du 2026-08-29 — Dépôt public, documentation remise au réel
+
+**Le dépôt est public.** Audit avant bascule sur les 1 569 objets de l'historique complet, pas
+seulement sur `HEAD` : motifs de jetons (`hf_`, `sk-`, `ghp_`, `AKIA`, `xox`, `AIza`, `glpat-`,
+clés PEM), affectations `secret|token|password|api_key = valeur`, e-mails, IP, chemins personnels.
+Aucun credential. `.env` n'a jamais été versionné, `hf_token` et `atelier_jeton` sont des
+`SecretStr` à `default=None`.
+
+Trois constats issus de l'audit, dont un seul demande une action :
+
+- `SEARXNG_SECRET` a un repli en clair dans `docker/searxng/settings.yml`. Enjeu faible (aucun port
+  publié) mais la valeur est désormais connue : la surcharger dans le `.env`.
+- `.data-native/echohub/echohub.db-{wal,shm}` sont versionnés — schéma SQLite seul, aucune
+  conversation. `.gitignore` a `*.db` sans les suffixes `-wal`/`-shm`.
+- L'e-mail des commits est public, comme sur tout dépôt ouvert.
+
+**Documentation remise au réel.** Le `README` annonçait encore « démarrage du projet — rien
+d'implémenté », `ARBORESCENCE` datait du 17/08 avec un appendice « Ajouts du 26/08 », et le
+périmètre d'`ARCHITECTURE` classait la recherche web hors MVP alors que SearXNG tourne par défaut.
+Réécrits depuis l'arbre réel : 188 fichiers Python backend, 4 pour l'atelier, 207 côté frontend,
+442 fonctions de test Python et 4 suites TypeScript. Les comptes de tests qui circulaient dans ces
+pages (369, 382, 413) dataient chacun d'une session différente et se contredisaient ; ils sont
+remplacés par un comptage statique, vérifiable sans machine.
+
+Relevé au passage, consigné dans TODO : **cinq fichiers dépassent 500 lignes**, dont
+`adaptateur_llama_cpp.py` à 1 062 — le double de la borne, jamais relevé jusqu'ici.
 
 ## Session du 2026-08-28 — Atelier d'exécution persistant (branche `atelier`)
 
@@ -393,8 +420,8 @@ se rafraîchit pas seul, alors que la réponse est complète en base.
 
 ## Points en suspens
 
-- **Le harnais corrigé n'a pas encore été éprouvé en génération réelle.** 382 tests couvrent les
-  mécanismes ; aucun modèle n'a été chargé depuis (Chris s'en charge lui-même).
+- **Le harnais corrigé n'a pas encore été éprouvé en génération réelle** au-delà du cas de preuve
+  de l'atelier. Les tests couvrent les mécanismes, pas le comportement du modèle.
 - **Le MoE n'a jamais été chargé en conditions réelles.** Planifiable depuis le 2026-08-15, aucune
   mesure. C'est le test qui dira si les 6 Go de VRAM inutilisés sont récupérés.
 - **Qwen3-Coder-30B en plusieurs parts** : correctif écrit, jamais éprouvé sur un vrai

@@ -1,23 +1,27 @@
 # Architecture — EchoHub v2
 
-## Périmètre du MVP
-
-**Dans le MVP :**
+## Périmètre
 
 | Domaine | Ce qu'il fait |
 |---|---|
 | `system` | Détecte matériel et plateforme : GPU, VRAM, RAM, WSL2 ou Linux natif, pilote |
 | `engines` | Installe et gère llama.cpp et vLLM, leurs versions et venvs |
 | `models` | Cherche sur Hugging Face, télécharge, lit les métadonnées GGUF, tient le registre local |
-| `inference` | **Planificateur de chargement** + pilotage des moteurs + génération |
-| `chat` | Conversations, streaming des réponses, persistance |
+| `inference` | **Planificateur de chargement** + pilotage des moteurs + génération + harnais d'outils |
+| `chat` | Conversations, branches, streaming des réponses, persistance |
+| `outils` | Les outils du modèle : fichiers, exécution, recherche, artefacts — et le pont vers l'atelier |
+| `fichiers` | Magasin des pièces jointes et des productions, rattachées à une conversation |
+| `recherche` | Recherche web par instance SearXNG locale |
 
-**Hors MVP, volontairement** — à ne pas commencer, à ne pas préparer « au cas où » : RAG et
-ChromaDB, skills MCP, connecteurs (Discord), fine-tuning, recherche web.
+**Hors périmètre, volontairement** — à ne pas commencer, à ne pas préparer « au cas où » : RAG et
+ChromaDB, skills MCP, connecteurs (Discord), fine-tuning.
 
-**Exception unique** : le service SearXNG figure dans `docker-compose.yml` sous un profil Docker
-**inactif par défaut**. Il ne démarre pas, ne consomme rien, et évite d'avoir à retoucher
-l'infrastructure quand la recherche web arrivera.
+La recherche web faisait partie de cette liste au cadrage du MVP. Elle en est sortie le 2026-08-15,
+quand le harnais d'outils a rendu la citation de sources possible : SearXNG est depuis un service
+actif par défaut dans `docker-compose.yml` (jamais publié, `expose` seul), et le domaine `recherche`
+est complet. `echohub` ne le déclare volontairement pas en `depends_on` — le backend doit démarrer et
+servir même si la recherche est indisponible, auquel cas le domaine rend un 503 explicite et la
+sonde `/api/recherche/sante` dit ce qui a été mesuré.
 
 ## Le cœur : le planificateur de chargement
 
@@ -56,15 +60,18 @@ backend/
   system/      détection matériel et plateforme
   engines/     installation et versions de llama.cpp et vLLM
   models/      recherche, téléchargement, métadonnées GGUF, registre
-  inference/   planificateur, adaptateurs de moteurs, génération
-  chat/        conversations et persistance
-  outils/      outils du modèle (exécution, fichiers, recherche) + pont vers l'atelier
+  inference/   planificateur, adaptateurs de moteurs, génération, harnais d'outils
+  chat/        conversations, branches et persistance
+  outils/      outils du modèle (fichiers, exécution, recherche, artefacts) + pont vers l'atelier
+  fichiers/    magasin des pièces jointes et des productions
+  recherche/   client SearXNG, analyse, cache
   core/        config, logging, erreurs, base de données
 atelier/       conteneur d'exécution root persistant (Dockerfile, serveur HTTP, README)
 frontend/src/
   models/      écrans de découverte et gestion des modèles
-  chat/        écran de conversation
-  system/      matériel, moteurs, réglages
+  chat/        écran de conversation : fil, plan, contexte, outils, artefacts, réglages
+  system/      matériel, contraintes, moteurs
+  cible/       croisement métadonnées × machine × moteurs pour bâtir une cible de chargement
   shared/      design system, composants, client API
 ```
 
@@ -127,6 +134,8 @@ sobre, dense en information sans être chargée, cohérente jusque dans les dét
 
 ## Ce qui est repris de la v1
 
-Le `Dockerfile` et son savoir de compilation CUDA — voir `COMPATIBILITE-GPU.md`. À **réintégrer
-en comprenant chaque ligne**, pas à copier tel quel : la v1 vise une RTX 5090 32 Go, la machine
-réelle est une 5080 16 Go.
+Le `Dockerfile` et son savoir de compilation CUDA — voir `COMPATIBILITE-GPU.md`. Réintégré ligne à
+ligne plutôt que copié : la v1 visait une RTX 5090 32 Go, la machine réelle est une 5080 16 Go.
+`CMAKE_CUDA_ARCHITECTURES=86;120` couvre les deux GPU rencontrés, et `GGML_CUDA_FORCE_CUBLAS=ON`
+contourne un segfault de nvcc 12.8 sur les kernels MMQ — que personne ne le retire pour « gagner de
+la perf ».
