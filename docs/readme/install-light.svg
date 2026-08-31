@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="352" viewBox="0 0 1040 352" fill="none" role="img">
+  <defs><marker id="stp-light" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#59636e"/></marker></defs>
+  <rect width="1040" height="352" rx="16" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="30" y="36" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="12" letter-spacing="2.5" fill="#59636e">RUN IT</text>
+  <rect x="30" y="56" width="478" height="124" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+  <circle cx="56" cy="82" r="13" fill="#d8a35f"/>
+  <text x="56" y="87" text-anchor="middle" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="13" font-weight="700" fill="#ffffff">1</text>
+  <text x="78" y="87" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="14.5" font-weight="600" fill="#1f2328">Have a GPU and Docker</text>
+  
+  <text x="44" y="116" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="11.5" fill="#59636e">NVIDIA with CUDA 12.8 or newer. Driver 570+ for an RTX 50xx. The image is</text><text x="44" y="131" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="11.5" fill="#59636e">built on the CUDA devel base because llama-cpp-python is compiled at build</text><text x="44" y="146" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="11.5" fill="#59636e">time, not downloaded.</text><path d="M512 82 l16 0" stroke="#59636e" stroke-width="1.4" marker-end="url(#stp-light)"/>
+  <rect x="532" y="56" width="478" height="124" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+  <circle cx="558" cy="82" r="13" fill="#d8a35f"/>
+  <text x="558" y="87" text-anchor="middle" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="13" font-weight="700" fill="#ffffff">2</text>
+  <text x="580" y="87" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="14.5" font-weight="600" fill="#1f2328">Set the two things that matter</text>
+  <rect x="546" y="108" width="450" height="24" rx="6" fill="#ffffff" stroke="#d0d7de"/>
+    <text x="556" y="124" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="11.5" fill="#9a6b1f">cp .env.example .env</text>
+  <text x="546" y="150" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="11.5" fill="#59636e">ATELIER_JETON must hold a random secret: empty means the model is refused</text><text x="546" y="165" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="11.5" fill="#59636e">any code execution. Never set GGML_CUDA_ENABLE_UNIFIED_MEMORY.</text>
+  <rect x="30" y="204" width="478" height="124" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+  <circle cx="56" cy="230" r="13" fill="#d8a35f"/>
+  <text x="56" y="235" text-anchor="middle" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="13" font-weight="700" fill="#ffffff">3</text>
+  <text x="78" y="235" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="14.5" font-weight="600" fill="#1f2328">Bring the stack up</text>
+  <rect x="44" y="256" width="450" height="24" rx="6" fill="#ffffff" stroke="#d0d7de"/>
+    <text x="54" y="272" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="11.5" fill="#9a6b1f">docker compose up -d</text>
+  <text x="44" y="298" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="11.5" fill="#59636e">API, nginx, SearXNG and the execution workshop. Only the web port is</text><text x="44" y="313" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="11.5" fill="#59636e">published; the rest talk on the internal network.</text><path d="M512 230 l16 0" stroke="#59636e" stroke-width="1.4" marker-end="url(#stp-light)"/>
+  <rect x="532" y="204" width="478" height="124" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+  <circle cx="558" cy="230" r="13" fill="#d8a35f"/>
+  <text x="558" y="235" text-anchor="middle" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="13" font-weight="700" fill="#ffffff">4</text>
+  <text x="580" y="235" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="14.5" font-weight="600" fill="#1f2328">Open it</text>
+  <rect x="546" y="256" width="450" height="24" rx="6" fill="#ffffff" stroke="#d0d7de"/>
+    <text x="556" y="272" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="11.5" fill="#9a6b1f">http://localhost:37920</text>
+  <text x="546" y="298" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="11.5" fill="#59636e">Search a model, download it, load it. For UI work without compiling CUDA,</text><text x="546" y="313" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="11.5" fill="#59636e">./start.sh runs uvicorn and Vite natively instead.</text>
+</svg>

@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="352" viewBox="0 0 1040 352" fill="none" role="img">
+  <defs><marker id="stp-dark" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#8b929c"/></marker></defs>
+  <rect width="1040" height="352" rx="16" fill="#0a0b0e" stroke="#20242c"/>
+  <text x="30" y="36" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="12" letter-spacing="2.5" fill="#8b929c">REMOVE IT (NO SCRIPT FOR THIS ONE)</text>
+  <rect x="30" y="56" width="478" height="124" rx="12" fill="#161b22" stroke="#2a313c"/>
+  <circle cx="56" cy="82" r="13" fill="#d8a35f"/>
+  <text x="56" y="87" text-anchor="middle" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="13" font-weight="700" fill="#0a0b0e">1</text>
+  <text x="78" y="87" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="14.5" font-weight="600" fill="#f4f1ea">Stop the stack</text>
+  <rect x="44" y="108" width="450" height="24" rx="6" fill="#0a0b0e" stroke="#20242c"/>
+    <text x="54" y="124" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="11.5" fill="#d8a35f">docker compose down</text>
+  <text x="44" y="150" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="11.5" fill="#8b929c">Containers go, volumes stay. Bring it back up and you find your models and</text><text x="44" y="165" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="11.5" fill="#8b929c">conversations where you left them.</text><path d="M512 82 l16 0" stroke="#8b929c" stroke-width="1.4" marker-end="url(#stp-dark)"/>
+  <rect x="532" y="56" width="478" height="124" rx="12" fill="#161b22" stroke="#2a313c"/>
+  <circle cx="558" cy="82" r="13" fill="#d8a35f"/>
+  <text x="558" y="87" text-anchor="middle" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="13" font-weight="700" fill="#0a0b0e">2</text>
+  <text x="580" y="87" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="14.5" font-weight="600" fill="#f4f1ea">Decide about the models</text>
+  <rect x="546" y="108" width="450" height="24" rx="6" fill="#0a0b0e" stroke="#20242c"/>
+    <text x="556" y="124" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="11.5" fill="#d8a35f">docker volume rm echohub_models</text>
+  <text x="546" y="150" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="11.5" fill="#8b929c">This is the one that hurts: tens of gigabytes you would have to download</text><text x="546" y="165" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="11.5" fill="#8b929c">again. Keep it unless you are short on disk.</text>
+  <rect x="30" y="204" width="478" height="124" rx="12" fill="#161b22" stroke="#2a313c"/>
+  <circle cx="56" cy="230" r="13" fill="#d8a35f"/>
+  <text x="56" y="235" text-anchor="middle" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="13" font-weight="700" fill="#0a0b0e">3</text>
+  <text x="78" y="235" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="14.5" font-weight="600" fill="#f4f1ea">Erase the rest</text>
+  <rect x="44" y="256" width="450" height="24" rx="6" fill="#0a0b0e" stroke="#20242c"/>
+    <text x="54" y="272" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="11.5" fill="#d8a35f">docker volume rm echohub_userdata echohub_ateliers echohub_searxng</text>
+  <text x="44" y="298" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="11.5" fill="#8b929c">Conversations, workshop files and search configuration. Then docker rmi</text><text x="44" y="313" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="11.5" fill="#8b929c">echohub:v2 echohub-atelier:v2 for the images.</text>
+</svg>

@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="723" viewBox="0 0 1040 723" fill="none" role="img">
+  <rect width="1040" height="723" rx="16" fill="#0a0b0e" stroke="#20242c"/>
+  <rect x="30" y="24" width="980" height="166" rx="12" fill="#161b22" stroke="#2a313c"/>
+  <text x="46" y="46" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="11" letter-spacing="2.5" fill="#8b929c">NAMED VOLUMES · WHERE THE WEIGHT IS</text>
+  <path d="M46 67 h7 l3 3 h10 v12 h-20 z" fill="none" stroke="#d8a35f" stroke-width="1.4"/>
+    <text x="76" y="79" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="12.5" fill="#f4f1ea">echohub_models</text>
+    <text x="500" y="79" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12.5" fill="#c3cad3">downloaded models, tens of gigabytes; mounted at /data/models</text>
+  <path d="M46 97 h7 l3 3 h10 v12 h-20 z" fill="none" stroke="#d8a35f" stroke-width="1.4"/>
+    <text x="76" y="109" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="12.5" fill="#f4f1ea">echohub_userdata</text>
+    <text x="500" y="109" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12.5" fill="#c3cad3">the SQLite database, configuration and journals, at /data/user</text>
+  <path d="M46 127 h7 l3 3 h10 v12 h-20 z" fill="none" stroke="#d8a35f" stroke-width="1.4"/>
+    <text x="76" y="139" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="12.5" fill="#f4f1ea">echohub_ateliers</text>
+    <text x="500" y="139" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12.5" fill="#c3cad3">the workshop workspace, shared between the backend and the execution container</text>
+  <path d="M46 157 h7 l3 3 h10 v12 h-20 z" fill="none" stroke="#d8a35f" stroke-width="1.4"/>
+    <text x="76" y="169" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="12.5" fill="#f4f1ea">echohub_searxng</text>
+    <text x="500" y="169" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12.5" fill="#c3cad3">the local search instance configuration</text>
+  <rect x="30" y="208" width="980" height="166" rx="12" fill="#161b22" stroke="#2a313c"/>
+  <text x="46" y="230" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="11" letter-spacing="2.5" fill="#8b929c">PORTS · ONE PUBLISHED, THREE NOT</text>
+  <path d="M48 254 h16 M48 259 h16 M48 264 h10" stroke="#d8a35f" stroke-width="1.6" stroke-linecap="round"/>
+    <text x="76" y="263" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="12.5" fill="#f4f1ea">37920</text>
+    <text x="500" y="263" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12.5" fill="#c3cad3">the web interface behind nginx, the only port exposed to your machine</text>
+  <path d="M48 284 h16 M48 289 h16 M48 294 h10" stroke="#d8a35f" stroke-width="1.6" stroke-linecap="round"/>
+    <text x="76" y="293" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="12.5" fill="#f4f1ea">37921</text>
+    <text x="500" y="293" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12.5" fill="#c3cad3">the FastAPI API, bound to 127.0.0.1 for debugging</text>
+  <path d="M48 314 h16 M48 319 h16 M48 324 h10" stroke="#d8a35f" stroke-width="1.6" stroke-linecap="round"/>
+    <text x="76" y="323" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="12.5" fill="#f4f1ea">37922</text>
+    <text x="500" y="323" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12.5" fill="#c3cad3">the Vite dev server, native mode only</text>
+  <path d="M48 344 h16 M48 349 h16 M48 354 h10" stroke="#d8a35f" stroke-width="1.6" stroke-linecap="round"/>
+    <text x="76" y="353" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="12.5" fill="#f4f1ea">searxng · atelier</text>
+    <text x="500" y="353" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12.5" fill="#c3cad3">internal network only, no published port at all</text>
+  <rect x="30" y="392" width="980" height="183" rx="12" fill="#161b22" stroke="#2a313c"/>
+  <text x="46" y="414" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="11" letter-spacing="2.5" fill="#8b929c">CONFIGURATION</text>
+  <path d="M56 434 l8 3 v7 c0 5 -4 9 -8 11 c-4 -2 -8 -6 -8 -11 v-7 z" fill="none" stroke="#d8a35f" stroke-width="1.4"/>
+    <text x="76" y="447" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="12.5" fill="#f4f1ea">ATELIER_JETON</text>
+    <text x="500" y="447" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12.5" fill="#c3cad3">shared secret backend to workshop. Empty means execution is refused, on purpose</text>
+  <path d="M56 464 l8 3 v7 c0 5 -4 9 -8 11 c-4 -2 -8 -6 -8 -11 v-7 z" fill="none" stroke="#d8a35f" stroke-width="1.4"/>
+    <text x="76" y="477" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="12.5" fill="#f4f1ea">ECHOHUB_AUTH_USER / _HASH</text>
+    <text x="500" y="477" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12.5" fill="#c3cad3">nginx basic auth, active by their mere presence; 127.0.0.1 is exempt for the</text>
+    <text x="500" y="494" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12.5" fill="#c3cad3">healthcheck</text>
+  <path d="M56 511 l8 3 v7 c0 5 -4 9 -8 11 c-4 -2 -8 -6 -8 -11 v-7 z" fill="none" stroke="#d8a35f" stroke-width="1.4"/>
+    <text x="76" y="524" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="12.5" fill="#f4f1ea">SEARXNG_SECRET</text>
+    <text x="500" y="524" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12.5" fill="#c3cad3">a public default exists in the repo, so override it</text>
+  <path d="M49 542 h9 l5 5 v11 h-14 z" fill="none" stroke="#d8a35f" stroke-width="1.4"/>
+    <text x="76" y="554" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="12.5" fill="#f4f1ea">HF_TOKEN</text>
+    <text x="500" y="554" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12.5" fill="#c3cad3">only for private or gated Hugging Face repositories</text>
+  <rect x="30" y="593" width="980" height="106" rx="12" fill="#161b22" stroke="#2a313c"/>
+  <text x="46" y="615" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="11" letter-spacing="2.5" fill="#8b929c">LOGS</text>
+  <path d="M48 636 h14 v16 h-14 z M51 641 h8 M51 645 h8 M51 649 h5" fill="none" stroke="#d8a35f" stroke-width="1.4"/>
+    <text x="76" y="648" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="12.5" fill="#f4f1ea">docker compose logs -f</text>
+    <text x="500" y="648" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12.5" fill="#c3cad3">the container mode</text>
+  <path d="M48 666 h14 v16 h-14 z M51 671 h8 M51 675 h8 M51 679 h5" fill="none" stroke="#d8a35f" stroke-width="1.4"/>
+    <text x="76" y="678" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="12.5" fill="#f4f1ea">logs/backend.log · logs/frontend.log</text>
+    <text x="500" y="678" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12.5" fill="#c3cad3">native mode, emptied at each start.sh</text>
+</svg>

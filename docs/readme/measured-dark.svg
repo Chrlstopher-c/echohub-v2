@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="232" viewBox="0 0 1040 232" fill="none" role="img">
+  <rect width="1040" height="232" rx="16" fill="#0a0b0e" stroke="#20242c"/>
+  <text x="30" y="36" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="12" letter-spacing="2.5" fill="#8b929c">MEASURED ON THE REAL MACHINES</text>
+  <rect x="30" y="56" width="230" height="152" rx="12" fill="#161b22" stroke="#2a313c"/>
+  <text x="48" y="106" font-family="Georgia,'Times New Roman',serif" font-size="38" font-weight="600" fill="#f4f1ea">41<tspan font-size="16" fill="#8b929c"> vs 80</tspan></text>
+  <text x="48" y="132" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="13" fill="#c3cad3">layers really in the GGUF,</text><text x="48" y="149" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="13" fill="#c3cad3">against 80 guessed from the name</text>
+  <text x="48" y="172" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="10.5" fill="#8b929c">Qwen3.6-35B-A3B,</text><text x="48" y="187" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="10.5" fill="#8b929c">COMPATIBILITE-GPU.md</text>
+  <rect x="280" y="56" width="230" height="152" rx="12" fill="#161b22" stroke="#2a313c"/>
+  <text x="298" y="106" font-family="Georgia,'Times New Roman',serif" font-size="38" font-weight="600" fill="#f4f1ea">436<tspan font-size="16" fill="#8b929c"> MB</tspan></text>
+  <text x="298" y="132" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="13" fill="#c3cad3">real weight per layer, against</text><text x="298" y="149" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="13" fill="#c3cad3">the 150 MB the v1 assumed</text>
+  <text x="298" y="172" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="10.5" fill="#8b929c">same model, read from the file</text>
+  <rect x="530" y="56" width="230" height="152" rx="12" fill="#161b22" stroke="#2a313c"/>
+  <text x="548" y="106" font-family="Georgia,'Times New Roman',serif" font-size="38" font-weight="600" fill="#f4f1ea">12<tspan font-size="16" fill="#8b929c"> s</tspan></text>
+  <text x="548" y="132" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="13" fill="#c3cad3">to load, against minutes with</text><text x="548" y="149" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="13" fill="#c3cad3">VRAM stuck at 2 GB</text>
+  <text x="548" y="172" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="10.5" fill="#8b929c">WSL2, RTX 5080, then 19.6 tok/s</text>
+  <rect x="780" y="56" width="230" height="152" rx="12" fill="#161b22" stroke="#2a313c"/>
+  <text x="798" y="106" font-family="Georgia,'Times New Roman',serif" font-size="38" font-weight="600" fill="#f4f1ea">442</text>
+  <text x="798" y="132" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="13" fill="#c3cad3">Python test functions, none of</text><text x="798" y="149" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="13" fill="#c3cad3">them needing a GPU or a network</text>
+  <text x="798" y="172" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="10.5" fill="#8b929c">the planner is pure, so a</text><text x="798" y="187" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="10.5" fill="#8b929c">budget can be injected</text>
+</svg>

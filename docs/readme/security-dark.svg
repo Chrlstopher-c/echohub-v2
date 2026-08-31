@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="496" viewBox="0 0 1040 496" fill="none" role="img">
+  <rect width="1040" height="496" rx="16" fill="#0a0b0e" stroke="#20242c"/>
+  <rect x="30" y="24" width="980" height="123" rx="12" fill="#161b22" stroke="#2a313c"/>
+  <text x="46" y="46" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="11" letter-spacing="2.5" fill="#8b929c">WHAT THE AUTHENTICATION DOES, AND DOES NOT</text>
+  <path d="M56 66 l8 3 v7 c0 5 -4 9 -8 11 c-4 -2 -8 -6 -8 -11 v-7 z" fill="none" stroke="#d8a35f" stroke-width="1.4"/>
+    <text x="76" y="79" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="12.5" fill="#f4f1ea">nginx basic auth</text>
+    <text x="500" y="79" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12.5" fill="#c3cad3">protects the door: one account, no session, no revocation, password sent on every</text>
+    <text x="500" y="96" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12.5" fill="#c3cad3">request</text>
+  <path d="M56 113 l8 3 v7 c0 5 -4 9 -8 11 c-4 -2 -8 -6 -8 -11 v-7 z" fill="none" stroke="#d8a35f" stroke-width="1.4"/>
+    <text x="76" y="126" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="12.5" fill="#f4f1ea">no application auth</text>
+    <text x="500" y="126" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12.5" fill="#c3cad3">there is no per-user model inside the app. Whoever passes nginx is the owner</text>
+  <rect x="30" y="165" width="980" height="183" rx="12" fill="#161b22" stroke="#2a313c"/>
+  <text x="46" y="187" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="11" letter-spacing="2.5" fill="#8b929c">WHAT THE MODEL CAN DO IN THE WORKSHOP</text>
+  <rect x="48" y="209" width="16" height="14" rx="4" fill="none" stroke="#d8a35f" stroke-width="1.4"/><circle cx="53" cy="215" r="1.4" fill="#d8a35f"/><circle cx="59" cy="215" r="1.4" fill="#d8a35f"/>
+    <text x="76" y="220" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="12.5" fill="#f4f1ea">root, with network</text>
+    <text x="500" y="220" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12.5" fill="#c3cad3">it installs what it lacks with apt and pip, and files persist between messages</text>
+  <path d="M56 237 l8 3 v7 c0 5 -4 9 -8 11 c-4 -2 -8 -6 -8 -11 v-7 z" fill="none" stroke="#d8a35f" stroke-width="1.4"/>
+    <text x="76" y="250" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="12.5" fill="#f4f1ea">the container boundary</text>
+    <text x="500" y="250" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12.5" fill="#c3cad3">isolation comes from the boundary, not from lowered privileges: no host path, no</text>
+    <text x="500" y="267" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12.5" fill="#c3cad3">docker.sock</text>
+  <path d="M56 284 l8 3 v7 c0 5 -4 9 -8 11 c-4 -2 -8 -6 -8 -11 v-7 z" fill="none" stroke="#d8a35f" stroke-width="1.4"/>
+    <text x="76" y="297" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="12.5" fill="#f4f1ea">4 GB · 4 CPU · 512 pids</text>
+    <text x="500" y="297" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12.5" fill="#c3cad3">bounded by Compose, so a runaway command cannot drown the machine</text>
+  <path d="M56 314 l8 3 v7 c0 5 -4 9 -8 11 c-4 -2 -8 -6 -8 -11 v-7 z" fill="none" stroke="#d8a35f" stroke-width="1.4"/>
+    <text x="76" y="327" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="12.5" fill="#f4f1ea">empty ATELIER_JETON</text>
+    <text x="500" y="327" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12.5" fill="#c3cad3">closed fallback: no token, no execution</text>
+  <rect x="30" y="366" width="980" height="106" rx="12" fill="#161b22" stroke="#2a313c"/>
+  <text x="46" y="388" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="11" letter-spacing="2.5" fill="#8b929c">NEVER</text>
+  <path d="M56 408 l8 3 v7 c0 5 -4 9 -8 11 c-4 -2 -8 -6 -8 -11 v-7 z" fill="none" stroke="#d8a35f" stroke-width="1.4"/>
+    <text x="76" y="421" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="12.5" fill="#f4f1ea">a public tunnel</text>
+    <text x="500" y="421" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12.5" fill="#c3cad3">anyone who finds the URL gets your conversations and code execution on your machine</text>
+  <path d="M56 438 l8 3 v7 c0 5 -4 9 -8 11 c-4 -2 -8 -6 -8 -11 v-7 z" fill="none" stroke="#d8a35f" stroke-width="1.4"/>
+    <text x="76" y="451" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="12.5" fill="#f4f1ea">remote access</text>
+    <text x="500" y="451" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12.5" fill="#c3cad3">acces-distant.ps1 sets up a private Tailscale network instead, exposing nothing</text>
+</svg>

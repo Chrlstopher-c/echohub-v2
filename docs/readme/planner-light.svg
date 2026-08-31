@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="392" viewBox="0 0 1040 392" fill="none" role="img">
+  <defs><marker id="stp-light" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#59636e"/></marker></defs>
+  <rect width="1040" height="392" rx="16" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="30" y="36" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="12" letter-spacing="2.5" fill="#59636e">THE LOAD PLANNER, STEP BY STEP</text>
+  <rect x="30" y="56" width="478" height="88" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+  <circle cx="56" cy="82" r="13" fill="#d8a35f"/>
+  <text x="56" y="87" text-anchor="middle" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="13" font-weight="700" fill="#ffffff">1</text>
+  <text x="78" y="87" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="14.5" font-weight="600" fill="#1f2328">Read the file</text>
+  
+  <text x="44" y="116" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="11.5" fill="#59636e">Architecture, block_count and tensor sizes come from the GGUF itself,</text><text x="44" y="131" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="11.5" fill="#59636e">never from its name.</text><path d="M512 82 l16 0" stroke="#59636e" stroke-width="1.4" marker-end="url(#stp-light)"/>
+  <rect x="532" y="56" width="478" height="88" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+  <circle cx="558" cy="82" r="13" fill="#d8a35f"/>
+  <text x="558" y="87" text-anchor="middle" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="13" font-weight="700" fill="#ffffff">2</text>
+  <text x="580" y="87" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="14.5" font-weight="600" fill="#1f2328">Measure the machine</text>
+  
+  <text x="546" y="116" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="11.5" fill="#59636e">Free VRAM and RAM through NVML, with nvidia-smi as fallback. A value it</text><text x="546" y="131" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="11.5" fill="#59636e">cannot measure stays null rather than becoming an estimate.</text>
+  <rect x="30" y="168" width="478" height="88" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+  <circle cx="56" cy="194" r="13" fill="#d8a35f"/>
+  <text x="56" y="199" text-anchor="middle" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="13" font-weight="700" fill="#ffffff">3</text>
+  <text x="78" y="199" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="14.5" font-weight="600" fill="#1f2328">Detect the platform</text>
+  
+  <text x="44" y="228" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="11.5" fill="#59636e">Native Linux, WSL2 or a given driver each impose different constraints,</text><text x="44" y="243" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="11.5" fill="#59636e">and WSL2 is where the wrong guess costs the most.</text><path d="M512 194 l16 0" stroke="#59636e" stroke-width="1.4" marker-end="url(#stp-light)"/>
+  <rect x="532" y="168" width="478" height="88" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+  <circle cx="558" cy="194" r="13" fill="#d8a35f"/>
+  <text x="558" y="199" text-anchor="middle" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="13" font-weight="700" fill="#ffffff">4</text>
+  <text x="580" y="199" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="14.5" font-weight="600" fill="#1f2328">Produce a plan</text>
+  
+  <text x="546" y="228" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="11.5" fill="#59636e">GPU layers, context, batch, KV cache type and environment, each value</text><text x="546" y="243" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="11.5" fill="#59636e">carrying the reason it was chosen.</text>
+  <rect x="30" y="280" width="478" height="88" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+  <circle cx="56" cy="306" r="13" fill="#d8a35f"/>
+  <text x="56" y="311" text-anchor="middle" font-family="ui-monospace,'SF Mono',Consolas,monospace" font-size="13" font-weight="700" fill="#ffffff">5</text>
+  <text x="78" y="311" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="14.5" font-weight="600" fill="#1f2328">Degrade, never escalate</text>
+  
+  <text x="44" y="340" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="11.5" fill="#59636e">After a failed load it lowers the plan and inherits the constraint. The v1</text><text x="44" y="355" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="11.5" fill="#59636e">raised the context after each failure until the machine gave up.</text>
+</svg>
